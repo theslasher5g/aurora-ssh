@@ -64,7 +64,7 @@ pub fn spawn_conn(
         tx,
         rx,
         sink,
-        state: ConnState::Connecting("Verbinde…".into()),
+        state: ConnState::Connecting(t!("Verbinde…").into()),
         session: None,
     }
 }
@@ -158,7 +158,7 @@ impl FilePane {
         self.remote
             .as_ref()
             .map(|r| r.label.as_str())
-            .unwrap_or("Lokal")
+            .unwrap_or(t!("Lokal"))
     }
 
     fn join(&self, name: &str) -> String {
@@ -258,7 +258,7 @@ pub fn handle_event(
             if let Some(ed) = t.edits.iter_mut().find(|e| e.transfer == id && !e.opened) {
                 match &error {
                     None => ed.ready = true,
-                    Some(e) => toasts.push((format!("Öffnen fehlgeschlagen: {e}"), theme::red())),
+                    Some(e) => toasts.push((t!("Öffnen fehlgeschlagen: {}", e), theme::red())),
                 }
                 if error.is_some() {
                     t.edits.retain(|e| e.transfer != id);
@@ -271,9 +271,9 @@ pub fn handle_event(
                 tr.finished = true;
                 if let Some(e) = &error {
                     let e = crate::backend::ssh::friendly_text(e).unwrap_or_else(|| e.clone());
-                    toasts.push((format!("Übertragung fehlgeschlagen: {e}"), theme::red()));
+                    toasts.push((t!("Übertragung fehlgeschlagen: {}", e), theme::red()));
                 } else {
-                    toasts.push((format!("{} übertragen", tr.name), theme::green()));
+                    toasts.push((t!("{} übertragen", tr.name), theme::green()));
                 }
                 tr.error = error;
                 refresh = Some(tr.dst);
@@ -312,7 +312,9 @@ fn start_transfer(
     let (a, b) = (&t.panes[from].remote, &t.panes[to].remote);
     match (a, b) {
         (None, None) => {
-            return Err("Beide Seiten sind lokal – wähle links oder rechts einen Server.".into());
+            return Err(
+                t!("Beide Seiten sind lokal – wähle links oder rechts einen Server.").into(),
+            );
         }
         (None, Some(r)) => {
             let _ = r.tx.send(SftpCmd::Upload {
@@ -323,7 +325,7 @@ fn start_transfer(
         }
         (Some(r), None) => {
             if dst_dir.is_empty() {
-                return Err("Bitte zuerst ein Laufwerk öffnen.".into());
+                return Err(t!("Bitte zuerst ein Laufwerk öffnen.").into());
             }
             let _ = r.tx.send(SftpCmd::Download {
                 remote: src,
@@ -333,7 +335,7 @@ fn start_transfer(
         }
         (Some(ra), Some(rb)) => {
             let (Some(sa), Some(sb)) = (&ra.session, &rb.session) else {
-                return Err("Beide Server müssen verbunden sein.".into());
+                return Err(t!("Beide Server müssen verbunden sein.").into());
             };
             let (sa, sb, sink) = (sa.0.clone(), sb.0.clone(), rb.sink.clone());
             rt.spawn(async move {
@@ -408,7 +410,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
         &format!("{}  ⇄  {}", t.panes[0].label(), t.panes[1].label()),
         crate::ui::chrome::state_pair(t.state()),
         |ui| {
-            if closed && theme::icon_button(ui, "⟳", "Neu verbinden").clicked() {
+            if closed && theme::icon_button(ui, "⟳", t!("Neu verbinden")).clicked() {
                 reconnect = true;
             }
         },
@@ -476,7 +478,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
                         id: next_id,
                         name,
                         current: String::new(),
-                        route: format!("Lokal → {}", t.panes[to].label()),
+                        route: t!("Lokal → {}", t.panes[to].label()),
                         dst: to,
                         upload: true,
                         done: 0,
@@ -487,7 +489,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
                 }
             }
             _ => toasts.push((
-                "Zum Hochladen zuerst einen Server verbinden".into(),
+                t!("Zum Hochladen zuerst einen Server verbinden").into(),
                 theme::amber(),
             )),
         }
@@ -551,7 +553,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
             PaneAction::Source(host) => source_change = Some((i, host)),
             PaneAction::Edit(name) => {
                 let Some(safe) = crate::backend::sftp::safe_local_name(&name) else {
-                    toasts.push(("Unsicherer Dateiname".into(), theme::red()));
+                    toasts.push((t!("Unsicherer Dateiname").into(), theme::red()));
                     continue;
                 };
                 let remote_path = pane.join(&name);
@@ -559,14 +561,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
                     .iter()
                     .any(|e| e.remote_path == remote_path && e.pane == i)
                 {
-                    toasts.push(("Datei ist schon im Editor offen".into(), theme::accent()));
+                    toasts.push((
+                        t!("Datei ist schon im Editor offen").into(),
+                        theme::accent(),
+                    ));
                     continue;
                 }
                 let dir = std::env::temp_dir()
                     .join("aurora-edit")
                     .join(uuid::Uuid::new_v4().simple().to_string());
                 if let Err(e) = std::fs::create_dir_all(&dir) {
-                    toasts.push((format!("Temp-Ordner: {e}"), theme::red()));
+                    toasts.push((t!("Temp-Ordner: {}", e), theme::red()));
                     continue;
                 }
                 next_id += 1;
@@ -623,7 +628,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
                         .to_string();
                     t.transfers.push(Transfer {
                         id: next_id,
-                        name: format!("{name} (gespeichert)"),
+                        name: t!("{} (gespeichert)", name),
                         current: String::new(),
                         route: "Editor → Server".into(),
                         dst: ed.pane,
@@ -669,8 +674,8 @@ fn transfers_panel(ui: &mut egui::Ui, tab_id: u64, t: &mut SftpTab, accent: Colo
         )
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                theme::section_title(ui, "Übertragungen");
-                if t.transfers.iter().any(|x| x.finished) && text_button(ui, "aufräumen").clicked()
+                theme::section_title(ui, t!("Übertragungen"));
+                if t.transfers.iter().any(|x| x.finished) && text_button(ui, t!("aufräumen")).clicked()
                 {
                     t.transfers.retain(|x| !x.finished);
                 }
@@ -689,16 +694,16 @@ fn transfers_panel(ui: &mut egui::Ui, tab_id: u64, t: &mut SftpTab, accent: Colo
                     ui.label(theme::mono(name, 12.5));
                     ui.label(
                         RichText::new(if !ed.opened {
-                            "wird geladen…".to_string()
+                            t!("wird geladen…").to_string()
                         } else if ed.uploads == 0 {
-                            "im Editor offen – Speichern lädt automatisch hoch".to_string()
+                            t!("im Editor offen – Speichern lädt automatisch hoch").to_string()
                         } else {
-                            format!("{}× gespeichert und hochgeladen", ed.uploads)
+                            t!("{}× gespeichert und hochgeladen", ed.uploads)
                         })
                         .size(12.0)
                         .color(theme::text_dim()),
                     );
-                    if text_button(ui, "fertig").clicked() {
+                    if text_button(ui, t!("fertig")).clicked() {
                         close_edit = Some(i);
                     }
                 });
@@ -712,10 +717,10 @@ fn transfers_panel(ui: &mut egui::Ui, tab_id: u64, t: &mut SftpTab, accent: Colo
             egui::ScrollArea::vertical().show(ui, |ui| {
                 if t.transfers.is_empty() && t.edits.is_empty() {
                     ui.label(
-                        RichText::new(
+                        RichText::new(t!(
                             "Doppelklick auf eine Server-Datei öffnet sie im Editor (Speichern lädt hoch). \
-                             Kopieren-Button überträgt auf die andere Seite, auch Server ⇄ Server.",
-                        )
+                             Kopieren-Button überträgt auf die andere Seite, auch Server ⇄ Server."
+                        ))
                         .size(12.5)
                         .color(theme::text_dim()),
                     );
@@ -756,7 +761,7 @@ fn transfers_panel(ui: &mut egui::Ui, tab_id: u64, t: &mut SftpTab, accent: Colo
                         };
                         let (color, text) = match (&tr.error, tr.finished) {
                             (Some(e), _) => (theme::red(), e.clone()),
-                            (None, true) => (theme::green(), "fertig".into()),
+                            (None, true) => (theme::green(), t!("fertig").into()),
                             (None, false) if tr.current != tr.name && !tr.current.is_empty() => (
                                 accent,
                                 format!(
@@ -800,9 +805,9 @@ fn pane_ui(
 ) -> Option<PaneAction> {
     let mut action = None;
     let transfer_label = if idx == 0 {
-        "Kopieren →"
+        t!("Kopieren →")
     } else {
-        "← Kopieren"
+        t!("← Kopieren")
     };
     let current = pane.remote.as_ref().and_then(|r| r.host_id);
     let is_remote = pane.remote.is_some();
@@ -813,17 +818,17 @@ fn pane_ui(
         ui.spacing_mut().item_spacing.x = 14.0;
         let sel = pane.selected.clone();
         ui.add_enabled_ui(pane.connected() && !pane.path.is_empty(), |ui| {
-            if text_button(ui, "+ Ordner").clicked() {
+            if text_button(ui, t!("+ Ordner")).clicked() {
                 *action = Some(PaneAction::Mkdir);
             }
         });
         ui.add_enabled_ui(sel.is_some() && pane.connected(), |ui| {
-            if text_button(ui, "Umbenennen").clicked()
+            if text_button(ui, t!("Umbenennen")).clicked()
                 && let Some(s) = &sel
             {
                 *action = Some(PaneAction::Rename(s.clone()));
             }
-            if text_button(ui, "Löschen").clicked()
+            if text_button(ui, t!("Löschen")).clicked()
                 && let Some(s) = &sel
             {
                 let is_dir = pane.entries.iter().any(|e| &e.name == s && e.is_dir);
@@ -855,7 +860,7 @@ fn pane_ui(
                 200.0
             })
             .show_ui(ui, |ui| {
-                if ui.selectable_label(!is_remote, "Lokal").clicked() && is_remote {
+                if ui.selectable_label(!is_remote, t!("Lokal")).clicked() && is_remote {
                     action = Some(PaneAction::Source(None));
                 }
                 if !hosts.is_empty() {
@@ -894,7 +899,8 @@ fn pane_ui(
                 egui::Label::new(RichText::new(text).size(12.5).color(theme::text_dim()))
                     .truncate(),
             );
-            if matches!(r.state, ConnState::Closed(_)) && text_button(ui, "Neu verbinden").clicked()
+            if matches!(r.state, ConnState::Closed(_))
+                && text_button(ui, t!("Neu verbinden")).clicked()
             {
                 action = Some(PaneAction::Reconnect);
             }
@@ -904,17 +910,17 @@ fn pane_ui(
 
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        if theme::icon_button(ui, "↑", "Übergeordneter Ordner").clicked() {
+        if theme::icon_button(ui, "↑", t!("Übergeordneter Ordner")).clicked() {
             action = Some(PaneAction::Up);
         }
-        if theme::icon_button(ui, "⟳", "Aktualisieren").clicked() {
+        if theme::icon_button(ui, "⟳", t!("Aktualisieren")).clicked() {
             action = Some(PaneAction::Refresh);
         }
         ui.add_space(4.0);
         let hint = if is_remote {
-            "/pfad oder C:\\pfad"
+            t!("/pfad oder C:\\pfad")
         } else {
-            "Pfad"
+            t!("Pfad")
         };
         let r = ui.add(
             egui::TextEdit::singleline(&mut pane.edit)
@@ -941,7 +947,7 @@ fn pane_ui(
             if pane.entries.is_empty() && pane.error.is_none() {
                 ui.add_space(10.0);
                 ui.label(
-                    RichText::new("Leerer Ordner")
+                    RichText::new(t!("Leerer Ordner"))
                         .size(12.5)
                         .color(theme::text_dim()),
                 );
@@ -1066,11 +1072,11 @@ fn entry_row(
         });
     }
     resp.context_menu(|ui| {
-        if remote && !e.is_dir && ui.button("Bearbeiten (eigener Editor)").clicked() {
+        if remote && !e.is_dir && ui.button(t!("Bearbeiten (eigener Editor)")).clicked() {
             action = Some(PaneAction::Edit(e.name.clone()));
             ui.close();
         }
-        if e.is_dir && ui.button("Öffnen").clicked() {
+        if e.is_dir && ui.button(t!("Öffnen")).clicked() {
             action = Some(PaneAction::Open(e.name.clone()));
             ui.close();
         }
@@ -1078,12 +1084,12 @@ fn entry_row(
             action = Some(PaneAction::Transfer(e.name.clone()));
             ui.close();
         }
-        if ui.button("Umbenennen").clicked() {
+        if ui.button(t!("Umbenennen")).clicked() {
             action = Some(PaneAction::Rename(e.name.clone()));
             ui.close();
         }
         if ui
-            .button(RichText::new("Löschen").color(theme::red()))
+            .button(RichText::new(t!("Löschen")).color(theme::red()))
             .clicked()
         {
             action = Some(PaneAction::Delete(e.name.clone(), e.is_dir));
@@ -1139,19 +1145,19 @@ fn fs_dialog(ctx: &egui::Context, t: &mut SftpTab) {
         let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
         match dialog {
             FsDialog::Mkdir { name } => {
-                ui.label(theme::heading("Neuer Ordner", 18.0));
+                ui.label(theme::heading(t!("Neuer Ordner"), 18.0));
                 ui.text_edit_singleline(name).request_focus();
             }
             FsDialog::Rename { to, from } => {
-                ui.label(theme::heading(format!("„{from}“ umbenennen"), 18.0));
+                ui.label(theme::heading(t!("„{}“ umbenennen", from), 18.0));
                 ui.text_edit_singleline(to).request_focus();
             }
             FsDialog::Delete { name, is_dir } => {
-                ui.label(theme::heading("Löschen?", 18.0));
+                ui.label(theme::heading(t!("Löschen?"), 18.0));
                 ui.label(if *is_dir {
-                    format!("Ordner „{name}“ inklusive Inhalt löschen?")
+                    t!("Ordner „{}“ inklusive Inhalt löschen?", name)
                 } else {
-                    format!("Datei „{name}“ löschen?")
+                    t!("Datei „{}“ löschen?", name)
                 });
             }
         }
@@ -1160,7 +1166,7 @@ fn fs_dialog(ctx: &egui::Context, t: &mut SftpTab) {
                 if theme::primary_button(ui, "OK").clicked() || enter {
                     done = Some(true);
                 }
-                if ui.button("Abbrechen").clicked()
+                if ui.button(t!("Abbrechen")).clicked()
                     || ui.input(|i| i.key_pressed(egui::Key::Escape))
                 {
                     done = Some(false);
@@ -1228,7 +1234,7 @@ fn fs_dialog(ctx: &egui::Context, t: &mut SftpTab) {
 /// "Dateien" page in the rail: pick two sources, see open file tabs, one-click hosts.
 pub fn page(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     let hosts = sftp_hosts(app);
-    ui.label(theme::heading("Dateien", 24.0));
+    ui.label(theme::heading(t!("Dateien"), 24.0));
     ui.add_space(14.0);
     theme::hairline(ui);
     ui.add_space(18.0);
@@ -1236,24 +1242,24 @@ pub fn page(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            theme::section_title(ui, "Neue Ansicht");
+            theme::section_title(ui, t!("Neue Ansicht"));
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
                 source_combo(ui, "files-left", &mut app.files_left, &hosts);
                 ui.label(theme::mono("⇄", 16.0).color(theme::accent()));
                 source_combo(ui, "files-right", &mut app.files_right, &hosts);
-                if theme::primary_button(ui, "Öffnen").clicked() {
+                if theme::primary_button(ui, t!("Öffnen")).clicked() {
                     actions.push(Action::OpenFiles(app.files_left, app.files_right));
                 }
             });
             ui.add_space(6.0);
             ui.label(
-                RichText::new(
+                RichText::new(t!(
                     "Jede Seite kann lokal oder ein Server sein. Server ⇄ Server wird über Aurora \
                      gestreamt – die Server müssen sich dafür nicht gegenseitig erreichen. \
-                     Windows-Server mit OpenSSH funktionieren ebenfalls.",
-                )
+                     Windows-Server mit OpenSSH funktionieren ebenfalls."
+                ))
                 .size(12.5)
                 .color(theme::text_dim()),
             );
@@ -1273,7 +1279,7 @@ pub fn page(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 .collect();
             if !open.is_empty() {
                 ui.add_space(26.0);
-                theme::section_title(ui, "Offen");
+                theme::section_title(ui, t!("Offen"));
                 ui.add_space(4.0);
                 for (id, title, route, running) in open {
                     let (rect, resp) = ui
@@ -1301,7 +1307,7 @@ pub fn page(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         p.text(
                             rect.right_center() - Vec2::new(12.0, 0.0),
                             egui::Align2::RIGHT_CENTER,
-                            format!("{running} aktiv"),
+                            t!("{} aktiv", running),
                             egui::FontId::monospace(11.5),
                             theme::accent(),
                         );
@@ -1320,11 +1326,11 @@ pub fn page(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             ui.add_space(4.0);
             if hosts.is_empty() {
                 ui.label(
-                    RichText::new("Noch keine Server. Leg einen SSH-Host an – Windows-Server mit OpenSSH gehen auch.")
+                    RichText::new(t!("Noch keine Server. Leg einen SSH-Host an – Windows-Server mit OpenSSH gehen auch."))
                         .color(theme::text_dim()),
                 );
                 ui.add_space(8.0);
-                if theme::primary_button(ui, "SSH-Host anlegen").clicked() {
+                if theme::primary_button(ui, t!("SSH-Host anlegen")).clicked() {
                     actions.push(Action::NewHostOf(Protocol::Ssh, None));
                 }
             }
@@ -1373,7 +1379,7 @@ pub fn page(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     rect.right_center() - Vec2::new(12.0, 0.0),
                     egui::Align2::RIGHT_CENTER,
                     if resp.hovered() {
-                        "Lokal ⇄ öffnen"
+                        t!("Lokal ⇄ öffnen")
                     } else {
                         ""
                     },
@@ -1395,12 +1401,12 @@ fn source_combo(ui: &mut egui::Ui, id: &str, value: &mut Option<Uuid>, hosts: &[
     let label = value
         .and_then(|v| hosts.iter().find(|(id, _)| *id == v))
         .map(|(_, n)| n.clone())
-        .unwrap_or_else(|| "Lokal".into());
+        .unwrap_or_else(|| t!("Lokal").into());
     egui::ComboBox::from_id_salt(id)
         .selected_text(label)
         .width(220.0)
         .show_ui(ui, |ui| {
-            ui.selectable_value(value, None, "Lokal");
+            ui.selectable_value(value, None, t!("Lokal"));
             for (hid, name) in hosts {
                 ui.selectable_value(value, Some(*hid), name);
             }

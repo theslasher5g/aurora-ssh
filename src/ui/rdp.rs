@@ -56,7 +56,7 @@ impl RdpView {
             rx: None,
             fb: Arc::new(Mutex::new(FrameBuffer::default())),
             texture: None,
-            state: ConnState::Connecting("Verbinde…".into()),
+            state: ConnState::Connecting(t!("Verbinde…").into()),
             requested: (0, 0),
             pending_resize: None,
             mods: [false; 3],
@@ -120,7 +120,7 @@ impl RdpView {
             Ok(h) => {
                 self.handle = Some(h);
                 self.rx = Some(rx);
-                self.state = ConnState::Connecting("Verbinde…".into());
+                self.state = ConnState::Connecting(t!("Verbinde…").into());
             }
             Err(e) => self.state = ConnState::Closed(Some(format!("{e:#}"))),
         }
@@ -130,7 +130,7 @@ impl RdpView {
         self.handle = None;
         self.rx = None;
         self.start_requested = true;
-        self.state = ConnState::Connecting("Verbinde…".into());
+        self.state = ConnState::Connecting(t!("Verbinde…").into());
     }
 
     /// Processes helper events (also while the tab is in the background).
@@ -158,7 +158,7 @@ impl RdpView {
                     let (reply, answer) = tokio::sync::oneshot::channel();
                     prompts.push(HostKeyPrompt {
                         host: host_id.to_string(),
-                        algorithm: "RDP · TLS-Zertifikat".into(),
+                        algorithm: t!("RDP · TLS-Zertifikat").into(),
                         fingerprint: fingerprint.clone(),
                         previous,
                         reply,
@@ -177,7 +177,7 @@ impl RdpView {
                         self.clip_remote = text;
                         if std::mem::take(&mut self.announce_clip) {
                             toasts.push((
-                                "Zwischenablage vom Host übernommen".into(),
+                                t!("Zwischenablage vom Host übernommen").into(),
                                 theme::accent(),
                             ));
                         }
@@ -253,20 +253,20 @@ impl RdpView {
             subtitle,
             state,
             |ui| {
-                if theme::icon_button(ui, "↗", "Im System-RDP-Client öffnen").clicked() {
+                if theme::icon_button(ui, "↗", t!("Im System-RDP-Client öffnen")).clicked() {
                     action = RdpAction::OpenExternal;
                 }
                 if matches!(self.state, ConnState::Closed(_)) {
-                    if theme::icon_button(ui, "⟳", "Neu verbinden").clicked() {
+                    if theme::icon_button(ui, "⟳", t!("Neu verbinden")).clicked() {
                         self.reconnect();
                     }
                     return;
                 }
                 ui.add_enabled_ui(connected, |ui| {
-                    if theme::icon_button(ui, "⊞", "Windows-Taste").clicked() {
+                    if theme::icon_button(ui, "⊞", t!("Windows-Taste")).clicked() {
                         self.tap(SC_LWIN);
                     }
-                    if theme::icon_button(ui, "⌨", "Zwischenablage als Tastatureingabe tippen")
+                    if theme::icon_button(ui, "⌨", t!("Zwischenablage als Tastatureingabe tippen"))
                         .clicked()
                     {
                         let text = self
@@ -276,24 +276,29 @@ impl RdpView {
                             .unwrap_or_default();
                         self.type_text(&text);
                     }
-                    if theme::icon_button(ui, "📤", "Lokale Zwischenablage an den Host senden")
+                    if theme::icon_button(ui, "📤", t!("Lokale Zwischenablage an den Host senden"))
                         .clicked()
                     {
                         match self.sync_local_clipboard(true) {
-                            Some(_) => toasts
-                                .push(("Zwischenablage an Host gesendet".into(), theme::accent())),
-                            None => toasts
-                                .push(("Lokale Zwischenablage ist leer".into(), theme::amber())),
+                            Some(_) => toasts.push((
+                                t!("Zwischenablage an Host gesendet").into(),
+                                theme::accent(),
+                            )),
+                            None => toasts.push((
+                                t!("Lokale Zwischenablage ist leer").into(),
+                                theme::amber(),
+                            )),
                         }
                     }
-                    if theme::icon_button(ui, "📥", "Zwischenablage vom Host kopieren").clicked()
+                    if theme::icon_button(ui, "📥", t!("Zwischenablage vom Host kopieren"))
+                        .clicked()
                     {
                         self.announce_clip = true;
                         self.send(RdpCmd::ClipGet);
                     }
                     if ui
                         .add(egui::Button::new(RichText::new("Ctrl+Alt+Del").size(12.5)))
-                        .on_hover_text("Sicherheitsbildschirm / Anmeldung")
+                        .on_hover_text(t!("Sicherheitsbildschirm / Anmeldung"))
                         .clicked()
                     {
                         self.send(RdpCmd::CtrlAltDel);
@@ -350,8 +355,8 @@ impl RdpView {
                 let Some(tex) = &self.texture else {
                     let msg = match &self.state {
                         ConnState::Closed(Some(e)) => e.clone(),
-                        ConnState::Closed(None) => "Getrennt".into(),
-                        _ => "Verbinde…".into(),
+                        ConnState::Closed(None) => t!("Getrennt").into(),
+                        _ => t!("Verbinde…").into(),
                     };
                     ui.painter().text(
                         area.center(),
