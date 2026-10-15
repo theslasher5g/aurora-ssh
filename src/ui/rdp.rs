@@ -7,12 +7,12 @@ use egui::{Color32, CornerRadius, Event, Margin, Pos2, Rect, RichText, Sense, Ve
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::app::ConnState;
-use crate::backend::Sink;
 use crate::backend::rdp::RdpLaunch;
 use crate::backend::rdp_embed::{
     self, FrameBuffer, RdpCmd, RdpConnect, RdpEvent, RdpHandle, SC_ENTER, SC_LALT, SC_LCTRL,
     SC_LSHIFT, SC_LWIN,
 };
+use crate::backend::{HostKeyPrompt, Sink};
 use crate::theme;
 
 pub struct RdpView {
@@ -35,6 +35,10 @@ pub struct RdpView {
     pending_paste: Option<Instant>,
     had_focus: bool,
     start_requested: bool,
+    /// Pinned TLS key fingerprint for this server (`rdp://host:port` in known hosts).
+    pub known_fingerprint: Option<String>,
+    /// Sync the clipboard automatically (host setting); the buttons always work.
+    pub auto_clipboard: bool,
 }
 
 /// What the tab wants the app to do.
@@ -44,8 +48,10 @@ pub enum RdpAction {
 }
 
 impl RdpView {
-    pub fn new() -> Self {
+    pub fn new(known_fingerprint: Option<String>, auto_clipboard: bool) -> Self {
         Self {
+            known_fingerprint,
+            auto_clipboard,
             handle: None,
             rx: None,
             fb: Arc::new(Mutex::new(FrameBuffer::default())),
@@ -108,6 +114,7 @@ impl RdpView {
             domain: launch.settings.domain.clone(),
             width: size.0,
             height: size.1,
+            known_fingerprint: self.known_fingerprint.clone(),
         };
         match rdp_embed::spawn(connect, sink, self.fb.clone()) {
             Ok(h) => {
@@ -127,7 +134,13 @@ impl RdpView {
     }
 
     /// Processes helper events (also while the tab is in the background).
-    pub fn pump(&mut self, ctx: &egui::Context, toasts: &mut Vec<(String, Color32)>) {
+    pub fn pump(
+        &mut self,
+        ctx: &egui::Context,
+        host_id: &str,
+        toasts: &mut Vec<(String, Color32)>,
+        prompts: &mut Vec<HostKeyPrompt>,
+    ) {
         let Some(rx) = self.rx.as_mut() else { return };
         let mut closed = None;
         while let Ok(ev) = rx.try_recv() {
@@ -135,8 +148,30 @@ impl RdpView {
                 RdpEvent::Status(s) => self.state = ConnState::Connecting(s),
                 RdpEvent::Connected => self.state = ConnState::Connected,
                 RdpEvent::Frame => {}
+                RdpEvent::Cert {
+                    fingerprint,
+                    previous,
+                } => {
+                    let Some(sender) = self.handle.as_ref().map(RdpHandle::sender) else {
+                        continue;
+                    };
+                    let (reply, answer) = tokio::sync::oneshot::channel();
+                    prompts.push(HostKeyPrompt {
+                        host: host_id.to_string(),
+                        algorithm: "RDP · TLS-Zertifikat".into(),
+                        fingerprint: fingerprint.clone(),
+                        previous,
+                        reply,
+                    });
+                    std::thread::spawn(move || {
+                        let accept = answer.blocking_recv().unwrap_or(false);
+                        sender.send(&RdpCmd::Trust { accept });
+                    });
+                    self.known_fingerprint = Some(fingerprint);
+                }
                 RdpEvent::ClipFromHost(text) => {
-                    if !text.is_empty() {
+                    let wanted = self.auto_clipboard || self.announce_clip;
+                    if !text.is_empty() && wanted {
                         ctx.copy_text(text.clone());
                         self.clip_local_seen = text.clone();
                         self.clip_remote = text;
@@ -161,7 +196,8 @@ impl RdpView {
 
     /// Offers new local clipboard text to the host (polled, since there is no change event).
     fn sync_local_clipboard(&mut self, force: bool) -> Option<String> {
-        if !force && self.clip_poll.elapsed() < Duration::from_millis(800) {
+        if !force && (!self.auto_clipboard || self.clip_poll.elapsed() < Duration::from_millis(800))
+        {
             return None;
         }
         self.clip_poll = Instant::now();
@@ -583,11 +619,5 @@ impl RdpView {
 
         self.sync_local_clipboard(false);
         ui.ctx().request_repaint_after(Duration::from_millis(900));
-    }
-}
-
-impl Default for RdpView {
-    fn default() -> Self {
-        Self::new()
     }
 }

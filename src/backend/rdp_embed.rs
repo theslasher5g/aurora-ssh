@@ -22,6 +22,7 @@ pub struct RdpConnect {
     pub domain: String,
     pub width: u16,
     pub height: u16,
+    pub known_fingerprint: Option<String>,
 }
 
 /// Commands understood by the helper (one JSON object per line).
@@ -38,6 +39,7 @@ pub enum RdpCmd {
     ClipGet,
     CtrlAltDel,
     ReleaseAll,
+    Trust { accept: bool },
     Close,
 }
 
@@ -48,6 +50,11 @@ pub enum RdpEvent {
     /// The shared framebuffer has new content.
     Frame,
     ClipFromHost(String),
+    /// The server key is unknown or changed; answer with [`RdpCmd::Trust`].
+    Cert {
+        fingerprint: String,
+        previous: Option<String>,
+    },
     Closed(Option<String>),
 }
 
@@ -92,23 +99,37 @@ impl FrameBuffer {
     }
 }
 
-pub struct RdpHandle {
-    stdin: Arc<Mutex<Option<BufWriter<ChildStdin>>>>,
-    child: Child,
-}
+/// Cloneable command channel to the helper (usable from other threads).
+#[derive(Clone)]
+pub struct RdpSender(Arc<Mutex<Option<BufWriter<ChildStdin>>>>);
 
-impl RdpHandle {
+impl RdpSender {
     pub fn send(&self, cmd: &RdpCmd) {
         let Ok(line) = serde_json::to_string(cmd) else {
             return;
         };
-        let mut guard = self.stdin.lock().unwrap();
+        let mut guard = self.0.lock().unwrap();
         if let Some(w) = guard.as_mut() {
             let ok = writeln!(w, "{line}").is_ok() && w.flush().is_ok();
             if !ok {
                 *guard = None;
             }
         }
+    }
+}
+
+pub struct RdpHandle {
+    stdin: Arc<Mutex<Option<BufWriter<ChildStdin>>>>,
+    child: Child,
+}
+
+impl RdpHandle {
+    pub fn sender(&self) -> RdpSender {
+        RdpSender(self.stdin.clone())
+    }
+
+    pub fn send(&self, cmd: &RdpCmd) {
+        self.sender().send(cmd);
     }
 
     pub fn close(&mut self) {
@@ -148,12 +169,16 @@ pub fn helper_path() -> Option<PathBuf> {
             candidates.push(dir.join("../lib/aurora-term").join(name));
         }
     }
-    for profile in ["release", "debug"] {
-        candidates.push(
-            PathBuf::from("crates/aurora-rdp/target")
-                .join(profile)
-                .join(name),
-        );
+    // Dev builds only: never pick up a binary relative to the working directory in a
+    // release build (it would receive the user's RDP password).
+    if cfg!(debug_assertions) {
+        for profile in ["release", "debug"] {
+            candidates.push(
+                PathBuf::from("crates/aurora-rdp/target")
+                    .join(profile)
+                    .join(name),
+            );
+        }
     }
     candidates.into_iter().find(|p| p.is_file())
 }
@@ -210,6 +235,14 @@ pub fn spawn(
                     events.send(RdpEvent::Frame);
                 }
                 4 => events.send(RdpEvent::ClipFromHost(text())),
+                6 => {
+                    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&payload) {
+                        events.send(RdpEvent::Cert {
+                            fingerprint: v["fingerprint"].as_str().unwrap_or_default().to_string(),
+                            previous: v["previous"].as_str().map(str::to_string),
+                        });
+                    }
+                }
                 5 => {
                     let msg = text();
                     events.send(RdpEvent::Closed((!msg.is_empty()).then_some(msg)));

@@ -91,6 +91,9 @@ impl Terminal {
     pub fn paste_bytes(&self, text: &str) -> Vec<u8> {
         let text = text.replace("\r\n", "\r").replace('\n', "\r");
         if self.bracketed_paste() {
+            // Pasted text must not be able to end bracketed paste early and have the rest
+            // executed as typed input (the "paste-jacking" trick).
+            let text = text.replace("\x1b[201~", "").replace("\x1b[200~", "");
             let mut v = b"\x1b[200~".to_vec();
             v.extend_from_slice(text.as_bytes());
             v.extend_from_slice(b"\x1b[201~");
@@ -532,6 +535,10 @@ mod tests {
         assert_eq!(t.paste_bytes("a\nb"), b"a\rb");
         t.feed(b"\x1b[?2004h");
         assert_eq!(t.paste_bytes("x"), b"\x1b[200~x\x1b[201~");
+        assert_eq!(
+            t.paste_bytes("a\x1b[201~rm -rf ~\n"),
+            b"\x1b[200~arm -rf ~\r\x1b[201~"
+        );
     }
 
     #[test]

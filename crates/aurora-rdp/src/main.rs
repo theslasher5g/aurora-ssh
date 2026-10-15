@@ -33,6 +33,9 @@ struct Connect {
     domain: String,
     width: u16,
     height: u16,
+    /// Previously trusted `SHA256:` fingerprint of the server's TLS public key.
+    #[serde(default)]
+    known_fingerprint: Option<String>,
 }
 
 #[derive(Deserialize, Debug, PartialEq)]
@@ -70,6 +73,10 @@ enum Cmd {
     ClipGet,
     CtrlAltDel,
     ReleaseAll,
+    /// Answer to a certificate prompt.
+    Trust {
+        accept: bool,
+    },
     Close,
 }
 
@@ -80,6 +87,8 @@ mod tag {
     pub const FRAME: u8 = 3;
     pub const CLIP_FROM_HOST: u8 = 4;
     pub const CLOSED: u8 = 5;
+    /// Unknown or changed server key: `{"fingerprint": .., "previous": ..}`; expects `Trust`.
+    pub const CERT: u8 = 6;
 }
 
 type Out = std::sync::mpsc::SyncSender<(u8, Vec<u8>)>;
@@ -199,6 +208,37 @@ impl CliprdrBackend for Bridge {
     fn on_lock(&mut self, _data_id: LockDataId) {}
 
     fn on_unlock(&mut self, _data_id: LockDataId) {}
+}
+
+// ---------------------------------------------------------------- certificate
+
+/// OpenSSH-style fingerprint of a public key.
+fn fingerprint(public_key: &[u8]) -> String {
+    use base64::Engine;
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(public_key);
+    format!(
+        "SHA256:{}",
+        base64::engine::general_purpose::STANDARD_NO_PAD.encode(digest)
+    )
+}
+
+/// Trust on first use: silently accept the pinned key, otherwise ask the UI and wait.
+fn install_verifier(known: Option<String>, out: Out, answers: std::sync::mpsc::Receiver<bool>) {
+    let answers = Mutex::new(answers);
+    let _ = ironrdp::client::rdp::SERVER_KEY_VERIFIER.set(Box::new(move |key: &[u8]| {
+        let fp = fingerprint(key);
+        if known.as_deref() == Some(fp.as_str()) {
+            return true;
+        }
+        let msg = serde_json::json!({ "fingerprint": fp, "previous": known });
+        send(&out, tag::CERT, msg.to_string().into_bytes());
+        answers
+            .lock()
+            .unwrap()
+            .recv_timeout(std::time::Duration::from_secs(300))
+            .unwrap_or(false)
+    }));
 }
 
 // ---------------------------------------------------------------- frames
@@ -389,6 +429,9 @@ fn run(out: Out) -> anyhow::Result<()> {
     }
     let config = builder.build()?;
 
+    let (trust_tx, trust_rx) = std::sync::mpsc::channel::<bool>();
+    install_verifier(connect.known_fingerprint.clone(), out.clone(), trust_rx);
+
     send(
         &out,
         tag::STATUS,
@@ -417,6 +460,10 @@ fn run(out: Out) -> anyhow::Result<()> {
                     return;
                 }
                 Cmd::ReleaseAll => Some(RdpInputEvent::FastPath(db.release_all())),
+                Cmd::Trust { accept } => {
+                    let _ = trust_tx.send(*accept);
+                    None
+                }
                 Cmd::Resize { w, h } => Some(RdpInputEvent::Resize {
                     width: *w,
                     height: *h,
@@ -537,5 +584,8 @@ mod tests {
             }
         );
         assert_eq!(operations(&Cmd::CtrlAltDel).len(), 6);
+        let t: Cmd = serde_json::from_str(r#"{"t":"Trust","accept":true}"#).unwrap();
+        assert_eq!(t, Cmd::Trust { accept: true });
+        assert!(fingerprint(b"key").starts_with("SHA256:"));
     }
 }

@@ -62,20 +62,8 @@ pub fn launch(l: &RdpLaunch) -> Result<RdpProcess> {
             l.host.replace([':', '/', '\\'], "_")
         ));
         std::fs::write(&path, rdp_file(l))?;
-        if let Some(pw) = &l.password {
-            // Store the credential so mstsc can log in without prompting.
-            let user = if l.settings.domain.is_empty() {
-                l.username.clone()
-            } else {
-                format!("{}\\{}", l.settings.domain, l.username)
-            };
-            let _ = Command::new("cmdkey")
-                .arg(format!("/generic:TERMSRV/{}", l.host))
-                .arg(format!("/user:{user}"))
-                .arg(format!("/pass:{pw}"))
-                .stdout(Stdio::null())
-                .status();
-        }
+        // No password hand-off: `cmdkey` would persist it in the Credential Manager and
+        // expose it on the command line; mstsc asks for it itself.
         let child = Command::new("mstsc").arg(&path).spawn()?;
         return Ok(RdpProcess {
             child: Some(child),

@@ -238,6 +238,18 @@ async fn remove_recursive(sftp: &SftpSession, path: &str) -> Result<()> {
 
 const CHUNK: usize = 256 * 1024;
 
+/// A remote file name that is safe to use as a single local path component.
+/// Names come from the server, so `..`, separators or drive prefixes would let a
+/// malicious host write outside the chosen download folder.
+pub fn safe_local_name(name: &str) -> Option<&str> {
+    let bad = name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains(['/', '\\', ':', '\0'])
+        || name.chars().any(char::is_control);
+    (!bad).then_some(name)
+}
+
 async fn download(
     sftp: &SftpSession,
     remote: &str,
@@ -245,18 +257,19 @@ async fn download(
     id: u64,
     ev: &Sink<SftpEvent>,
 ) -> Result<()> {
-    let name = remote
+    let base = remote
         .trim_end_matches('/')
         .rsplit('/')
         .next()
-        .unwrap_or("download")
-        .to_string();
+        .unwrap_or_default();
+    let name = safe_local_name(base).ok_or_else(|| anyhow!("unsicherer Dateiname: {base:?}"))?;
     let meta = sftp.metadata(remote.to_string()).await?;
     if !meta.is_dir() {
-        return download_file(sftp, remote, &local_dir.join(&name), id, ev).await;
+        return download_file(sftp, remote, &local_dir.join(name), id, ev).await;
     }
     // Directory: walk it breadth-first.
-    let mut queue = vec![(remote.to_string(), local_dir.join(&name))];
+    let mut skipped = 0usize;
+    let mut queue = vec![(remote.to_string(), local_dir.join(name))];
     while let Some((rdir, ldir)) = queue.pop() {
         tokio::fs::create_dir_all(&ldir).await?;
         for e in sftp.read_dir(rdir.clone()).await? {
@@ -264,13 +277,22 @@ async fn download(
             if n == "." || n == ".." {
                 continue;
             }
+            let Some(local_name) = safe_local_name(&n) else {
+                skipped += 1;
+                continue;
+            };
             let rpath = join(&rdir, &n);
             if e.file_type().is_dir() {
-                queue.push((rpath, ldir.join(&n)));
+                queue.push((rpath, ldir.join(local_name)));
             } else if e.file_type().is_file() {
-                download_file(sftp, &rpath, &ldir.join(&n), id, ev).await?;
+                download_file(sftp, &rpath, &ldir.join(local_name), id, ev).await?;
             }
         }
+    }
+    if skipped > 0 {
+        return Err(anyhow!(
+            "{skipped} Einträge mit unsicheren Namen übersprungen"
+        ));
     }
     Ok(())
 }
@@ -391,5 +413,9 @@ mod tests {
         assert_eq!(parent("/home/u"), "/home");
         assert_eq!(parent("/home"), "/");
         assert_eq!(parent("/"), "/");
+        assert_eq!(safe_local_name("report.txt"), Some("report.txt"));
+        for bad in ["..", ".", "", "../x", "a/b", "a\\b", "C:evil", "x\ny"] {
+            assert_eq!(safe_local_name(bad), None, "{bad:?}");
+        }
     }
 }

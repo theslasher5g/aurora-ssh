@@ -521,7 +521,15 @@ impl App {
                     running: false,
                 };
                 if host.rdp.embedded && backend::rdp_embed::helper_path().is_some() {
-                    tab.embedded = Some(Box::new(crate::ui::rdp::RdpView::new()));
+                    let known = self
+                        .lib
+                        .known_hosts
+                        .get(&format!("rdp://{}:{}", host.hostname.trim(), host.port))
+                        .cloned();
+                    tab.embedded = Some(Box::new(crate::ui::rdp::RdpView::new(
+                        known,
+                        host.rdp.clipboard,
+                    )));
                 } else {
                     tab.launch_external();
                 }
@@ -663,6 +671,7 @@ impl App {
             self.hostkey_queue.push_back(p);
         }
         let mut toasts = Vec::new();
+        let mut prompts = Vec::new();
         for tab in &mut self.tabs {
             match &mut tab.kind {
                 TabKind::Term(t) => {
@@ -706,7 +715,8 @@ impl App {
                 }
                 TabKind::Rdp(t) => {
                     if let Some(v) = t.embedded.as_mut() {
-                        v.pump(ctx, &mut toasts);
+                        let host_id = format!("rdp://{}:{}", t.launch.host, t.launch.port);
+                        v.pump(ctx, &host_id, &mut toasts, &mut prompts);
                     }
                     if let Some(child) = t.process.as_mut().and_then(|p| p.child.as_mut())
                         && t.running
@@ -722,6 +732,7 @@ impl App {
                 }
             }
         }
+        self.hostkey_queue.extend(prompts);
         for (text, color) in toasts {
             self.toast(text, color);
         }
