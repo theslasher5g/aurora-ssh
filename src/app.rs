@@ -172,7 +172,7 @@ impl RdpTab {
         self.embedded = None;
         match backend::rdp::launch(&self.launch) {
             Ok(p) => {
-                self.status = format!("Läuft in {}", p.client);
+                self.status = t!("Läuft in {}", p.client);
                 self.running = p.child.is_some();
                 self.process = Some(p);
                 self.started = Instant::now();
@@ -584,7 +584,10 @@ impl App {
 
     pub fn save_library(&mut self) {
         if let Err(e) = self.store.save_library(&self.lib) {
-            self.toast(format!("Speichern fehlgeschlagen: {e:#}"), theme::red());
+            self.toast(
+                t!("Speichern fehlgeschlagen: {}", format!("{e:#}")),
+                theme::red(),
+            );
         }
     }
 
@@ -593,7 +596,7 @@ impl App {
             && let Err(e) = v.save(&self.keychain)
         {
             self.toast(
-                format!("Keychain-Speichern fehlgeschlagen: {e:#}"),
+                t!("Keychain-Speichern fehlgeschlagen: {}", format!("{e:#}")),
                 theme::red(),
             );
         }
@@ -867,7 +870,7 @@ impl App {
         let home = crate::ui::sftp::home_dir();
         self.tabs.push(Tab {
             id,
-            title: "Lokal".into(),
+            title: t!("Lokal").into(),
             subtitle: "sftp".into(),
             color: theme::accent(),
             attention: false,
@@ -924,7 +927,7 @@ impl App {
             .filter_map(|p| p.remote.as_ref().map(|r| r.label.clone()))
             .collect();
         tab.title = if labels.is_empty() {
-            "Lokal".into()
+            t!("Lokal").into()
         } else {
             labels.join(" ⇄ ")
         };
@@ -953,7 +956,7 @@ impl App {
             term: Terminal::new(self.lib.settings.scrollback),
             tx,
             rx,
-            state: ConnState::Connecting("Verbinde…".into()),
+            state: ConnState::Connecting(t!("Verbinde…").into()),
             startup,
             show_snippets: false,
             snippet_filter: String::new(),
@@ -1050,7 +1053,7 @@ impl App {
             Some(i) => match crate::keygen::public_info(&i.private_key, &i.passphrase) {
                 Ok((public, _)) => (i.private_key.clone(), public),
                 Err(e) => {
-                    ks.error = Some(format!("Schlüssel nicht lesbar: {e:#}"));
+                    ks.error = Some(t!("Schlüssel nicht lesbar: {}", format!("{e:#}")));
                     return;
                 }
             },
@@ -1120,7 +1123,7 @@ impl App {
         }
         self.save_library();
         self.toast(
-            format!("{}: Anmeldung jetzt per SSH-Key", host.display_name()),
+            t!("{}: Anmeldung jetzt per SSH-Key", host.display_name()),
             theme::green(),
         );
     }
@@ -1198,9 +1201,9 @@ impl App {
         self.save_library();
         self.toast(
             if n == 1 {
-                "1 Host hinzugefügt – der Name kommt beim ersten Login".to_string()
+                t!("1 Host hinzugefügt – der Name kommt beim ersten Login").to_string()
             } else {
-                format!("{n} Hosts hinzugefügt – Namen kommen beim ersten Login")
+                t!("{} Hosts hinzugefügt – Namen kommen beim ersten Login", n)
             },
             theme::green(),
         );
@@ -1256,7 +1259,7 @@ impl App {
         }
         if n > 0 {
             self.toast(
-                format!("{n} Sessions der letzten Sitzung wiederhergestellt"),
+                t!("{} Sessions der letzten Sitzung wiederhergestellt", n),
                 theme::accent(),
             );
         }
@@ -1265,7 +1268,7 @@ impl App {
     /// Writes hosts, groups, snippets, keys and known hosts into an encrypted file.
     pub fn export_data(&mut self) {
         if self.export_pw.chars().count() < 8 {
-            self.toast("Export-Passwort: mindestens 8 Zeichen", theme::amber());
+            self.toast(t!("Export-Passwort: mindestens 8 Zeichen"), theme::amber());
             return;
         }
         let bundle = crate::store::ExportBundle {
@@ -1285,11 +1288,14 @@ impl App {
             Ok(()) => {
                 self.export_pw.clear();
                 self.toast(
-                    format!("Exportiert nach {} – verschlüsselt", path.display()),
+                    t!("Exportiert nach {} – verschlüsselt", path.display()),
                     theme::green(),
                 );
             }
-            Err(e) => self.toast(format!("Export fehlgeschlagen: {e:#}"), theme::red()),
+            Err(e) => self.toast(
+                t!("Export fehlgeschlagen: {}", format!("{e:#}")),
+                theme::red(),
+            ),
         }
     }
 
@@ -1305,7 +1311,10 @@ impl App {
         let bundle = match r {
             Ok(b) => b,
             Err(e) => {
-                self.toast(format!("Import fehlgeschlagen: {e:#}"), theme::red());
+                self.toast(
+                    t!("Import fehlgeschlagen: {}", format!("{e:#}")),
+                    theme::red(),
+                );
                 return;
             }
         };
@@ -1340,7 +1349,7 @@ impl App {
         self.export_pw.clear();
         self.save_library();
         self.save_keychain();
-        self.toast(format!("{n} Einträge importiert"), theme::green());
+        self.toast(t!("{} Einträge importiert", n), theme::green());
     }
 
     /// Coloured frame around PROD / STAGING sessions.
@@ -1428,7 +1437,7 @@ impl App {
                     painter.text(
                         r.center() + egui::vec2(0.0, 12.0),
                         egui::Align2::CENTER_CENTER,
-                        "hier ablegen",
+                        t!("hier ablegen"),
                         egui::FontId::proportional(12.5),
                         theme::text_dim(),
                     );
@@ -1576,12 +1585,12 @@ impl App {
             }
         }
         if sent == 0 {
-            self.toast("Keine verbundene Terminal-Session aktiv", theme::amber());
-        } else if sent > 1 {
             self.toast(
-                format!("Snippet an {sent} Sessions gesendet"),
-                theme::accent(),
+                t!("Keine verbundene Terminal-Session aktiv"),
+                theme::amber(),
             );
+        } else if sent > 1 {
+            self.toast(t!("Snippet an {} Sessions gesendet", sent), theme::accent());
         }
     }
 
@@ -1613,7 +1622,7 @@ impl App {
                         Ok(Some(rel)) => {
                             if self.update.latest.is_none() {
                                 self.toast(
-                                    format!("Aurora {} ist verfügbar", rel.version_text()),
+                                    t!("Aurora {} ist verfügbar", rel.version_text()),
                                     theme::accent(),
                                 );
                             }
@@ -1621,7 +1630,7 @@ impl App {
                         }
                         Ok(None) if self.update.manual => {
                             self.update.message =
-                                Some(("Aurora ist aktuell.".into(), theme::green()));
+                                Some((t!("Aurora ist aktuell.").into(), theme::green()));
                         }
                         Err(e) if self.update.manual => {
                             self.update.message = Some((e, theme::red()));
@@ -1637,7 +1646,7 @@ impl App {
                         Ok(false) => {
                             self.update.installed = true;
                             self.update.message = Some((
-                                "Installiert – Neustart aktiviert die neue Version.".into(),
+                                t!("Installiert – Neustart aktiviert die neue Version.").into(),
                                 theme::green(),
                             ));
                         }
@@ -1711,21 +1720,24 @@ impl App {
                             TermEvent::UploadDone(r) => {
                                 t.upload = None;
                                 toasts.push(match r {
-                                    Ok(dir) => (format!("Hochgeladen nach {dir}"), theme::green()),
-                                    Err(e) => (format!("Upload fehlgeschlagen: {e}"), theme::red()),
+                                    Ok(dir) => (t!("Hochgeladen nach {}", dir), theme::green()),
+                                    Err(e) => (t!("Upload fehlgeschlagen: {}", e), theme::red()),
                                 });
                             }
                             TermEvent::Closed(err) => {
                                 let msg = match &err {
                                     Some(e) => format!("\r\n\x1b[31m✖ {e}\x1b[0m\r\n"),
-                                    None => "\r\n\x1b[2mVerbindung beendet.\x1b[0m\r\n".into(),
+                                    None => format!(
+                                        "\r\n\x1b[2m{}\x1b[0m\r\n",
+                                        t!("Verbindung beendet.")
+                                    ),
                                 };
                                 t.term.feed(msg.as_bytes());
                                 if let Some(e) = &err {
                                     toasts.push((format!("{}: {e}", tab.title), theme::red()));
                                 } else if !seen {
                                     toasts.push((
-                                        format!(
+                                        t!(
                                             "{} getrennt – Klick auf die Kachel verbindet neu",
                                             tab.title
                                         ),
@@ -1761,7 +1773,7 @@ impl App {
                                 tab.attention = true;
                                 notify = true;
                                 toasts.push((
-                                    format!(
+                                    t!(
                                         "{}: Befehl fertig nach {}",
                                         tab.title,
                                         crate::ui::short_duration(took)
@@ -1796,9 +1808,9 @@ impl App {
                     {
                         t.running = false;
                         t.status = if status.success() {
-                            "RDP-Sitzung beendet".into()
+                            t!("RDP-Sitzung beendet").into()
                         } else {
-                            format!("RDP-Client beendet ({status})")
+                            t!("RDP-Client beendet ({})", status)
                         };
                     }
                 }
@@ -1822,7 +1834,7 @@ impl App {
                     && f.hostname != "localhost"
                 {
                     toasts.push((
-                        format!("{} heißt jetzt „{}“", host.hostname, f.hostname),
+                        t!("{} heißt jetzt „{}“", host.hostname, f.hostname),
                         theme::accent(),
                     ));
                     host.label = f.hostname.clone();
@@ -1846,7 +1858,7 @@ impl App {
                         .cloned();
                     if let Some(t) = tunnel {
                         self.toast(
-                            format!("Tunnel „{}“ offen: localhost:{}", t.label(), t.local_port),
+                            t!("Tunnel „{}“ offen: localhost:{}", t.label(), t.local_port),
                             theme::green(),
                         );
                         if t.open_browser {
@@ -1975,7 +1987,7 @@ impl App {
                 if let Some(h) = self.lib.host(id) {
                     let mut copy = h.clone();
                     copy.id = Uuid::new_v4();
-                    copy.label = format!("{} (Kopie)", h.display_name());
+                    copy.label = t!("{} (Kopie)", h.display_name());
                     copy.last_connected = None;
                     self.lib.hosts.push(copy);
                     self.save_library();
@@ -2114,7 +2126,7 @@ impl App {
                     .take(crate::ui::chrome::MAX_SPLIT)
                     .collect();
                 if hosts.is_empty() {
-                    self.toast("Die Gruppe enthält keine Hosts", theme::amber());
+                    self.toast(t!("Die Gruppe enthält keine Hosts"), theme::amber());
                 } else {
                     self.split.clear();
                     self.maximized = None;
@@ -2180,9 +2192,9 @@ impl App {
                 self.save_library();
                 self.toast(
                     match added {
-                        0 => "Keine neuen Hosts in ~/.ssh/config".to_string(),
-                        1 => "1 Host importiert".to_string(),
-                        n => format!("{n} Hosts importiert"),
+                        0 => t!("Keine neuen Hosts in ~/.ssh/config").to_string(),
+                        1 => t!("1 Host importiert").to_string(),
+                        n => t!("{} Hosts importiert", n),
                     },
                     theme::green(),
                 );
@@ -2210,7 +2222,7 @@ impl App {
                     }
                 }
                 self.save_library();
-                self.toast(format!("{n} Hosts in „LAN {prefix}“"), theme::green());
+                self.toast(t!("{} Hosts in „LAN {}“", n, prefix), theme::green());
             }
             Action::DismissSubnet(prefix) => {
                 self.lib.settings.dismissed_subnets.push(prefix);
@@ -2418,24 +2430,25 @@ impl App {
             &subtitle,
             state,
             |ui| {
-                if theme::icon_button(ui, "⚡", "Snippets ein-/ausblenden").clicked() {
+                if theme::icon_button(ui, "⚡", t!("Snippets ein-/ausblenden")).clicked() {
                     toggle_snippets = true;
                 }
-                if theme::icon_button(ui, "🔍", "Im Terminal suchen (Ctrl+Shift+F)").clicked() {
+                if theme::icon_button(ui, "🔍", t!("Im Terminal suchen (Ctrl+Shift+F)")).clicked()
+                {
                     search = true;
                 }
-                if has_notes && theme::icon_button(ui, "📝", "Notizen zum Host").clicked() {
+                if has_notes && theme::icon_button(ui, "📝", t!("Notizen zum Host")).clicked() {
                     toggle_notes = true;
                 }
                 if unsaved
                     && ui
-                        .button("Als Host speichern")
-                        .on_hover_text("Diese Schnellverbindung in die Hostliste übernehmen")
+                        .button(t!("Als Host speichern"))
+                        .on_hover_text(t!("Diese Schnellverbindung in die Hostliste übernehmen"))
                         .clicked()
                 {
                     save_host = true;
                 }
-                if closed && theme::icon_button(ui, "⟳", "Neu verbinden (Enter)").clicked() {
+                if closed && theme::icon_button(ui, "⟳", t!("Neu verbinden (Enter)")).clicked() {
                     reconnect = true;
                 }
             },
@@ -2464,7 +2477,11 @@ impl App {
                                 .wrap(),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("×").on_hover_text("Ausblenden").clicked() {
+                            if ui
+                                .small_button("×")
+                                .on_hover_text(t!("Ausblenden"))
+                                .clicked()
+                            {
                                 notes_open = false;
                             }
                         });
@@ -2487,14 +2504,16 @@ impl App {
                     theme::section_title(ui, "Snippets");
                     ui.add(
                         egui::TextEdit::singleline(&mut t.snippet_filter)
-                            .hint_text("Filtern")
+                            .hint_text(t!("Filtern"))
                             .desired_width(f32::INFINITY),
                     );
                     ui.add_space(4.0);
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         let f = t.snippet_filter.to_lowercase();
                         if snippets.is_empty() {
-                            ui.label(RichText::new("Noch keine Snippets").color(theme::text_dim()));
+                            ui.label(
+                                RichText::new(t!("Noch keine Snippets")).color(theme::text_dim()),
+                            );
                         }
                         for (id, name, script) in snippets.iter().filter(|(_, n, s)| {
                             f.is_empty()
@@ -2529,7 +2548,7 @@ impl App {
                                 theme::text_dim(),
                             );
                             if resp
-                                .on_hover_text("Klicken zum Ausführen")
+                                .on_hover_text(t!("Klicken zum Ausführen"))
                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                                 .clicked()
                             {
@@ -2572,17 +2591,17 @@ impl App {
                 let drop_text;
                 let overlay = if hovering && drop_target {
                     drop_text = if !ssh {
-                        "Hochladen geht nur bei SSH-Sessions".to_string()
+                        t!("Hochladen geht nur bei SSH-Sessions").to_string()
                     } else if !live {
-                        "Nicht verbunden".to_string()
+                        t!("Nicht verbunden").to_string()
                     } else {
-                        format!("Loslassen zum Hochladen nach {shown_dir}")
+                        t!("Loslassen zum Hochladen nach {}", shown_dir)
                     };
                     Some(drop_text.as_str())
                 } else {
                     match &t.state {
                         ConnState::Connecting(_) if t.term.contents().trim().is_empty() => {
-                            Some("Verbinde…")
+                            Some(t!("Verbinde…"))
                         }
                         _ => None,
                     }
@@ -2701,10 +2720,10 @@ impl App {
             state,
             |ui| {
                 if running {
-                    if theme::icon_button(ui, "⏹", "Beenden").clicked() {
+                    if theme::icon_button(ui, "⏹", t!("Beenden")).clicked() {
                         stop = true;
                     }
-                } else if theme::icon_button(ui, "⟳", "Erneut starten").clicked() {
+                } else if theme::icon_button(ui, "⟳", t!("Erneut starten")).clicked() {
                     relaunch = true;
                 }
             },
@@ -2737,9 +2756,9 @@ impl App {
                     c + Vec2::new(0.0, 70.0),
                     egui::Align2::CENTER_CENTER,
                     if running {
-                        "Läuft im System-Client"
+                        t!("Läuft im System-Client")
                     } else {
-                        "Fenster geschlossen"
+                        t!("Fenster geschlossen")
                     },
                     theme::semibold(18.0),
                     theme::text(),
@@ -2905,7 +2924,7 @@ impl eframe::App for App {
             if self.last_activity.elapsed() >= limit {
                 self.apply(Action::Lock, &ctx);
                 self.toast(
-                    "Automatisch gesperrt – Sessions laufen weiter",
+                    t!("Automatisch gesperrt – Sessions laufen weiter"),
                     theme::accent(),
                 );
                 ctx.request_repaint();
@@ -3046,7 +3065,7 @@ impl eframe::App for App {
 fn upload_badge(ui: &egui::Ui, name: &str, done: u64, total: u64) {
     let r = ui.max_rect();
     let text = if name.is_empty() {
-        "Upload startet…".to_string()
+        t!("Upload startet…").to_string()
     } else {
         format!(
             "↑ {name}  {} / {}",
@@ -3087,7 +3106,7 @@ fn closed_badge(ui: &egui::Ui) {
     let r = ui.max_rect();
     let painter = ui.painter();
     let g = painter.layout_no_wrap(
-        "Getrennt · Enter verbindet neu".into(),
+        t!("Getrennt · Enter verbindet neu").into(),
         egui::FontId::proportional(12.5),
         theme::text(),
     );

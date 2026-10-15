@@ -363,7 +363,7 @@ impl Terminal {
         };
         let edit = child.add(
             egui::TextEdit::singleline(&mut s.query)
-                .hint_text("Im Terminal suchen")
+                .hint_text(t!("Im Terminal suchen"))
                 .frame(egui::Frame::NONE)
                 .desired_width(w - 160.0),
         );
@@ -398,21 +398,21 @@ impl Terminal {
         );
         if child
             .small_button("↑")
-            .on_hover_text("Älterer Treffer (Enter)")
+            .on_hover_text(t!("Älterer Treffer (Enter)"))
             .clicked()
         {
             step = -1;
         }
         if child
             .small_button("↓")
-            .on_hover_text("Neuerer Treffer (Shift+Enter)")
+            .on_hover_text(t!("Neuerer Treffer (Shift+Enter)"))
             .clicked()
         {
             step = 1;
         }
         if child
             .small_button("×")
-            .on_hover_text("Schließen (Esc)")
+            .on_hover_text(t!("Schließen (Esc)"))
             .clicked()
         {
             close = true;
@@ -546,7 +546,7 @@ impl Terminal {
         let mut open_search = false;
         resp.context_menu(|ui| {
             if ui
-                .add_enabled(selected.is_some(), egui::Button::new("📋 Kopieren"))
+                .add_enabled(selected.is_some(), egui::Button::new(t!("📋 Kopieren")))
                 .clicked()
             {
                 if let Some(t) = &selected {
@@ -557,22 +557,22 @@ impl Terminal {
             if ui
                 .add_enabled(
                     selected.is_some(),
-                    egui::Button::new("⚡ Als Snippet speichern"),
+                    egui::Button::new(t!("⚡ Als Snippet speichern")),
                 )
                 .clicked()
             {
                 out.save_snippet = selected.clone();
                 ui.close();
             }
-            if ui.button("🔍 Suchen  (Ctrl+Shift+F)").clicked() {
+            if ui.button(t!("🔍 Suchen  (Ctrl+Shift+F)")).clicked() {
                 open_search = true;
                 ui.close();
             }
-            if ui.button("📥 Alles kopieren").clicked() {
+            if ui.button(t!("📥 Alles kopieren")).clicked() {
                 ui.ctx().copy_text(self.contents());
                 ui.close();
             }
-            if ui.button("🗑 Bildschirm leeren").clicked() {
+            if ui.button(t!("🗑 Bildschirm leeren")).clicked() {
                 out.input.extend_from_slice(b"\x0c");
                 ui.close();
             }
@@ -797,7 +797,7 @@ impl Terminal {
         }
 
         if self.scrollback_rows > 0 && search_rect.is_none() {
-            let label = format!("⬆ {} Zeilen zurück", self.scrollback_rows);
+            let label = t!("⬆ {} Zeilen zurück", self.scrollback_rows);
             let pos = full.right_top() + Vec2::new(-14.0, 10.0);
             let g = painter.layout_no_wrap(label, FontId::proportional(11.0), theme::text());
             let bg = Rect::from_min_size(
