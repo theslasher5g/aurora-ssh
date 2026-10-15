@@ -20,6 +20,7 @@ use crate::theme;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum View {
     Hosts,
+    Files,
     Keychain,
     Snippets,
     Settings,
@@ -51,6 +52,12 @@ pub struct TermTab {
 pub struct Transfer {
     pub id: u64,
     pub name: String,
+    /// File currently being copied (inside a folder).
+    pub current: String,
+    /// "Lokal → web-01"
+    pub route: String,
+    /// Pane index the data goes to; refreshed when done.
+    pub dst: usize,
     pub upload: bool,
     pub done: u64,
     pub total: u64,
@@ -58,9 +65,24 @@ pub struct Transfer {
     pub error: Option<String>,
 }
 
+/// A live SFTP connection behind one file pane.
+pub struct RemoteConn {
+    pub host_id: Option<Uuid>,
+    pub label: String,
+    pub params: SshParams,
+    pub tx: UnboundedSender<SftpCmd>,
+    pub rx: UnboundedReceiver<SftpEvent>,
+    pub sink: Sink<SftpEvent>,
+    pub state: ConnState,
+    pub session: Option<crate::backend::sftp::Session>,
+}
+
+/// One side of the file browser: the local disk (`remote == None`) or a server.
 #[derive(Default)]
-pub struct LocalPane {
-    pub path: PathBuf,
+pub struct FilePane {
+    pub remote: Option<RemoteConn>,
+    /// Local: OS path ("" = drive list on Windows). Remote: SFTP path ("" until connected).
+    pub path: String,
     pub edit: String,
     pub entries: Vec<Entry>,
     pub selected: Option<String>,
@@ -68,34 +90,32 @@ pub struct LocalPane {
 }
 
 pub enum FsDialog {
-    Mkdir {
-        remote: bool,
-        name: String,
-    },
-    Rename {
-        remote: bool,
-        from: String,
-        to: String,
-    },
-    Delete {
-        remote: bool,
-        name: String,
-        is_dir: bool,
-    },
+    Mkdir { name: String },
+    Rename { from: String, to: String },
+    Delete { name: String, is_dir: bool },
 }
 
 pub struct SftpTab {
-    pub params: SshParams,
-    pub tx: UnboundedSender<SftpCmd>,
-    pub rx: UnboundedReceiver<SftpEvent>,
-    pub state: ConnState,
-    pub remote_path: String,
-    pub remote_edit: String,
-    pub remote_entries: Vec<Entry>,
-    pub remote_selected: Option<String>,
-    pub local: LocalPane,
+    pub panes: [FilePane; 2],
     pub transfers: Vec<Transfer>,
-    pub dialog: Option<FsDialog>,
+    pub dialog: Option<(usize, FsDialog)>,
+}
+
+impl SftpTab {
+    /// Worst state of the connected panes (local-only counts as connected).
+    pub fn state(&self) -> &ConnState {
+        static OK: ConnState = ConnState::Connected;
+        let states = || {
+            self.panes
+                .iter()
+                .filter_map(|p| p.remote.as_ref())
+                .map(|r| &r.state)
+        };
+        states()
+            .find(|s| matches!(s, ConnState::Closed(_)))
+            .or_else(|| states().find(|s| matches!(s, ConnState::Connecting(_))))
+            .unwrap_or(&OK)
+    }
 }
 
 pub struct RdpTab {
@@ -156,10 +176,11 @@ pub struct Tab {
     pub kind: TabKind,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Purpose {
     Terminal,
-    Sftp,
+    /// Connect the given pane of a file tab.
+    Pane(u64, usize),
 }
 
 pub struct PasswordPrompt {
@@ -207,6 +228,19 @@ pub struct PwChange {
     pub confirm: String,
 }
 
+#[derive(Default)]
+pub struct UpdateState {
+    pub latest: Option<crate::update::Release>,
+    pub checking: bool,
+    /// Last check was started by the user (report "up to date" / errors).
+    pub manual: bool,
+    pub installing: bool,
+    pub progress: f32,
+    /// Installed in place; a restart activates it.
+    pub installed: bool,
+    pub message: Option<(String, Color32)>,
+}
+
 pub struct App {
     pub rt: tokio::runtime::Runtime,
     pub store: Store,
@@ -219,6 +253,13 @@ pub struct App {
     pub view: View,
     pub tabs: Vec<Tab>,
     pub active: Option<u64>,
+    /// Sessions shown side by side (2–4) while one of them is active.
+    pub split: Vec<u64>,
+    /// File pages: sources picked for a new file tab.
+    pub files_left: Option<Uuid>,
+    pub files_right: Option<Uuid>,
+    /// Pane connections waiting for the password dialog to be free.
+    pub pane_queue: VecDeque<(u64, usize, Host)>,
     pub next_id: u64,
 
     pub search: String,
@@ -243,6 +284,10 @@ pub struct App {
     pub snippet_run: Option<SnippetRun>,
     pub toasts: Vec<Toast>,
     pub serial_ports: Vec<String>,
+    pub update: UpdateState,
+    pub reach: crate::backend::reach::Reachability,
+    pub update_sink: Sink<crate::update::UpdateEvent>,
+    pub update_rx: UnboundedReceiver<crate::update::UpdateEvent>,
 }
 
 /// UI intents collected while drawing and applied afterwards.
@@ -250,6 +295,10 @@ pub struct App {
 pub enum Action {
     Connect(Uuid),
     OpenSftp(Uuid),
+    /// New file tab; `None` = local disk.
+    OpenFiles(Option<Uuid>, Option<Uuid>),
+    /// Switch a pane of a file tab to another source.
+    SetPaneSource(u64, usize, Option<Uuid>),
     QuickConnect(String),
     NewHost(Option<Uuid>),
     NewHostOf(Protocol, Option<Uuid>),
@@ -294,6 +343,12 @@ impl App {
         theme::install_fonts(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx, &lib.settings.theme);
         let (prompts_sink, prompts_rx) = Sink::new(cc.egui_ctx.clone());
+        let (update_sink, update_rx) = Sink::new(cc.egui_ctx.clone());
+        let mut update = UpdateState::default();
+        if lib.settings.check_updates {
+            update.checking = true;
+            crate::update::check(update_sink.clone());
+        }
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -310,6 +365,10 @@ impl App {
             view: View::Hosts,
             tabs: Vec::new(),
             active: None,
+            split: Vec::new(),
+            files_left: None,
+            files_right: None,
+            pane_queue: VecDeque::new(),
             next_id: 1,
             search: String::new(),
             host_filter: 0,
@@ -330,6 +389,10 @@ impl App {
             snippet_run: None,
             toasts: Vec::new(),
             serial_ports: backend::serial::available_ports(),
+            update,
+            reach: Default::default(),
+            update_sink,
+            update_rx,
         }
     }
 
@@ -416,6 +479,12 @@ impl App {
             Protocol::Serial => false,
         };
         if needs_secret && !has_secret {
+            if self.password_prompt.is_some() {
+                if let Purpose::Pane(tab, idx) = purpose {
+                    self.pane_queue.push_back((tab, idx, host));
+                }
+                return;
+            }
             self.password_prompt = Some(PasswordPrompt {
                 host,
                 purpose,
@@ -446,53 +515,20 @@ impl App {
         self.save_library();
         let color = self.host_color(host);
         let id = self.alloc_id();
-        let ssh_params = || SshParams {
-            host: host.hostname.trim().to_string(),
-            port: host.port,
-            username: user.clone(),
-            password: password.clone(),
-            private_key: ident
-                .as_ref()
-                .map(|i| i.private_key.clone())
-                .filter(|k| !k.is_empty()),
-            passphrase: ident
-                .as_ref()
-                .map(|i| i.passphrase.clone())
-                .filter(|k| !k.is_empty()),
-            known_fingerprint: self
-                .lib
-                .known_hosts
-                .get(&format!("{}:{}", host.hostname.trim(), host.port))
-                .cloned(),
-        };
+        let ssh_params = || self.ssh_params(host, &user, &password, &ident);
+        if let Purpose::Pane(tab_id, idx) = purpose {
+            let conn = crate::ui::sftp::spawn_conn(
+                &self.rt,
+                ssh_params(),
+                host.display_name().to_string(),
+                Some(host.id),
+                ctx,
+                self.prompts_sink.clone(),
+            );
+            self.set_pane(tab_id, idx, Some(conn), color);
+            return;
+        }
         let kind = match (host.protocol, purpose) {
-            (Protocol::Ssh, Purpose::Sftp) => {
-                let params = ssh_params();
-                let (sink, rx) = Sink::new(ctx.clone());
-                let tx =
-                    backend::sftp::spawn(&self.rt, params.clone(), sink, self.prompts_sink.clone());
-                let home = directories::UserDirs::new()
-                    .map(|d| d.home_dir().to_path_buf())
-                    .unwrap_or_else(|| PathBuf::from("/"));
-                let mut local = LocalPane {
-                    path: home.clone(),
-                    ..Default::default()
-                };
-                crate::ui::sftp::refresh_local(&mut local);
-                TabKind::Sftp(Box::new(SftpTab {
-                    params,
-                    tx,
-                    rx,
-                    state: ConnState::Connecting("Verbinde…".into()),
-                    remote_path: String::new(),
-                    remote_edit: String::new(),
-                    remote_entries: Vec::new(),
-                    remote_selected: None,
-                    local,
-                    transfers: Vec::new(),
-                    dialog: None,
-                }))
-            }
             (Protocol::Ssh, _) => {
                 let spec = ConnectSpec::Ssh(ssh_params());
                 let startup = host
@@ -559,6 +595,96 @@ impl App {
         self.active = Some(id);
     }
 
+    fn ssh_params(
+        &self,
+        host: &Host,
+        user: &str,
+        password: &Option<String>,
+        ident: &Option<Identity>,
+    ) -> SshParams {
+        SshParams {
+            host: host.hostname.trim().to_string(),
+            port: host.port,
+            username: user.to_string(),
+            password: password.clone(),
+            private_key: ident
+                .as_ref()
+                .map(|i| i.private_key.clone())
+                .filter(|k| !k.is_empty()),
+            passphrase: ident
+                .as_ref()
+                .map(|i| i.passphrase.clone())
+                .filter(|k| !k.is_empty()),
+            known_fingerprint: self
+                .lib
+                .known_hosts
+                .get(&format!("{}:{}", host.hostname.trim(), host.port))
+                .cloned(),
+        }
+    }
+
+    /// New file tab with two panes; `None` means the local disk.
+    pub fn open_files(&mut self, left: Option<Uuid>, right: Option<Uuid>, ctx: &egui::Context) {
+        let id = self.alloc_id();
+        let home = crate::ui::sftp::home_dir();
+        self.tabs.push(Tab {
+            id,
+            title: "Lokal".into(),
+            subtitle: "sftp".into(),
+            color: theme::accent(),
+            kind: TabKind::Sftp(Box::new(SftpTab {
+                panes: [
+                    crate::ui::sftp::local_pane(home.clone()),
+                    crate::ui::sftp::local_pane(home),
+                ],
+                transfers: Vec::new(),
+                dialog: None,
+            })),
+        });
+        self.active = Some(id);
+        for (idx, host) in [(0, left), (1, right)] {
+            if let Some(h) = host.and_then(|h| self.lib.host(h).cloned()) {
+                self.connect_host(crate::ui::sftp::sftp_target(h), Purpose::Pane(id, idx), ctx);
+            }
+        }
+    }
+
+    /// Replaces the source of one pane (closing its old connection) and retitles the tab.
+    pub fn set_pane(&mut self, tab_id: u64, idx: usize, conn: Option<RemoteConn>, color: Color32) {
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            if let Some(c) = conn {
+                let _ = c.tx.send(SftpCmd::Close);
+            }
+            return;
+        };
+        let TabKind::Sftp(t) = &mut tab.kind else {
+            return;
+        };
+        if let Some(old) = t.panes[idx].remote.take() {
+            let _ = old.tx.send(SftpCmd::Close);
+        }
+        t.panes[idx] = match conn {
+            Some(c) => FilePane {
+                remote: Some(c),
+                ..Default::default()
+            },
+            None => crate::ui::sftp::local_pane(crate::ui::sftp::home_dir()),
+        };
+        if t.panes[idx].remote.is_some() {
+            tab.color = color;
+        }
+        let labels: Vec<String> = t
+            .panes
+            .iter()
+            .filter_map(|p| p.remote.as_ref().map(|r| r.label.clone()))
+            .collect();
+        tab.title = if labels.is_empty() {
+            "Lokal".into()
+        } else {
+            labels.join(" ⇄ ")
+        };
+    }
+
     fn spawn_term(
         &self,
         spec: ConnectSpec,
@@ -589,7 +715,7 @@ impl App {
         }
     }
 
-    fn reconnect(&mut self, tab_id: u64, ctx: &egui::Context) {
+    pub fn reconnect(&mut self, tab_id: u64, ctx: &egui::Context) {
         let Some(idx) = self.tabs.iter().position(|t| t.id == tab_id) else {
             return;
         };
@@ -602,19 +728,54 @@ impl App {
             if let Some(v) = t.embedded.as_mut() {
                 v.reconnect();
             }
-        } else if let TabKind::Sftp(t) = &self.tabs[idx].kind {
-            let (sink, rx) = Sink::new(ctx.clone());
-            let tx =
-                backend::sftp::spawn(&self.rt, t.params.clone(), sink, self.prompts_sink.clone());
-            if let TabKind::Sftp(t) = &mut self.tabs[idx].kind {
-                t.tx = tx;
-                t.rx = rx;
-                t.state = ConnState::Connecting("Verbinde…".into());
+        } else if let TabKind::Sftp(t) = &mut self.tabs[idx].kind {
+            for pane in t.panes.iter_mut() {
+                if let Some(r) = pane.remote.as_mut()
+                    && matches!(r.state, ConnState::Closed(_))
+                {
+                    *r = crate::ui::sftp::spawn_conn(
+                        &self.rt,
+                        r.params.clone(),
+                        r.label.clone(),
+                        r.host_id,
+                        ctx,
+                        self.prompts_sink.clone(),
+                    );
+                }
             }
         }
     }
 
+    fn apply_split(&mut self, op: crate::ui::chrome::SplitOp) {
+        use crate::ui::chrome::{MAX_SPLIT, SplitOp};
+        match op {
+            SplitOp::Add(base, other) => {
+                if !(self.split.len() >= 2 && self.split.contains(&base)) {
+                    self.split = vec![base];
+                }
+                if !self.split.contains(&other) && self.split.len() < MAX_SPLIT {
+                    self.split.push(other);
+                }
+                self.active = Some(base);
+            }
+            SplitOp::Remove(id) => {
+                self.split.retain(|s| *s != id);
+                if self.active == Some(id) {
+                    self.active = self.split.first().copied().or(Some(id));
+                }
+            }
+            SplitOp::Clear => self.split.clear(),
+        }
+        if self.split.len() < 2 {
+            self.split.clear();
+        }
+    }
+
     pub fn close_tab(&mut self, id: u64) {
+        self.split.retain(|s| *s != id);
+        if self.split.len() < 2 {
+            self.split.clear();
+        }
         if let Some(idx) = self.tabs.iter().position(|t| t.id == id) {
             let tab = self.tabs.remove(idx);
             match tab.kind {
@@ -622,7 +783,9 @@ impl App {
                     let _ = t.tx.send(TermCmd::Close);
                 }
                 TabKind::Sftp(t) => {
-                    let _ = t.tx.send(SftpCmd::Close);
+                    for r in t.panes.iter().filter_map(|p| p.remote.as_ref()) {
+                        let _ = r.tx.send(SftpCmd::Close);
+                    }
                 }
                 TabKind::Rdp(_) => {}
             }
@@ -680,7 +843,69 @@ impl App {
 
     // ------------------------------------------------------------------ events
 
+    pub fn check_updates(&mut self) {
+        self.update.checking = true;
+        self.update.manual = true;
+        self.update.message = None;
+        crate::update::check(self.update_sink.clone());
+    }
+
+    pub fn install_update(&mut self) {
+        if let Some(r) = self.update.latest.clone() {
+            self.update.installing = true;
+            self.update.progress = 0.0;
+            self.update.message = None;
+            crate::update::install(r, self.update_sink.clone());
+        }
+    }
+
+    fn pump_updates(&mut self, ctx: &egui::Context) {
+        use crate::update::UpdateEvent;
+        while let Ok(ev) = self.update_rx.try_recv() {
+            match ev {
+                UpdateEvent::Checked(r) => {
+                    self.update.checking = false;
+                    match r {
+                        Ok(Some(rel)) => {
+                            if self.update.latest.is_none() {
+                                self.toast(
+                                    format!("Aurora {} ist verfügbar", rel.version_text()),
+                                    theme::accent(),
+                                );
+                            }
+                            self.update.latest = Some(rel);
+                        }
+                        Ok(None) if self.update.manual => {
+                            self.update.message =
+                                Some(("Aurora ist aktuell.".into(), theme::green()));
+                        }
+                        Err(e) if self.update.manual => {
+                            self.update.message = Some((e, theme::red()));
+                        }
+                        _ => {}
+                    }
+                }
+                UpdateEvent::Progress(p) => self.update.progress = p,
+                UpdateEvent::Installed(r) => {
+                    self.update.installing = false;
+                    match r {
+                        Ok(true) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                        Ok(false) => {
+                            self.update.installed = true;
+                            self.update.message = Some((
+                                "Installiert – Neustart aktiviert die neue Version.".into(),
+                                theme::green(),
+                            ));
+                        }
+                        Err(e) => self.update.message = Some((e, theme::red())),
+                    }
+                }
+            }
+        }
+    }
+
     fn pump_events(&mut self, ctx: &egui::Context) {
+        self.pump_updates(ctx);
         while let Ok(p) = self.prompts_rx.try_recv() {
             self.hostkey_queue.push_back(p);
         }
@@ -730,8 +955,14 @@ impl App {
                     }
                 }
                 TabKind::Sftp(t) => {
-                    while let Ok(ev) = t.rx.try_recv() {
-                        crate::ui::sftp::handle_event(t, ev, &mut toasts);
+                    for idx in 0..2 {
+                        while let Some(ev) = t.panes[idx]
+                            .remote
+                            .as_mut()
+                            .and_then(|r| r.rx.try_recv().ok())
+                        {
+                            crate::ui::sftp::handle_event(t, idx, ev, &mut toasts);
+                        }
                     }
                 }
                 TabKind::Rdp(t) => {
@@ -768,9 +999,16 @@ impl App {
                     self.connect_host(h, Purpose::Terminal, ctx);
                 }
             }
-            Action::OpenSftp(id) => {
-                if let Some(h) = self.lib.host(id).cloned() {
-                    self.connect_host(h, Purpose::Sftp, ctx);
+            Action::OpenSftp(id) => self.open_files(None, Some(id), ctx),
+            Action::OpenFiles(l, r) => self.open_files(l, r, ctx),
+            Action::SetPaneSource(tab, idx, host) => {
+                match host.and_then(|h| self.lib.host(h).cloned()) {
+                    Some(h) => self.connect_host(
+                        crate::ui::sftp::sftp_target(h),
+                        Purpose::Pane(tab, idx),
+                        ctx,
+                    ),
+                    None => self.set_pane(tab, idx, None, theme::accent()),
                 }
             }
             Action::QuickConnect(s) => match parse_quick(&s) {
@@ -1265,6 +1503,20 @@ impl App {
             });
     }
 
+    fn render_tab(&mut self, ui: &mut egui::Ui, id: u64, actions: &mut Vec<Action>) {
+        let kind = self.tabs.iter().find(|t| t.id == id).map(|t| match t.kind {
+            TabKind::Term(_) => 0,
+            TabKind::Sftp(_) => 1,
+            TabKind::Rdp(_) => 2,
+        });
+        match kind {
+            Some(0) => self.terminal_tab(ui, id, actions),
+            Some(1) => crate::ui::sftp::show(self, ui, id),
+            Some(_) => self.rdp_tab(ui, id),
+            None => {}
+        }
+    }
+
     fn shortcuts(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
         let (palette, close_tab, next_tab) = ctx.input_mut(|i| {
             (
@@ -1332,18 +1584,53 @@ impl eframe::App for App {
         self.shortcuts(&ctx, &mut actions);
         crate::ui::chrome::rail(self, ui, &mut actions);
 
+        ctx.data_mut(|d| {
+            d.insert_temp(
+                crate::ui::chrome::split_info_id(),
+                crate::ui::chrome::SplitInfo {
+                    split: self.split.clone(),
+                    tabs: self.tabs.iter().map(|t| (t.id, t.title.clone())).collect(),
+                },
+            )
+        });
+        let split_view =
+            self.split.len() >= 2 && self.active.is_some_and(|a| self.split.contains(&a));
         match self.active {
+            Some(_) if split_view => {
+                let ids = self.split.clone();
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::NONE.fill(theme::border()))
+                    .show(ui, |ui| {
+                        let rects = crate::ui::chrome::split_rects(ui.max_rect(), ids.len());
+                        for (id, rect) in ids.iter().copied().zip(rects) {
+                            let mut child = ui.new_child(
+                                egui::UiBuilder::new()
+                                    .max_rect(rect)
+                                    .id_salt(("split-pane", id))
+                                    .layout(egui::Layout::top_down(egui::Align::Min)),
+                            );
+                            child.set_clip_rect(rect);
+                            self.render_tab(&mut child, id, &mut actions);
+                            let pressed = ui.input(|i| {
+                                (i.pointer.primary_pressed() || i.pointer.secondary_pressed())
+                                    && i.pointer.interact_pos().is_some_and(|p| rect.contains(p))
+                            });
+                            if pressed {
+                                self.active = Some(id);
+                            }
+                            if self.active == Some(id) {
+                                ui.painter().rect_stroke(
+                                    rect,
+                                    CornerRadius::ZERO,
+                                    Stroke::new(1.5, theme::accent().linear_multiply(0.8)),
+                                    egui::StrokeKind::Inside,
+                                );
+                            }
+                        }
+                    });
+            }
             Some(id) if self.tabs.iter().any(|t| t.id == id) => {
-                let kind = self.tabs.iter().find(|t| t.id == id).map(|t| match t.kind {
-                    TabKind::Term(_) => 0,
-                    TabKind::Sftp(_) => 1,
-                    TabKind::Rdp(_) => 2,
-                });
-                match kind {
-                    Some(0) => self.terminal_tab(ui, id, &mut actions),
-                    Some(1) => crate::ui::sftp::show(self, ui, id),
-                    _ => self.rdp_tab(ui, id),
-                }
+                self.render_tab(ui, id, &mut actions);
             }
             _ => {
                 self.active = None;
@@ -1355,11 +1642,27 @@ impl eframe::App for App {
                     )
                     .show(ui, |ui| match self.view {
                         View::Hosts => crate::ui::hosts::show(self, ui, &mut actions),
+                        View::Files => crate::ui::sftp::page(self, ui, &mut actions),
                         View::Keychain => crate::ui::keychain::show(self, ui, &mut actions),
                         View::Snippets => crate::ui::snippets::show(self, ui, &mut actions),
                         View::Settings => crate::ui::settings::show(self, ui, &mut actions),
                     });
             }
+        }
+
+        if let Some(op) = ctx.data_mut(|d| {
+            let id = crate::ui::chrome::split_op_id();
+            let op = d.get_temp::<crate::ui::chrome::SplitOp>(id);
+            d.remove::<crate::ui::chrome::SplitOp>(id);
+            op
+        }) {
+            self.apply_split(op);
+        }
+
+        if self.password_prompt.is_none()
+            && let Some((tab, idx, host)) = self.pane_queue.pop_front()
+        {
+            self.connect_host(host, Purpose::Pane(tab, idx), &ctx);
         }
 
         crate::ui::editors::show_all(self, &ctx, &mut actions);
@@ -1379,7 +1682,9 @@ impl eframe::App for App {
                     let _ = t.tx.send(TermCmd::Close);
                 }
                 TabKind::Sftp(t) => {
-                    let _ = t.tx.send(SftpCmd::Close);
+                    for r in t.panes.iter().filter_map(|p| p.remote.as_ref()) {
+                        let _ = r.tx.send(SftpCmd::Close);
+                    }
                 }
                 TabKind::Rdp(_) => {}
             }

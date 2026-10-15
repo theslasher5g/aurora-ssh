@@ -115,6 +115,8 @@ pub struct RdpSettings {
     pub fullscreen: bool,
     pub clipboard: bool,
     pub multimon: bool,
+    /// OpenSSH port on the Windows host, used for file access (SFTP).
+    pub sftp_port: u16,
 }
 
 impl Default for RdpSettings {
@@ -127,6 +129,7 @@ impl Default for RdpSettings {
             fullscreen: false,
             clipboard: true,
             multimon: false,
+            sftp_port: 22,
         }
     }
 }
@@ -332,6 +335,10 @@ pub struct Settings {
     pub scrollback: usize,
     pub theme: String,
     pub copy_on_select: bool,
+    /// Look for a newer release on start.
+    pub check_updates: bool,
+    /// Probe hosts in the list and show whether they are reachable.
+    pub reachability: bool,
 }
 
 impl Default for Settings {
@@ -341,6 +348,8 @@ impl Default for Settings {
             scrollback: 5000,
             theme: "phosphor".into(),
             copy_on_select: true,
+            check_updates: true,
+            reachability: true,
         }
     }
 }

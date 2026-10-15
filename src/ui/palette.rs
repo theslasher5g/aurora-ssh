@@ -31,8 +31,8 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                 action: Action::Connect(h.id),
                 score: score + 30,
             });
-            if h.protocol == Protocol::Ssh
-                && let Some(score) = fuzzy(&q, &format!("sftp {hay}"))
+            if matches!(h.protocol, Protocol::Ssh | Protocol::Rdp)
+                && let Some(score) = fuzzy(&q, &format!("sftp dateien {hay}"))
             {
                 items.push(Item {
                     icon: "SFTP".into(),

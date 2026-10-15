@@ -302,6 +302,18 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                 ui.label("Anzeige");
                                 ui.checkbox(&mut h.rdp.embedded, "In Aurora anzeigen");
                                 ui.end_row();
+                                ui.label("Dateien (SFTP)");
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::DragValue::new(&mut h.rdp.sftp_port).range(1..=65535),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new("OpenSSH-Port des Windows-Hosts")
+                                            .size(12.0)
+                                            .color(theme::text_dim()),
+                                    );
+                                });
+                                ui.end_row();
                                 ui.label("Optionen");
                                 ui.horizontal(|ui| {
                                     ui.checkbox(&mut h.rdp.fullscreen, "Vollbild");

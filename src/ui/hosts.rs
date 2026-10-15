@@ -5,6 +5,7 @@ use egui::{Color32, CornerRadius, FontId, Pos2, Rect, RichText, Sense, Stroke, V
 use uuid::Uuid;
 
 use crate::app::{Action, App, ConnState, TabKind, parse_quick};
+use crate::backend::reach::Reach;
 use crate::model::{Host, Protocol};
 use crate::theme;
 use crate::ui::{fuzzy, relative_time};
@@ -28,6 +29,9 @@ pub fn protocol_tag(p: Protocol) -> &'static str {
 }
 
 pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+    if app.lib.settings.reachability {
+        app.reach.tick(&app.rt, &app.lib.hosts, ui.ctx());
+    }
     // Header: title, search/quick connect, primary action.
     let mut enter = false;
     ui.horizontal(|ui| {
@@ -143,7 +147,7 @@ fn live_hosts(app: &App) -> Vec<String> {
         .iter()
         .filter(|t| match &t.kind {
             TabKind::Term(t) => matches!(t.state, ConnState::Connected),
-            TabKind::Sftp(t) => matches!(t.state, ConnState::Connected),
+            TabKind::Sftp(t) => matches!(t.state(), ConnState::Connected),
             TabKind::Rdp(t) => t.is_live(),
         })
         .map(|t| t.title.clone())
@@ -433,17 +437,30 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
     );
 
     let cy = rect.center().y;
+    // LED: lit = open session, green = reachable, red = no answer, grey = unknown.
     let is_live = live.iter().any(|t| t == h.display_name());
-    theme::led(
-        &p,
-        Pos2::new(rect.left() + 14.0, cy),
-        if is_live {
-            theme::green()
-        } else {
-            theme::text_dim()
-        },
-        is_live,
-    );
+    let reach = app
+        .lib
+        .settings
+        .reachability
+        .then(|| app.reach.get(h.id))
+        .flatten();
+    let led_color = match (is_live, reach) {
+        (true, _) | (false, Some(Reach::Up(_))) => theme::green(),
+        (false, Some(Reach::Down)) => theme::red(),
+        (false, None) => theme::text_dim(),
+    };
+    let led_pos = Pos2::new(rect.left() + 14.0, cy);
+    theme::led(&p, led_pos, led_color, is_live);
+    if let Some(r) = reach {
+        let tip_rect = Rect::from_center_size(led_pos, Vec2::splat(18.0));
+        let tip = match r {
+            Reach::Up(ms) => format!("erreichbar · {ms} ms"),
+            Reach::Down => "keine Antwort auf Port".to_string(),
+        };
+        ui.interact(tip_rect, ui.id().with(("reach", h.id)), Sense::hover())
+            .on_hover_text(tip);
+    }
 
     let w = rect.width();
     let col_name = rect.left() + 30.0;
@@ -587,8 +604,13 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
             Action::Connect(h.id),
             true,
         );
-        if h.protocol == Protocol::Ssh {
-            button("Dateien", "SFTP öffnen", Action::OpenSftp(h.id), false);
+        if matches!(h.protocol, Protocol::Ssh | Protocol::Rdp) {
+            button(
+                "Dateien",
+                "Dateien (SFTP) öffnen",
+                Action::OpenSftp(h.id),
+                false,
+            );
         }
         button(
             "Bearbeiten",
@@ -614,7 +636,9 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
             actions.push(Action::Connect(h.id));
             ui.close();
         }
-        if h.protocol == Protocol::Ssh && ui.button("Dateien (SFTP)").clicked() {
+        if matches!(h.protocol, Protocol::Ssh | Protocol::Rdp)
+            && ui.button("Dateien (SFTP)").clicked()
+        {
             actions.push(Action::OpenSftp(h.id));
             ui.close();
         }

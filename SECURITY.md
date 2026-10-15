@@ -9,6 +9,10 @@
 | RDP | TLS-Server-Key wird ebenfalls gepinnt (TOFU), **bevor** Zugangsdaten gesendet werden |
 | Prozesse | Passwörter gehen über stdin-Pipes an `aurora-rdp` / FreeRDP, nie über argv oder Umgebungsvariablen |
 
+| Updates | Nur HTTPS (System-Zertifikatsspeicher); Download wird gegen `SHA256SUMS.txt` des Releases geprüft, sonst verworfen. Weiterleitungen nur auf `https://` |
+| Server ⇄ Server | Daten laufen durch Aurora (keine Zugangsdaten auf den Servern nötig); Dateinamen mit `..`/Trennern werden übersprungen |
+| Erreichbarkeit | Reiner TCP-Verbindungsaufbau zum Host-Port, es werden keine Daten gesendet; abschaltbar in den Einstellungen |
+
 ## Security-Review 0.1 (behobene Funde)
 
 | # | Schwere | Fund | Fix |
@@ -23,5 +27,6 @@
 ## Bekannte Grenzen
 
 * Der entsperrte Vault liegt im Speicher (kein Zeroize); offene Sessions halten ihre Zugangsdaten bis zum Schließen.
+* Die Prüfsummen stammen aus demselben GitHub-Release wie die Pakete (schützt vor defekten/abgebrochenen Downloads und fremden Weiterleitungen, nicht vor einem kompromittierten GitHub-Konto). Pakete sind nicht signiert.
 * Terminal-OSC-52 (Clipboard-Schreiben durch den Server) wird bewusst ignoriert.
 * Keyboard-Interactive-Auth beantwortet alle Prompts mit dem gespeicherten Passwort (OTP-Prompts schlagen dann fehl).

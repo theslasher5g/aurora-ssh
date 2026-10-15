@@ -1,6 +1,6 @@
 [package]
 name = "aurora-term"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Aurora – moderner SSH/SFTP/RDP/Serial-Client mit Keychain, Snippets und Host-Gruppen"
 
@@ -25,6 +25,8 @@ chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 arboard = { version = "3", default-features = false }
 env_logger = "0.11"
+ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier", "gzip"] }
+sha2 = "0.10"
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

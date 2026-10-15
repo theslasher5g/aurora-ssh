@@ -3,6 +3,7 @@
 
 pub mod rdp;
 pub mod rdp_embed;
+pub mod reach;
 pub mod serial;
 pub mod sftp;
 pub mod ssh;

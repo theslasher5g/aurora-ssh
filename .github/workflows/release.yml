@@ -1,23 +1,17 @@
-# Builds and publishes releases. Two separate releases per version:
-#   tag v0.1.0-windows -> Windows installer + portable zip
-#   tag v0.1.0-linux   -> .deb + portable tar.gz
+# Builds Windows and Linux packages and publishes them together in ONE release.
+#   tag v0.2.0 -> Windows installer + portable zip, .deb + portable tar.gz, SHA256SUMS.txt
 # Either push the tag, or run the workflow manually (it then creates the tag itself).
 name: Release
 
 on:
   push:
     tags:
-      - "v*-windows"
-      - "v*-linux"
+      - "v[0-9]+.[0-9]+.[0-9]+"
   workflow_dispatch:
     inputs:
-      platform:
-        description: Plattform
-        type: choice
-        options: [windows, linux]
       version:
         description: Version (ohne v)
-        default: "0.1.0"
+        default: "0.2.0"
 
 permissions:
   contents: write
@@ -26,9 +20,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  version:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        run: |
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
   windows:
-    if: (github.event_name == 'push' && endsWith(github.ref_name, '-windows')) || inputs.platform == 'windows'
+    needs: version
     runs-on: windows-2022
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -54,8 +61,7 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $version = if ("${{ inputs.version }}") { "${{ inputs.version }}" } else { "${{ github.ref_name }}" -replace '^v', '' -replace '-windows$', '' }
-          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $version = $env:VERSION
           New-Item -ItemType Directory -Force dist/Aurora | Out-Null
           Copy-Item target/release/aurora-term.exe dist/Aurora/Aurora.exe
           Copy-Item crates/aurora-rdp/target/release/aurora-rdp.exe dist/Aurora/
@@ -66,34 +72,20 @@ jobs:
             $env:PATH += ";C:\Program Files (x86)\Inno Setup 6"
           }
           iscc /DAppVersion=$version packaging/windows/aurora.iss
-          $sums = Get-ChildItem -Path dist/* -File -Include *.exe, *.zip | ForEach-Object {
-            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
-          }
-          $sums | Out-File -Encoding ascii dist/SHA256SUMS-windows.txt
           Get-ChildItem dist
 
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
         with:
-          tag_name: v${{ env.VERSION }}-windows
-          target_commitish: ${{ github.sha }}
-          name: Aurora ${{ env.VERSION }} für Windows
-          body: |
-            **Aurora ${{ env.VERSION }} – Windows (x64)**
-
-            * `Aurora-${{ env.VERSION }}-windows-x64-setup.exe` – Installer (Startmenü, optional Desktop-Verknüpfung, Deinstallation über „Apps")
-            * `Aurora-${{ env.VERSION }}-windows-x64-portable.zip` – ohne Installation: entpacken und `Aurora.exe` starten
-
-            Das Programm ist nicht signiert; Windows SmartScreen fragt beim ersten Start evtl. nach („Weitere Informationen" → „Trotzdem ausführen").
-            Prüfsummen: `SHA256SUMS-windows.txt`.
-          files: |
+          name: windows
+          path: |
             dist/*.exe
             dist/*.zip
-            dist/SHA256SUMS-windows.txt
 
   linux:
-    if: (github.event_name == 'push' && endsWith(github.ref_name, '-linux')) || inputs.platform == 'linux'
+    needs: version
     runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -114,27 +106,58 @@ jobs:
           cargo build --release --locked --manifest-path crates/aurora-rdp/Cargo.toml
 
       - name: Package
+        run: packaging/linux/build.sh "$VERSION" dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            dist/*.deb
+            dist/*.tar.gz
+
+  publish:
+    needs: [version, windows, linux]
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # One checksum file for everything; the in-app updater verifies against it.
+      - name: Checksums
         run: |
-          VERSION="${{ inputs.version }}"
-          if [ -z "$VERSION" ]; then VERSION="${GITHUB_REF_NAME#v}"; VERSION="${VERSION%-linux}"; fi
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          packaging/linux/build.sh "$VERSION" dist
+          cd dist
+          sha256sum *.exe *.zip *.deb *.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.VERSION }}-linux
+          tag_name: v${{ env.VERSION }}
           target_commitish: ${{ github.sha }}
-          name: Aurora ${{ env.VERSION }} für Linux
+          name: Aurora ${{ env.VERSION }}
+          make_latest: true
           body: |
-            **Aurora ${{ env.VERSION }} – Linux (x86_64)**
+            **Aurora ${{ env.VERSION }}** – Windows und Linux
 
-            * `aurora_${{ env.VERSION }}_amd64.deb` – für Debian/Ubuntu/Mint: `sudo apt install ./aurora_${{ env.VERSION }}_amd64.deb`
-            * `aurora-${{ env.VERSION }}-linux-x86_64.tar.gz` – für andere Distributionen: entpacken, `./install.sh` (installiert nach `~/.local`) oder direkt `./aurora` starten
+            | System | Datei | Installation |
+            |---|---|---|
+            | Windows (x64) | `Aurora-${{ env.VERSION }}-windows-x64-setup.exe` | Installer ausführen |
+            | | `Aurora-${{ env.VERSION }}-windows-x64-portable.zip` | entpacken, `Aurora.exe` starten |
+            | Linux (x86_64) | `aurora_${{ env.VERSION }}_amd64.deb` | `sudo apt install ./aurora_${{ env.VERSION }}_amd64.deb` |
+            | | `aurora-${{ env.VERSION }}-linux-x86_64.tar.gz` | entpacken, `./install.sh` (nach `~/.local`) oder `./aurora` |
 
-            Benötigt glibc ≥ 2.35 sowie X11 oder Wayland mit OpenGL.
-            Prüfsummen: `SHA256SUMS-linux.txt`.
+            Ab dieser Version prüft Aurora beim Start auf neue Versionen und aktualisiert sich auf Wunsch selbst
+            (Einstellungen → Updates; Download wird gegen `SHA256SUMS.txt` geprüft).
+
+            Windows: nicht signiert – SmartScreen fragt beim ersten Start evtl. nach („Weitere Informationen" → „Trotzdem ausführen").
+            Linux: benötigt glibc ≥ 2.35 sowie X11 oder Wayland mit OpenGL.
           files: |
+            dist/*.exe
+            dist/*.zip
             dist/*.deb
             dist/*.tar.gz
-            dist/SHA256SUMS-linux.txt
+            dist/SHA256SUMS.txt

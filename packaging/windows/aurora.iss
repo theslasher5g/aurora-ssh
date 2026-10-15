@@ -27,6 +27,9 @@ UninstallDisplayIcon={app}\Aurora.exe
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+; In-app updates run the installer with /SILENT /CLOSEAPPLICATIONS.
+CloseApplications=yes
+RestartApplications=no
 
 [Languages]
 Name: "german"; MessagesFile: "compiler:Languages\German.isl"
@@ -47,3 +50,5 @@ Name: "{autodesktop}\Aurora"; Filename: "{app}\Aurora.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\Aurora.exe"; Description: "{cm:LaunchProgram,Aurora}"; Flags: nowait postinstall skipifsilent
+; Silent (in-app) update: start the new version again.
+Filename: "{app}\Aurora.exe"; Flags: nowait skipifnotsilent

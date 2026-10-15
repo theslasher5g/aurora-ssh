@@ -10,6 +10,7 @@ mod store;
 mod terminal;
 mod theme;
 mod ui;
+mod update;
 
 fn main() -> eframe::Result {
     env_logger::init();

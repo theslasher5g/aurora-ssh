@@ -54,6 +54,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                             )
                             .changed();
                         ui.end_row();
+                        ui.label("Erreichbarkeit");
+                        changed |= ui
+                            .checkbox(
+                                &mut app.lib.settings.reachability,
+                                "Hosts in der Liste regelmäßig anpingen (TCP)",
+                            )
+                            .changed();
+                        ui.end_row();
                         ui.label("Kopieren bei Auswahl");
                         changed |= ui
                             .checkbox(&mut app.lib.settings.copy_on_select, "")
@@ -98,6 +106,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             });
             ui.add_space(18.0);
 
+            updates(app, ui, &mut changed);
+            ui.add_space(18.0);
+
             known_hosts(app, ui, actions);
             ui.add_space(18.0);
 
@@ -126,6 +137,71 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 app.save_library();
             }
         });
+}
+
+fn updates(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
+    theme::section_title(ui, "Updates");
+    theme::card_frame().show(ui, |ui| {
+        ui.set_width(ui.available_width().min(560.0));
+        ui.horizontal(|ui| {
+            ui.label(theme::mono(
+                format!("Version {}", env!("CARGO_PKG_VERSION")),
+                13.0,
+            ));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if app.update.installed {
+                    if theme::primary_button(ui, "Neu starten").clicked() {
+                        crate::update::restart();
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                } else if let Some(rel) = app.update.latest.clone() {
+                    let kind = crate::update::InstallKind::detect();
+                    if app.update.installing {
+                        ui.label(
+                            theme::mono(format!("{:.0} %", app.update.progress * 100.0), 12.5)
+                                .color(theme::accent()),
+                        );
+                        ui.spinner();
+                    } else if kind.can_self_update() {
+                        if theme::primary_button(
+                            ui,
+                            &format!("Auf {} aktualisieren", rel.version_text()),
+                        )
+                        .clicked()
+                        {
+                            app.install_update();
+                        }
+                    } else if theme::primary_button(ui, "Download-Seite öffnen").clicked() {
+                        crate::update::open_url(&rel.page);
+                    }
+                    if ui.button("Änderungen").clicked() {
+                        crate::update::open_url(&rel.page);
+                    }
+                } else if app.update.checking {
+                    ui.spinner();
+                } else if ui.button("Jetzt prüfen").clicked() {
+                    app.check_updates();
+                }
+            });
+        });
+        if let Some(rel) = &app.update.latest
+            && !app.update.installed
+        {
+            ui.label(
+                RichText::new(format!("Neue Version {} verfügbar.", rel.version_text()))
+                    .color(theme::accent()),
+            );
+        }
+        if let Some((msg, color)) = &app.update.message {
+            ui.label(RichText::new(msg).size(12.5).color(*color));
+        }
+        *changed |= ui
+            .checkbox(
+                &mut app.lib.settings.check_updates,
+                "Beim Start automatisch nach Updates suchen",
+            )
+            .changed();
+    });
 }
 
 /// Clickable mini preview of a theme.

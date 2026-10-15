@@ -7,7 +7,7 @@ verschlüsselter Keychain, Snippets, Host-Gruppen und umschaltbaren Themes
 
 ## Download
 
-Unter [Releases](../../releases) gibt es zwei getrennte Downloads:
+Unter [Releases](../../releases) liegen Windows und Linux im selben Release:
 
 | System | Datei | Installation |
 |---|---|---|
@@ -21,17 +21,21 @@ Unter [Releases](../../releases) gibt es zwei getrennte Downloads:
 | Bereich | |
 |---|---|
 | **SSH** | Eigener Terminal-Emulator (256 Farben/Truecolor, Scrollback, Auswahl, Bracketed Paste, Resize), Key/Passwort/Keyboard-Interactive, Keepalive, Reconnect per Enter |
-| **SFTP** | Zwei Spalten lokal ⇄ Server, rekursive Transfers mit Fortschritt, Drag & Drop |
+| **Dateien (SFTP)** | Eigener Bereich in der Leiste. Zwei Spalten, jede Seite **lokal oder ein beliebiger Server** – auch **Server ⇄ Server** (wird über Aurora gestreamt, die Server müssen sich nicht gegenseitig erreichen). Windows-Server mit OpenSSH (`C:\pfad` wird übersetzt, Laufwerksliste lokal), RDP-Hosts bekommen ihren SFTP-Port. Rekursive Transfers mit Fortschritt, Drag & Drop |
+| **Splitscreen** | Bis zu **4 Sessions nebeneinander** (Terminal, Dateien, RDP gemischt) – über das ◫-Symbol im Session-Kopf oder Rechtsklick auf einen Port |
 | **RDP** | Direkt im Tab (IronRDP): passt sich der Fenstergröße an, **Zwischenablage in beide Richtungen** (automatisch + Buttons „vom Host kopieren"/„an Host senden"), **Ctrl+Alt+Del**, Windows-Taste, Zwischenablage als Tastatureingabe tippen (für Login-Masken/Konsolen). Optional im System-Client (mstsc, FreeRDP, Remmina) |
 | **Serial** | Port-Erkennung, Baudrate, Format, Flusskontrolle, Zeilenende, lokales Echo |
 | **Keychain** | Passwörter & SSH-Keys, Ed25519-Generator, verschlüsselt mit Argon2id + XChaCha20-Poly1305 |
 | **Snippets** | Platzhalter `{{variable}}` mit Live-Vorschau, Snippet-Leiste im Terminal, in allen Sessions ausführen, Startup-Snippet pro Host |
 | **Gruppen** | Verschachtelt, Farbe & Icon, vererbte Standard-User/-Identität, Favoriten, Zuletzt verbunden, Tags |
-| **Design** | Eigenes „Patchbay“-Design: Sessions als nummerierte Ports mit Status-LED in der Leiste, IBM Plex Sans/Mono. 5 Themes (Phosphor, Glacier, Nord, Dracula, Paper), Befehlspalette `Ctrl/⌘+K`, Broadcast-Modus |
+| **Design** | Eigenes „Patchbay“-Design: Sessions als nummerierte Ports mit Status-LED in der Leiste, IBM Plex Sans/Mono. 12 Themes (Phosphor, Glacier, Nord, Dracula, Paper, Tokyo Night, Gruvbox, Catppuccin, Rosé Pine, Solarized Dark/Light, GitHub Light) – das Terminal übernimmt jeweils die passenden Farben. Befehlspalette `Ctrl/⌘+K`, Broadcast-Modus |
+| **Komfort** | Erreichbarkeits-LED je Host (TCP-Check mit Latenz), **Update-Check** beim Start mit Ein-Klick-Update (SHA256-geprüft) |
 
 | | |
 |---|---|
-| ![Terminal](docs/screenshots/terminal.png) | ![SFTP](docs/screenshots/sftp.png) |
+| ![Splitscreen](docs/screenshots/split.png) | ![Server ⇄ Server](docs/screenshots/sftp.png) |
+| ![Dateien](docs/screenshots/files.png) | ![Tokyo Night](docs/screenshots/tokyo.png) |
+| ![Terminal](docs/screenshots/terminal.png) | ![GitHub Light](docs/screenshots/light.png) |
 | ![RDP](docs/screenshots/rdp.png) | ![Paper-Theme](docs/screenshots/paper.png) |
 | ![Befehlspalette](docs/screenshots/palette.png) | ![Snippets](docs/screenshots/snippets.png) |
 | ![Einstellungen & Themes](docs/screenshots/themes.png) | ![Tresor](docs/screenshots/lock.png) |
@@ -62,8 +66,9 @@ pinnt, die mit russh kollidieren. Sie läuft als Hilfsprozess neben `aurora` und
 geänderte Bildbereiche. Zwei kleine Fixes an IronRDP liegen unter `crates/aurora-rdp/vendor`
 (markiert mit `AURORA PATCH`).
 
-Releases: Workflow „Release“ unter *Actions* manuell starten (Plattform + Version) oder Tag
-`v<version>-windows` / `v<version>-linux` pushen – GitHub Actions baut und veröffentlicht das Release.
+Releases: Workflow „Release“ unter *Actions* manuell starten (Version) oder Tag `v<version>` pushen –
+GitHub Actions baut Windows und Linux und veröffentlicht beides in einem Release inkl. `SHA256SUMS.txt`
+(die prüft das In-App-Update).
 
 ## Daten & Sicherheit
 
@@ -81,8 +86,9 @@ src/
 ├── app.rs             Zustand, Tabs, Session-Lifecycle, Layout
 ├── terminal.rs        vt100 + Renderer + Tastatur→Escape-Sequenzen
 ├── theme.rs           Design-System „Patchbay“: Paletten, Fonts, Widgets
+├── update.rs          Update-Check (GitHub Releases) und Selbst-Update
 ├── model.rs / store.rs  Daten, Persistenz, Vault
-├── backend/           ssh, sftp, serial, rdp (System-Client), rdp_embed (Hilfsprozess)
+├── backend/           ssh, sftp (inkl. Server⇄Server), serial, rdp, rdp_embed, reach
 └── ui/                Port-Leiste (chrome), Hosts, Keychain, Snippets, SFTP, RDP, Einstellungen, Dialoge, Palette
 assets/fonts/          IBM Plex Sans/Mono (SIL OFL)
 crates/aurora-rdp/     IronRDP-Hilfsprozess (stdio-Protokoll)

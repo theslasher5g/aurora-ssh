@@ -51,6 +51,7 @@ pub enum SftpEvent {
     Status(String),
     Connected {
         home: String,
+        session: Session,
     },
     Listing {
         path: String,
@@ -70,6 +71,28 @@ pub enum SftpEvent {
     Changed,
     Error(String),
     Closed(Option<String>),
+}
+
+/// Shared handle to an open SFTP session; used for server ⇄ server copies.
+#[derive(Clone)]
+pub struct Session(pub Arc<SftpSession>);
+
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Session")
+    }
+}
+
+/// Accepts Windows-style input (`C:\Users`, `C:/x`) and turns it into the path form
+/// Win32-OpenSSH expects (`/C:/Users`). POSIX paths pass through unchanged.
+pub fn normalize_remote(input: &str) -> String {
+    let s = input.trim().replace('\\', "/");
+    let b = s.as_bytes();
+    if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
+        format!("/{s}")
+    } else {
+        s
+    }
 }
 
 pub fn join(dir: &str, name: &str) -> String {
@@ -114,7 +137,10 @@ async fn run(
     channel.request_subsystem(true, "sftp").await?;
     let sftp = Arc::new(SftpSession::new(channel.into_stream()).await?);
     let home = sftp.canonicalize(".").await.unwrap_or_else(|_| "/".into());
-    events.send(SftpEvent::Connected { home: home.clone() });
+    events.send(SftpEvent::Connected {
+        home: home.clone(),
+        session: Session(sftp.clone()),
+    });
 
     while let Some(cmd) = cmds.recv().await {
         let res: Result<()> = match cmd {
@@ -402,6 +428,96 @@ async fn upload_file(
     Ok(())
 }
 
+/// Copies a file or directory from one server to another, streaming through Aurora,
+/// so the two servers never need to reach each other.
+pub async fn relay(
+    src: Arc<SftpSession>,
+    src_path: String,
+    dst: Arc<SftpSession>,
+    dst_dir: String,
+    id: u64,
+    ev: &Sink<SftpEvent>,
+) -> Result<()> {
+    let base = src_path
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    let safe = |n: &str| !(n.is_empty() || n == "." || n == ".." || n.contains(['/', '\\', '\0']));
+    if !safe(&base) {
+        return Err(anyhow!("unsicherer Dateiname: {base:?}"));
+    }
+    let meta = src.metadata(src_path.clone()).await?;
+    if !meta.is_dir() {
+        return relay_file(&src, &src_path, &dst, &join(&dst_dir, &base), id, ev).await;
+    }
+    let mut skipped = 0usize;
+    let mut queue = vec![(src_path, join(&dst_dir, &base))];
+    while let Some((sdir, ddir)) = queue.pop() {
+        if !dst.try_exists(ddir.clone()).await.unwrap_or(false) {
+            dst.create_dir(ddir.clone()).await?;
+        }
+        for e in src.read_dir(sdir.clone()).await? {
+            let n = e.file_name();
+            if n == "." || n == ".." {
+                continue;
+            }
+            if !safe(&n) {
+                skipped += 1;
+                continue;
+            }
+            let (sp, dp) = (join(&sdir, &n), join(&ddir, &n));
+            if e.file_type().is_dir() {
+                queue.push((sp, dp));
+            } else if e.file_type().is_file() {
+                relay_file(&src, &sp, &dst, &dp, id, ev).await?;
+            }
+        }
+    }
+    if skipped > 0 {
+        return Err(anyhow!(
+            "{skipped} Einträge mit unsicheren Namen übersprungen"
+        ));
+    }
+    Ok(())
+}
+
+async fn relay_file(
+    src: &SftpSession,
+    src_path: &str,
+    dst: &SftpSession,
+    dst_path: &str,
+    id: u64,
+    ev: &Sink<SftpEvent>,
+) -> Result<()> {
+    let total = src.metadata(src_path.to_string()).await?.size.unwrap_or(0);
+    let name = src_path.rsplit('/').next().unwrap_or(src_path).to_string();
+    let mut from = src.open(src_path.to_string()).await?;
+    let mut to = dst.create(dst_path.to_string()).await?;
+    let mut buf = vec![0u8; CHUNK];
+    let mut done = 0u64;
+    loop {
+        let n = from.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        to.write_all(&buf[..n]).await?;
+        done += n as u64;
+        ev.send(SftpEvent::Progress {
+            id,
+            name: name.clone(),
+            done,
+            total,
+        });
+        if ev.is_closed() {
+            return Err(anyhow!("abgebrochen"));
+        }
+    }
+    to.shutdown().await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,6 +529,11 @@ mod tests {
         assert_eq!(parent("/home/u"), "/home");
         assert_eq!(parent("/home"), "/");
         assert_eq!(parent("/"), "/");
+        assert_eq!(normalize_remote("C:\\Users\\me"), "/C:/Users/me");
+        assert_eq!(normalize_remote("d:/data"), "/d:/data");
+        assert_eq!(normalize_remote(" /home/u "), "/home/u");
+        assert_eq!(parent("/C:/Users"), "/C:");
+        assert_eq!(parent("/C:"), "/");
         assert_eq!(safe_local_name("report.txt"), Some("report.txt"));
         for bad in ["..", ".", "", "../x", "a/b", "a\\b", "C:evil", "x\ny"] {
             assert_eq!(safe_local_name(bad), None, "{bad:?}");

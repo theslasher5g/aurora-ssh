@@ -61,8 +61,10 @@ fn rail_button(
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn port_tile(
     ui: &mut egui::Ui,
+    in_split: bool,
     index: usize,
     label: &str,
     cable: Color32,
@@ -119,6 +121,16 @@ fn port_tile(
         Stroke::new(2.0, cable.linear_multiply(if active { 1.0 } else { 0.7 })),
     );
     theme::led(p, rect.right_top() + Vec2::new(-7.0, 7.0), led, live);
+    if in_split {
+        p.rect_filled(
+            Rect::from_min_size(
+                rect.left_top() + Vec2::new(-8.0, 8.0),
+                Vec2::new(2.0, TILE - 16.0),
+            ),
+            CornerRadius::same(1),
+            theme::accent(),
+        );
+    }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -142,6 +154,7 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 for (view, glyph, tip) in [
                     (View::Hosts, "🖧", "Verbindungen"),
                     (View::Keychain, "🔑", "Schlüssel & Passwörter"),
+                    (View::Files, "🗀", "Dateien (SFTP)"),
                     (View::Snippets, "⚡", "Snippets"),
                 ] {
                     if rail_button(ui, glyph, tip, home && app.view == view, None).clicked() {
@@ -168,9 +181,9 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                             state_text(&t.state),
                         ),
                         TabKind::Sftp(t) => (
-                            crate::app::state_color(&t.state),
-                            matches!(t.state, ConnState::Connected),
-                            state_text(&t.state),
+                            crate::app::state_color(t.state()),
+                            matches!(t.state(), ConnState::Connected),
+                            state_text(t.state()),
                         ),
                         TabKind::Rdp(t) => (
                             t.status_color(),
@@ -189,6 +202,7 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     };
                     let resp = port_tile(
                         ui,
+                        app.split.len() >= 2 && app.split.contains(&tab.id),
                         i + 1,
                         &initials(&tab.title),
                         tab.color,
@@ -212,6 +226,14 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         close = Some(tab.id);
                     }
                     resp.context_menu(|ui| {
+                        if let Some(a) = app.active.filter(|a| *a != tab.id)
+                            && !app.split.contains(&tab.id)
+                            && app.split.len() < MAX_SPLIT
+                            && ui.button("Neben aktuelle Session legen").clicked()
+                        {
+                            push_split_op(ui.ctx(), SplitOp::Add(a, tab.id));
+                            ui.close();
+                        }
                         if ui.button("Neu verbinden").clicked() {
                             reconnect = Some(tab.id);
                             ui.close();
@@ -236,6 +258,12 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     ui.spacing_mut().item_spacing.y = 6.0;
                     if rail_button(ui, "🔒", "Sperren", false, None).clicked() {
                         actions.push(Action::Lock);
+                    }
+                    if let Some(rel) = &app.update.latest {
+                        let tip = format!("Update auf {} verfügbar", rel.version_text());
+                        if rail_button(ui, "⬆", &tip, false, Some(theme::accent())).clicked() {
+                            actions.push(Action::Navigate(View::Settings));
+                        }
                     }
                     if rail_button(
                         ui,
@@ -288,6 +316,146 @@ pub fn state_pair(s: &ConnState) -> (String, Color32) {
     }
 }
 
+/// Which sessions exist and which are shown side by side; published by the app each
+/// frame so every session header can offer the split menu.
+#[derive(Clone, Default)]
+pub struct SplitInfo {
+    pub split: Vec<u64>,
+    pub tabs: Vec<(u64, String)>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum SplitOp {
+    /// Show `other` next to `base`.
+    Add(u64, u64),
+    Remove(u64),
+    Clear,
+}
+
+pub const MAX_SPLIT: usize = 4;
+
+pub fn split_info_id() -> egui::Id {
+    egui::Id::new("aurora-split-info")
+}
+
+pub fn split_op_id() -> egui::Id {
+    egui::Id::new("aurora-split-op")
+}
+
+fn push_split_op(ctx: &egui::Context, op: SplitOp) {
+    ctx.data_mut(|d| d.insert_temp(split_op_id(), op));
+}
+
+/// Painted "two panes" icon button.
+fn split_button(ui: &mut egui::Ui, on: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::click());
+    if resp.hovered() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(6), theme::bg_hover());
+    }
+    let color = if on {
+        theme::accent()
+    } else if resp.hovered() {
+        theme::text()
+    } else {
+        theme::text_dim()
+    };
+    let r = Rect::from_center_size(rect.center(), Vec2::new(14.0, 11.0));
+    let p = ui.painter();
+    p.rect_stroke(
+        r,
+        CornerRadius::same(2),
+        Stroke::new(1.3, color),
+        egui::StrokeKind::Inside,
+    );
+    p.line_segment([r.center_top(), r.center_bottom()], Stroke::new(1.3, color));
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Header button: put another session next to this one (up to four).
+fn split_menu(ui: &mut egui::Ui, index: usize) {
+    let info: SplitInfo = ui
+        .ctx()
+        .data(|d| d.get_temp(split_info_id()))
+        .unwrap_or_default();
+    let Some(&(me, _)) = info.tabs.get(index.wrapping_sub(1)) else {
+        return;
+    };
+    let in_split = info.split.len() >= 2 && info.split.contains(&me);
+    let resp = split_button(ui, in_split).on_hover_text("Nebeneinander anzeigen");
+    egui::Popup::menu(&resp).show(|ui| {
+        ui.set_min_width(220.0);
+        let shown: Vec<u64> = if in_split {
+            info.split.clone()
+        } else {
+            vec![me]
+        };
+        let others: Vec<&(u64, String)> = info
+            .tabs
+            .iter()
+            .filter(|(id, _)| !shown.contains(id))
+            .collect();
+        if shown.len() < MAX_SPLIT {
+            if others.is_empty() {
+                ui.label(
+                    RichText::new("Öffne eine weitere Session, um sie hier daneben zu legen.")
+                        .size(12.5)
+                        .color(theme::text_dim()),
+                );
+            }
+            for (id, title) in others {
+                if ui.button(format!("Daneben: {title}")).clicked() {
+                    push_split_op(ui.ctx(), SplitOp::Add(me, *id));
+                    ui.close();
+                }
+            }
+        } else {
+            ui.label(
+                RichText::new("Maximal vier Sessions nebeneinander.")
+                    .size(12.5)
+                    .color(theme::text_dim()),
+            );
+        }
+        if in_split {
+            ui.separator();
+            if ui.button("Diese Session lösen").clicked() {
+                push_split_op(ui.ctx(), SplitOp::Remove(me));
+                ui.close();
+            }
+            if ui.button("Split beenden").clicked() {
+                push_split_op(ui.ctx(), SplitOp::Clear);
+                ui.close();
+            }
+        }
+    });
+}
+
+/// Pane rectangles for 1–4 sessions: side by side, 1+2 or a 2×2 grid.
+pub fn split_rects(r: Rect, n: usize) -> Vec<Rect> {
+    let g = 1.0;
+    let (l, t, rr, b) = (r.left(), r.top(), r.right(), r.bottom());
+    let mx = r.center().x;
+    let my = r.center().y;
+    let rect = |x0: f32, y0: f32, x1: f32, y1: f32| {
+        Rect::from_min_max(Pos2::new(x0, y0), Pos2::new(x1, y1))
+    };
+    match n {
+        0 | 1 => vec![r],
+        2 => vec![rect(l, t, mx - g, b), rect(mx + g, t, rr, b)],
+        3 => vec![
+            rect(l, t, mx - g, b),
+            rect(mx + g, t, rr, my - g),
+            rect(mx + g, my + g, rr, b),
+        ],
+        _ => vec![
+            rect(l, t, mx - g, my - g),
+            rect(mx + g, t, rr, my - g),
+            rect(l, my + g, mx - g, b),
+            rect(mx + g, my + g, rr, b),
+        ],
+    }
+}
+
 /// Slim header above a session: port number, name, address, state and actions.
 pub fn session_header(
     ui: &mut egui::Ui,
@@ -306,29 +474,39 @@ pub fn session_header(
                 .inner_margin(Margin::symmetric(18, 0)),
         )
         .show(ui, |ui| {
-            ui.horizontal_centered(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
-                ui.label(
-                    RichText::new(format!("{index:02}"))
-                        .font(theme::mono_medium(12.5))
-                        .color(theme::accent()),
-                );
-                ui.label(theme::heading(title, 15.0));
-                ui.add(
-                    egui::Label::new(theme::mono(subtitle, 12.5).color(theme::text_dim()))
-                        .truncate(),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    right(ui);
-                    ui.add_space(10.0);
-                    let (label, color) = state;
+            // Right side first, so the title/address get whatever space is left and
+            // truncate instead of running under the buttons in narrow split panes.
+            let narrow = ui.available_width() < 640.0;
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                split_menu(ui, index);
+                right(ui);
+                ui.add_space(10.0);
+                let (label, color) = state;
+                if !narrow {
                     ui.add(
-                        egui::Label::new(RichText::new(label).size(12.5).color(theme::text_dim()))
+                        egui::Label::new(RichText::new(&label).size(12.5).color(theme::text_dim()))
                             .truncate(),
                     );
-                    let (r, _) = ui.allocate_exact_size(Vec2::new(12.0, 12.0), Sense::hover());
-                    theme::led(ui.painter(), r.center(), color, true);
+                }
+                let (r, resp) = ui.allocate_exact_size(Vec2::new(12.0, 12.0), Sense::hover());
+                theme::led(ui.painter(), r.center(), color, true);
+                resp.on_hover_text(label);
+                ui.add_space(6.0);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    ui.label(
+                        RichText::new(format!("{index:02}"))
+                            .font(theme::mono_medium(12.5))
+                            .color(theme::accent()),
+                    );
+                    ui.add(egui::Label::new(theme::heading(title, 15.0)).truncate());
+                    if !narrow {
+                        ui.add(
+                            egui::Label::new(theme::mono(subtitle, 12.5).color(theme::text_dim()))
+                                .truncate(),
+                        );
+                    }
                 });
             });
         });
