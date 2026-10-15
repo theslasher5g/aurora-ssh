@@ -151,9 +151,9 @@ pub fn launch(l: &RdpLaunch) -> Result<RdpProcess> {
         });
     }
 
-    Err(anyhow!(
+    Err(anyhow!(t!(
         "Kein RDP-Client gefunden. Installiere FreeRDP (xfreerdp) oder Remmina."
-    ))
+    )))
 }
 
 #[cfg(test)]

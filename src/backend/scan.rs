@@ -53,13 +53,13 @@ pub fn parse_range(input: &str) -> Result<Vec<Ipv4Addr>> {
         let base: Ipv4Addr = base
             .trim()
             .parse()
-            .map_err(|_| anyhow!("Ungültige Adresse"))?;
+            .map_err(|_| anyhow!(t!("Ungültige Adresse")))?;
         let bits: u32 = bits
             .trim()
             .parse()
-            .map_err(|_| anyhow!("Ungültige Maske"))?;
+            .map_err(|_| anyhow!(t!("Ungültige Maske")))?;
         if !(22..=32).contains(&bits) {
-            bail!("Bitte höchstens ein /22-Netz (1024 Adressen)");
+            bail!(t!("Bitte höchstens ein /22-Netz (1024 Adressen)"));
         }
         let mask = if bits == 32 {
             u32::MAX
@@ -72,20 +72,26 @@ pub fn parse_range(input: &str) -> Result<Vec<Ipv4Addr>> {
         let (first, last) = if size >= 4 { (1, size - 1) } else { (0, size) };
         (first..last).map(|i| Ipv4Addr::from(net + i)).collect()
     } else if let Some((a, b)) = s.split_once('-') {
-        let start: Ipv4Addr = a.trim().parse().map_err(|_| anyhow!("Ungültige Adresse"))?;
-        let end_last: u8 = b.trim().parse().map_err(|_| anyhow!("Ungültiges Ende"))?;
+        let start: Ipv4Addr = a
+            .trim()
+            .parse()
+            .map_err(|_| anyhow!(t!("Ungültige Adresse")))?;
+        let end_last: u8 = b
+            .trim()
+            .parse()
+            .map_err(|_| anyhow!(t!("Ungültiges Ende")))?;
         let o = start.octets();
         if end_last < o[3] {
-            bail!("Ende liegt vor dem Anfang");
+            bail!(t!("Ende liegt vor dem Anfang"));
         }
         (o[3]..=end_last)
             .map(|l| Ipv4Addr::new(o[0], o[1], o[2], l))
             .collect()
     } else {
-        vec![s.parse().map_err(|_| anyhow!("Ungültige Adresse"))?]
+        vec![s.parse().map_err(|_| anyhow!(t!("Ungültige Adresse")))?]
     };
     if list.len() > MAX_ADDRESSES {
-        bail!("Bitte höchstens 1024 Adressen");
+        bail!(t!("Bitte höchstens 1024 Adressen"));
     }
     Ok(list)
 }
@@ -97,11 +103,11 @@ pub fn parse_ports(input: &str) -> Result<Vec<u16>> {
         .map(|p| {
             p.trim()
                 .parse::<u16>()
-                .map_err(|_| anyhow!("Ungültiger Port: {p}"))
+                .map_err(|_| anyhow!("{}", t!("Ungültiger Port: {}", p)))
         })
         .collect::<Result<_>>()?;
     if ports.is_empty() || ports.len() > 8 {
-        bail!("1 bis 8 Ports angeben");
+        bail!(t!("1 bis 8 Ports angeben"));
     }
     Ok(ports)
 }

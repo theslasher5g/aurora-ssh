@@ -681,33 +681,33 @@ pub fn dangerous_command(line: &str) -> Option<&'static str> {
         })
         || first == "rm" && has("--recursive");
     if rm_recursive {
-        return Some("löscht rekursiv");
+        return Some(t!("löscht rekursiv"));
     }
     match first {
-        "shutdown" | "poweroff" | "halt" => return Some("fährt den Server herunter"),
-        "reboot" => return Some("startet den Server neu"),
-        "dd" => return Some("schreibt direkt auf ein Gerät"),
-        "init" if has("0") || has("6") => return Some("ändert den Runlevel"),
+        "shutdown" | "poweroff" | "halt" => return Some(t!("fährt den Server herunter")),
+        "reboot" => return Some(t!("startet den Server neu")),
+        "dd" => return Some(t!("schreibt direkt auf ein Gerät")),
+        "init" if has("0") || has("6") => return Some(t!("ändert den Runlevel")),
         "kill" | "killall" | "pkill" if has("-9") || has("-kill") => {
-            return Some("beendet Prozesse hart");
+            return Some(t!("beendet Prozesse hart"));
         }
-        "truncate" => return Some("leert Dateien"),
+        "truncate" => return Some(t!("leert Dateien")),
         "chmod" | "chown" if has("-r") || has("--recursive") => {
-            return Some("ändert Rechte rekursiv");
+            return Some(t!("ändert Rechte rekursiv"));
         }
         _ => {}
     }
     if first.starts_with("mkfs") {
-        return Some("formatiert ein Dateisystem");
+        return Some(t!("formatiert ein Dateisystem"));
     }
     if first == "systemctl" && (has("stop") || has("restart") || has("poweroff") || has("reboot")) {
-        return Some("stoppt oder startet Dienste");
+        return Some(t!("stoppt oder startet Dienste"));
     }
     if l.contains("drop database") || l.contains("drop table") || l.contains("truncate table") {
-        return Some("löscht Datenbankinhalte");
+        return Some(t!("löscht Datenbankinhalte"));
     }
     if l.contains(":(){") || l.contains("> /dev/sd") || l.contains(">/dev/sd") {
-        return Some("überschreibt Systemdaten");
+        return Some(t!("überschreibt Systemdaten"));
     }
     None
 }

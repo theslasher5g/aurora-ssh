@@ -135,14 +135,14 @@ fn latest() -> Result<Option<Release>> {
         .get(&url)
         .header("Accept", "application/vnd.github+json")
         .call()
-        .context("GitHub nicht erreichbar")?;
+        .context(t!("GitHub nicht erreichbar"))?;
     if !resp.status().is_success() {
-        bail!("GitHub antwortet mit HTTP {}", resp.status());
+        bail!("{}", t!("GitHub antwortet mit HTTP {}", resp.status()));
     }
     let json: serde_json::Value = serde_json::from_str(&resp.body_mut().read_to_string()?)?;
     let list = json
         .as_array()
-        .ok_or_else(|| anyhow!("unerwartete Antwort von GitHub"))?;
+        .ok_or_else(|| anyhow!(t!("unerwartete Antwort von GitHub")))?;
     Ok(pick(list, &InstallKind::detect()).filter(|r| r.version > current()))
 }
 
@@ -199,25 +199,25 @@ fn install_blocking(release: &Release, sink: &Sink<UpdateEvent>) -> Result<bool>
     let kind = InstallKind::detect();
     let suffix = kind
         .asset_suffix()
-        .ok_or_else(|| anyhow!("Portable Version: bitte neu herunterladen"))?;
+        .ok_or_else(|| anyhow!(t!("Portable Version: bitte neu herunterladen")))?;
     let asset = release
         .assets
         .iter()
         .find(|a| a.name.ends_with(suffix))
-        .ok_or_else(|| anyhow!("Release enthält keine Datei *{suffix}"))?;
+        .ok_or_else(|| anyhow!("{}", t!("Release enthält keine Datei *{}", suffix)))?;
     let sums = release
         .assets
         .iter()
         .find(|a| a.name.starts_with("SHA256SUMS"))
-        .ok_or_else(|| anyhow!("Release enthält keine Prüfsummen"))?;
+        .ok_or_else(|| anyhow!(t!("Release enthält keine Prüfsummen")))?;
 
     let sums = String::from_utf8(download(&sums.url, None)?)?;
     let expected = expected_hash(&sums, &asset.name)
-        .ok_or_else(|| anyhow!("keine Prüfsumme für {}", asset.name))?;
+        .ok_or_else(|| anyhow!("{}", t!("keine Prüfsumme für {}", asset.name)))?;
     let data = download(&asset.url, Some(sink))?;
     let actual = hex(&Sha256::digest(&data));
     if actual != expected {
-        bail!("Prüfsumme stimmt nicht – Download verworfen");
+        bail!(t!("Prüfsumme stimmt nicht – Download verworfen"));
     }
 
     let dir = std::env::temp_dir().join(format!("aurora-update-{}", release.version_text()));
@@ -237,7 +237,7 @@ fn install_blocking(release: &Release, sink: &Sink<UpdateEvent>) -> Result<bool>
                     "/CLOSEAPPLICATIONS",
                 ])
                 .spawn()
-                .context("Installer konnte nicht gestartet werden")?;
+                .context(t!("Installer konnte nicht gestartet werden"))?;
             Ok(true)
         }
         InstallKind::LinuxDeb => {
@@ -245,9 +245,9 @@ fn install_blocking(release: &Release, sink: &Sink<UpdateEvent>) -> Result<bool>
                 .args(["apt-get", "install", "-y"])
                 .arg(&file)
                 .status()
-                .context("pkexec nicht gefunden – bitte manuell installieren")?;
+                .context(t!("pkexec nicht gefunden – bitte manuell installieren"))?;
             if !status.success() {
-                bail!("Installation abgebrochen ({status})");
+                bail!("{}", t!("Installation abgebrochen ({})", status));
             }
             Ok(false)
         }
@@ -259,13 +259,13 @@ fn install_blocking(release: &Release, sink: &Sink<UpdateEvent>) -> Result<bool>
                 .arg(&dir)
                 .status()?;
             if !status.success() {
-                bail!("Entpacken fehlgeschlagen");
+                bail!(t!("Entpacken fehlgeschlagen"));
             }
             let unpacked = std::fs::read_dir(&dir)?
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
                 .find(|p| p.is_dir())
-                .ok_or_else(|| anyhow!("Archiv ist leer"))?;
+                .ok_or_else(|| anyhow!(t!("Archiv ist leer")))?;
             let exe = std::env::current_exe()?;
             replace_file(&unpacked.join("aurora"), &exe)?;
             let helper = target.join("aurora-rdp");
@@ -281,7 +281,7 @@ fn install_blocking(release: &Release, sink: &Sink<UpdateEvent>) -> Result<bool>
 /// Atomically swaps `dst` for `src` (the running binary can be replaced on Unix).
 fn replace_file(src: &Path, dst: &Path) -> Result<()> {
     let tmp = dst.with_extension("new");
-    std::fs::copy(src, &tmp).with_context(|| format!("{} nicht beschreibbar", dst.display()))?;
+    std::fs::copy(src, &tmp).with_context(|| t!("{} nicht beschreibbar", dst.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -297,26 +297,29 @@ fn get_following(url: &str) -> Result<ureq::http::Response<ureq::Body>> {
     let agent = agent_with(0);
     let mut url = url.to_string();
     for _ in 0..8 {
-        let resp = agent.get(&url).call().context("Download fehlgeschlagen")?;
+        let resp = agent
+            .get(&url)
+            .call()
+            .context(t!("Download fehlgeschlagen"))?;
         let status = resp.status();
         if status.is_redirection() {
             let next = resp
                 .headers()
                 .get("location")
                 .and_then(|v| v.to_str().ok())
-                .ok_or_else(|| anyhow!("Weiterleitung ohne Ziel"))?;
+                .ok_or_else(|| anyhow!(t!("Weiterleitung ohne Ziel")))?;
             if !next.starts_with("https://") {
-                bail!("unsichere Weiterleitung");
+                bail!(t!("unsichere Weiterleitung"));
             }
             url = next.to_string();
             continue;
         }
         if !status.is_success() {
-            bail!("Download fehlgeschlagen: HTTP {status}");
+            bail!("{}", t!("Download fehlgeschlagen: HTTP {}", status));
         }
         return Ok(resp);
     }
-    bail!("zu viele Weiterleitungen")
+    bail!(t!("zu viele Weiterleitungen"))
 }
 
 fn download(url: &str, progress: Option<&Sink<UpdateEvent>>) -> Result<Vec<u8>> {

@@ -95,11 +95,11 @@ impl Store {
         let salt: [u8; 16] = B64
             .decode(&file.salt)?
             .try_into()
-            .map_err(|_| anyhow!("ungültiger Salt"))?;
+            .map_err(|_| anyhow!(t!("ungültiger Salt")))?;
         let key = derive_key(password, &salt)?;
         let nonce = B64.decode(&file.nonce)?;
         if nonce.len() != 24 {
-            bail!("ungültige Nonce");
+            bail!(t!("ungültige Nonce"));
         }
         let cipher = XChaCha20Poly1305::new((&key).into());
         let plain = cipher
@@ -107,7 +107,7 @@ impl Store {
                 XNonce::from_slice(&nonce),
                 B64.decode(&file.ciphertext)?.as_ref(),
             )
-            .map_err(|_| anyhow!("Falsches Master-Passwort"))?;
+            .map_err(|_| anyhow!(t!("Falsches Master-Passwort")))?;
         let keychain = serde_json::from_slice(&plain)?;
         Ok((
             Vault {
@@ -153,7 +153,7 @@ impl Vault {
         let plain = serde_json::to_vec(keychain)?;
         let ciphertext = cipher
             .encrypt(XNonce::from_slice(&nonce), plain.as_ref())
-            .map_err(|_| anyhow!("Verschlüsselung fehlgeschlagen"))?;
+            .map_err(|_| anyhow!(t!("Verschlüsselung fehlgeschlagen")))?;
         let file = VaultFile {
             version: 1,
             kdf: "argon2id-m65536-t3-p1".into(),
@@ -194,7 +194,7 @@ pub fn seal(password: &str, plain: &[u8]) -> Result<String> {
     let key = derive_key(password, &salt)?;
     let ciphertext = XChaCha20Poly1305::new((&key).into())
         .encrypt(XNonce::from_slice(&nonce), plain)
-        .map_err(|_| anyhow!("Verschlüsselung fehlgeschlagen"))?;
+        .map_err(|_| anyhow!(t!("Verschlüsselung fehlgeschlagen")))?;
     let file = VaultFile {
         version: 1,
         kdf: "argon2id-m65536-t3-p1".into(),
@@ -207,14 +207,14 @@ pub fn seal(password: &str, plain: &[u8]) -> Result<String> {
 
 pub fn unseal(password: &str, text: &str) -> Result<Vec<u8>> {
     let file: VaultFile =
-        serde_json::from_str(text).map_err(|_| anyhow!("Keine Aurora-Exportdatei"))?;
+        serde_json::from_str(text).map_err(|_| anyhow!(t!("Keine Aurora-Exportdatei")))?;
     let salt: [u8; 16] = B64
         .decode(&file.salt)?
         .try_into()
-        .map_err(|_| anyhow!("ungültiger Salt"))?;
+        .map_err(|_| anyhow!(t!("ungültiger Salt")))?;
     let nonce = B64.decode(&file.nonce)?;
     if nonce.len() != 24 {
-        bail!("ungültige Nonce");
+        bail!(t!("ungültige Nonce"));
     }
     let key = derive_key(password, &salt)?;
     XChaCha20Poly1305::new((&key).into())
@@ -222,7 +222,7 @@ pub fn unseal(password: &str, text: &str) -> Result<Vec<u8>> {
             XNonce::from_slice(&nonce),
             B64.decode(&file.ciphertext)?.as_ref(),
         )
-        .map_err(|_| anyhow!("Falsches Passwort oder beschädigte Datei"))
+        .map_err(|_| anyhow!(t!("Falsches Passwort oder beschädigte Datei")))
 }
 
 pub fn write_export(path: &Path, text: &str) -> Result<()> {

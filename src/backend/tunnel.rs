@@ -47,7 +47,7 @@ async fn run(
     // Bind first: a taken port is the most common problem and needs no login to report.
     let listener = TcpListener::bind(("127.0.0.1", t.local_port))
         .await
-        .map_err(|e| anyhow!("Port {} ist schon belegt ({e})", t.local_port))?;
+        .map_err(|e| anyhow!("{}", t!("Port {} ist schon belegt ({})", t.local_port, e)))?;
     let handle = Arc::new(connect(&params, prompts).await?);
     events.send(TunnelEvent::Up(t.id));
     let mut tick = tokio::time::interval(Duration::from_secs(5));
@@ -56,7 +56,7 @@ async fn run(
             _ = stop.recv() => break,
             _ = tick.tick() => {
                 if handle.is_closed() {
-                    return Err(anyhow!("SSH-Verbindung getrennt"));
+                    return Err(anyhow!(t!("SSH-Verbindung getrennt")));
                 }
             }
             acc = listener.accept() => {

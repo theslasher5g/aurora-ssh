@@ -19,9 +19,10 @@ pub fn available_ports() -> Vec<String> {
 pub fn spawn(cfg: SerialSettings, events: Sink<TermEvent>) -> mpsc::UnboundedSender<TermCmd> {
     let (tx, mut rx) = mpsc::unbounded_channel::<TermCmd>();
     std::thread::spawn(move || {
-        events.send(TermEvent::Status(format!(
+        events.send(TermEvent::Status(t!(
             "Öffne {} @ {} baud…",
-            cfg.port_name, cfg.baud_rate
+            cfg.port_name,
+            cfg.baud_rate
         )));
         let builder = serialport::new(&cfg.port_name, cfg.baud_rate)
             .data_bits(match cfg.data_bits {
@@ -92,9 +93,10 @@ pub fn spawn(cfg: SerialSettings, events: Sink<TermEvent>) -> mpsc::UnboundedSen
                     }
                 }
                 TermCmd::Resize { .. } => {}
-                TermCmd::Upload { .. } => events.send(TermEvent::UploadDone(Err(
-                    "Dateien hochladen geht nur bei SSH-Sessions".into(),
-                ))),
+                TermCmd::Upload { .. } => events.send(TermEvent::UploadDone(Err(t!(
+                    "Dateien hochladen geht nur bei SSH-Sessions"
+                )
+                .into()))),
                 TermCmd::Close => break,
             }
             if read_thread.is_finished() {

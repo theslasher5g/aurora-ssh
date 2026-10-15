@@ -131,7 +131,7 @@ async fn run(
     events: &Sink<SftpEvent>,
     prompts: Sink<HostKeyPrompt>,
 ) -> Result<()> {
-    events.send(SftpEvent::Status(format!("Verbinde mit {}…", p.host_id())));
+    events.send(SftpEvent::Status(t!("Verbinde mit {}…", p.host_id())));
     let handle = connect(p, prompts).await?;
     let channel = handle.channel_open_session().await?;
     channel.request_subsystem(true, "sftp").await?;
@@ -288,7 +288,8 @@ async fn download(
         .rsplit('/')
         .next()
         .unwrap_or_default();
-    let name = safe_local_name(base).ok_or_else(|| anyhow!("unsicherer Dateiname: {base:?}"))?;
+    let name = safe_local_name(base)
+        .ok_or_else(|| anyhow!("{}", t!("unsicherer Dateiname: {}", format!("{base:?}"))))?;
     let meta = sftp.metadata(remote.to_string()).await?;
     if !meta.is_dir() {
         return download_file(sftp, remote, &local_dir.join(name), id, ev).await;
@@ -317,7 +318,8 @@ async fn download(
     }
     if skipped > 0 {
         return Err(anyhow!(
-            "{skipped} Einträge mit unsicheren Namen übersprungen"
+            "{}",
+            t!("{} Einträge mit unsicheren Namen übersprungen", skipped)
         ));
     }
     Ok(())
@@ -350,7 +352,7 @@ async fn download_file(
             total,
         });
         if ev.is_closed() {
-            return Err(anyhow!("abgebrochen"));
+            return Err(anyhow!(t!("abgebrochen")));
         }
     }
     dst.flush().await?;
@@ -366,7 +368,7 @@ pub(crate) async fn upload(
 ) -> Result<()> {
     let name = local
         .file_name()
-        .ok_or_else(|| anyhow!("ungültiger Pfad"))?
+        .ok_or_else(|| anyhow!(t!("ungültiger Pfad")))?
         .to_string_lossy()
         .to_string();
     if !local.is_dir() {
@@ -421,7 +423,7 @@ async fn upload_file(
             total,
         });
         if ev.is_closed() {
-            return Err(anyhow!("abgebrochen"));
+            return Err(anyhow!(t!("abgebrochen")));
         }
     }
     dst.shutdown().await?;
@@ -446,7 +448,10 @@ pub async fn relay(
         .to_string();
     let safe = |n: &str| !(n.is_empty() || n == "." || n == ".." || n.contains(['/', '\\', '\0']));
     if !safe(&base) {
-        return Err(anyhow!("unsicherer Dateiname: {base:?}"));
+        return Err(anyhow!(
+            "{}",
+            t!("unsicherer Dateiname: {}", format!("{base:?}"))
+        ));
     }
     let meta = src.metadata(src_path.clone()).await?;
     if !meta.is_dir() {
@@ -477,7 +482,8 @@ pub async fn relay(
     }
     if skipped > 0 {
         return Err(anyhow!(
-            "{skipped} Einträge mit unsicheren Namen übersprungen"
+            "{}",
+            t!("{} Einträge mit unsicheren Namen übersprungen", skipped)
         ));
     }
     Ok(())
@@ -511,7 +517,7 @@ async fn relay_file(
             total,
         });
         if ev.is_closed() {
-            return Err(anyhow!("abgebrochen"));
+            return Err(anyhow!(t!("abgebrochen")));
         }
     }
     to.shutdown().await?;

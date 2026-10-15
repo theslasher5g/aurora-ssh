@@ -189,7 +189,7 @@ pub fn spawn(
     fb: Arc<Mutex<FrameBuffer>>,
 ) -> Result<RdpHandle> {
     let helper =
-        helper_path().ok_or_else(|| anyhow!("RDP-Komponente (aurora-rdp) nicht gefunden"))?;
+        helper_path().ok_or_else(|| anyhow!(t!("RDP-Komponente (aurora-rdp) nicht gefunden")))?;
     let mut cmd = Command::new(&helper);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -254,7 +254,7 @@ pub fn spawn(
         }
         if !closed_sent {
             events.send(RdpEvent::Closed(Some(
-                "RDP-Komponente unerwartet beendet".into(),
+                t!("RDP-Komponente unerwartet beendet").into(),
             )));
         }
     });

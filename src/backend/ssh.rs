@@ -102,24 +102,26 @@ pub fn connect(
                     client::connect(config, addr, handler),
                 )
                 .await
-                .map_err(|_| anyhow!("Zeitüberschreitung – Host nicht erreichbar"))?
+                .map_err(|_| anyhow!(t!("Zeitüberschreitung – Host nicht erreichbar")))?
                 .map_err(friendly_error)?
             }
             Some(jump) => {
-                let via = Arc::new(
-                    connect(jump, prompts.clone())
-                        .await
-                        .map_err(|e| anyhow!("Jump-Host {}: {e:#}", jump.host))?,
-                );
+                let via = Arc::new(connect(jump, prompts.clone()).await.map_err(|e| {
+                    anyhow!("{}", t!("Jump-Host {}: {}", jump.host, format!("{e:#}")))
+                })?);
                 let channel = via
                     .channel_open_direct_tcpip(p.host.clone(), p.port as u32, "127.0.0.1", 0)
                     .await
                     .map_err(|e| {
                         anyhow!(
-                            "Jump-Host {} erreicht {}:{} nicht ({e})",
-                            jump.host,
-                            p.host,
-                            p.port
+                            "{}",
+                            t!(
+                                "Jump-Host {} erreicht {}:{} nicht ({})",
+                                jump.host,
+                                p.host,
+                                p.port,
+                                e
+                            )
                         )
                     })?;
                 let handler = Client {
@@ -133,7 +135,7 @@ pub fn connect(
                     client::connect_stream(config, channel.into_stream(), handler),
                 )
                 .await
-                .map_err(|_| anyhow!("Zeitüberschreitung über den Jump-Host"))?
+                .map_err(|_| anyhow!(t!("Zeitüberschreitung über den Jump-Host")))?
                 .map_err(friendly_error)?
             }
         };
@@ -145,7 +147,11 @@ pub fn connect(
                 decode_secret_key(key_text, p.passphrase.as_deref().filter(|s| !s.is_empty()))
                     .map_err(|e| {
                         anyhow!(
-                            "SSH-Key konnte nicht gelesen werden – stimmt die Passphrase? ({e})"
+                            "{}",
+                            t!(
+                                "SSH-Key konnte nicht gelesen werden – stimmt die Passphrase? ({})",
+                                e
+                            )
                         )
                     })?;
             let hash = session.best_supported_rsa_hash().await?.flatten();
@@ -216,18 +222,23 @@ fn auth_hint(
             .any(|m| matches!(m, MethodKind::Password | MethodKind::KeyboardInteractive));
     let key_allowed = offered.is_empty() || offered.contains(&MethodKind::PublicKey);
     if tried_password && !password_allowed {
-        format!(
-            "{host} erlaubt keine Anmeldung per Passwort – nur per SSH-Key. Hinterlege einen Key in der Identität des Hosts."
+        t!(
+            "{} erlaubt keine Anmeldung per Passwort – nur per SSH-Key. Hinterlege einen Key in der Identität des Hosts.",
+            host
         )
     } else if key_rejected && !tried_password {
-        format!(
-            "Der SSH-Key wurde von {host} für „{user}“ nicht angenommen – ist er in ~/.ssh/authorized_keys eingetragen? (Rechtsklick → SSH-Key einrichten)"
+        t!(
+            "Der SSH-Key wurde von {} für „{}“ nicht angenommen – ist er in ~/.ssh/authorized_keys eingetragen? (Rechtsklick → SSH-Key einrichten)",
+            host,
+            user
         )
     } else if !key_allowed && !tried_password {
-        format!("{host} erwartet ein Passwort für „{user}“")
+        t!("{} erwartet ein Passwort für „{}“", host, user)
     } else {
-        format!(
-            "Anmeldung als „{user}“ an {host} abgelehnt – Benutzername oder Passwort falsch? (root-Login ist auf vielen Servern gesperrt)"
+        t!(
+            "Anmeldung als „{}“ an {} abgelehnt – Benutzername oder Passwort falsch? (root-Login ist auf vielen Servern gesperrt)",
+            user,
+            host
         )
     }
 }
@@ -241,30 +252,30 @@ pub fn friendly_error(e: anyhow::Error) -> anyhow::Error {
 pub fn friendly_text(raw: &str) -> Option<String> {
     let has = |s: &str| raw.contains(s);
     let msg = if has("UnknownKey") {
-        "Server-Key wurde abgelehnt"
+        t!("Server-Key wurde abgelehnt")
     } else if has("Connection refused") || has("os error 111") || has("os error 10061") {
-        "Verbindung abgelehnt – läuft der SSH-Dienst auf diesem Port?"
+        t!("Verbindung abgelehnt – läuft der SSH-Dienst auf diesem Port?")
     } else if has("failed to lookup")
         || has("Name or service not known")
         || has("No such host")
         || has("nodename nor servname")
         || has("os error 11001")
     {
-        "Hostname nicht gefunden – Tippfehler oder fehlt ein DNS-Eintrag?"
+        t!("Hostname nicht gefunden – Tippfehler oder fehlt ein DNS-Eintrag?")
     } else if has("Network is unreachable") || has("No route to host") || has("os error 10065") {
-        "Netzwerk nicht erreichbar – bist du im richtigen Netz / VPN?"
+        t!("Netzwerk nicht erreichbar – bist du im richtigen Netz / VPN?")
     } else if has("Connection reset") || has("os error 104") || has("os error 10054") {
-        "Verbindung vom Server zurückgesetzt – evtl. Firewall oder fail2ban"
+        t!("Verbindung vom Server zurückgesetzt – evtl. Firewall oder fail2ban")
     } else if has("timed out") || has("os error 110") || has("os error 10060") {
-        "Zeitüberschreitung – Host antwortet nicht (aus, Firewall oder falscher Port?)"
+        t!("Zeitüberschreitung – Host antwortet nicht (aus, Firewall oder falscher Port?)")
     } else if has("NoCommonKexAlgo") || has("NoCommonCipher") || has("NoCommonKeyAlgo") {
-        "Server und Aurora haben keine gemeinsamen Verfahren – sehr alter SSH-Server?"
+        t!("Server und Aurora haben keine gemeinsamen Verfahren – sehr alter SSH-Server?")
     } else if has("Disconnect") && has("Too many authentication failures") {
-        "Zu viele Anmeldeversuche – der Server hat die Verbindung getrennt"
+        t!("Zu viele Anmeldeversuche – der Server hat die Verbindung getrennt")
     } else if has("No such file") {
-        "Datei oder Ordner existiert nicht"
+        t!("Datei oder Ordner existiert nicht")
     } else if has("Permission denied") {
-        "Keine Berechtigung"
+        t!("Keine Berechtigung")
     } else {
         return None;
     };
@@ -297,11 +308,11 @@ async fn run_shell(
     prompts: Sink<HostKeyPrompt>,
 ) -> Result<()> {
     events.send(TermEvent::Status(match &p.jump {
-        Some(j) => format!("Verbinde mit {} über {}…", p.host_id(), j.host),
-        None => format!("Verbinde mit {}…", p.host_id()),
+        Some(j) => t!("Verbinde mit {} über {}…", p.host_id(), j.host),
+        None => t!("Verbinde mit {}…", p.host_id()),
     }));
     let handle = Arc::new(connect(p, prompts).await?);
-    events.send(TermEvent::Status("Öffne Shell…".into()));
+    events.send(TermEvent::Status(t!("Öffne Shell…").into()));
     let channel = handle.channel_open_session().await?;
     channel
         .request_pty(false, "xterm-256color", cols as u32, rows as u32, 0, 0, &[])
@@ -396,7 +407,7 @@ pub async fn exec(handle: &SshHandle, cmd: &str) -> Result<(u32, String)> {
     };
     tokio::time::timeout(Duration::from_secs(25), run)
         .await
-        .map_err(|_| anyhow!("Zeitüberschreitung"))?
+        .map_err(|_| anyhow!(t!("Zeitüberschreitung")))?
 }
 
 /// Puts `public` into `~/.ssh/authorized_keys` (password login), then proves that a
@@ -413,7 +424,7 @@ pub async fn install_key(
         c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '=' | '@' | '.' | '_' | '-' | ' ')
     });
     if !safe || !line.starts_with("ssh-") {
-        bail!("Ungültiger öffentlicher Schlüssel");
+        bail!(t!("Ungültiger öffentlicher Schlüssel"));
     }
     let handle = connect(&p, prompts.clone()).await?;
     let cmd = format!(
@@ -424,7 +435,13 @@ pub async fn install_key(
         .disconnect(Disconnect::ByApplication, "bye", "en")
         .await;
     if status != 0 {
-        bail!("Server hat den Schlüssel nicht übernommen (nur Linux/Unix-Server, Exit {status})");
+        bail!(
+            "{}",
+            t!(
+                "Server hat den Schlüssel nicht übernommen (nur Linux/Unix-Server, Exit {})",
+                status
+            )
+        );
     }
     // Verify: key only, no password fallback.
     let check = SshParams {
@@ -433,9 +450,15 @@ pub async fn install_key(
         passphrase: None,
         ..p
     };
-    let handle = connect(&check, prompts)
-        .await
-        .map_err(|e| anyhow!("Schlüssel eingetragen, Anmeldung damit klappt aber nicht: {e:#}"))?;
+    let handle = connect(&check, prompts).await.map_err(|e| {
+        anyhow!(
+            "{}",
+            t!(
+                "Schlüssel eingetragen, Anmeldung damit klappt aber nicht: {}",
+                format!("{e:#}")
+            )
+        )
+    })?;
     let _ = handle
         .disconnect(Disconnect::ByApplication, "bye", "en")
         .await;
