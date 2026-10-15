@@ -1,5 +1,5 @@
 # Builds Windows and Linux packages and publishes them together in ONE release.
-#   tag v0.4.0 -> Windows installer + portable zip, .deb + portable tar.gz, SHA256SUMS.txt
+#   tag v0.5.0 -> Windows installer + portable zip, .deb + portable tar.gz, SHA256SUMS.txt
 # Either push the tag, or run the workflow manually (it then creates the tag itself).
 name: Release
 
@@ -11,7 +11,7 @@ on:
     inputs:
       version:
         description: Version (ohne v)
-        default: "0.4.0"
+        default: "0.5.0"
 
 permissions:
   contents: write

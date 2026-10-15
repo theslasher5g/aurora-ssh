@@ -172,6 +172,20 @@ impl Vault {
     }
 }
 
+/// A fresh directory only this user can access (`<tmp>/<prefix>-<random>`, mode 0700).
+/// Never reuses an existing path, so nobody else can pre-create or swap its contents.
+pub fn private_temp_dir(prefix: &str) -> Result<PathBuf> {
+    let dir = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4().simple()));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new().mode(0o700).create(&dir)?;
+    }
+    #[cfg(not(unix))]
+    fs::create_dir(&dir)?;
+    Ok(dir)
+}
+
 /// Everything worth moving to another PC, as written into an `.aurora` export file.
 #[derive(Serialize, Deserialize, Default)]
 #[serde(default)]

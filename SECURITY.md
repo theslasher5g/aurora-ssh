@@ -17,6 +17,11 @@
 | Server-Infos | Nach dem Login laufen nur lesende Befehle (`/etc/os-release`, `hostname`, `/proc/uptime`, `df`, `apt-get -s upgrade`) auf einem eigenen Kanal; Ausgabe wird gekürzt und von Steuerzeichen bereinigt |
 | Netz-Scan | Nur TCP-Verbindungsaufbau (+ SSH-Banner lesen), höchstens /22, nichts wird angemeldet |
 | SSH-Key einrichten | Öffentlicher Schlüssel wird vor dem Einfügen in den Shell-Befehl auf erlaubte Zeichen geprüft; danach wird die Anmeldung nur mit dem Key verifiziert |
+| Tunnel | Lauschen nur auf `127.0.0.1`, nie auf allen Interfaces |
+| Jump-Host | Der Server-Key des Ziels wird wie bei einer direkten Verbindung geprüft (eigener Fingerprint pro `host:port`) |
+| Dateien bearbeiten | Download in einen privaten, zufällig benannten Temp-Ordner (0700); ausführbare Typen (`.exe`, `.cmd`, `.hta`, `.js`, `.desktop` …) werden ohne festgelegten Editor nicht geöffnet, unter Windows immer Notepad statt Standard-App |
+| Updates (Temp) | Download in einen privaten, zufällig benannten Ordner (0700), damit niemand die geprüfte Datei vor der Installation austauschen kann |
+| Export | Eigene Passphrase, Argon2id + XChaCha20-Poly1305, Dateirechte `0600` |
 
 ## Security-Review 0.1 (behobene Funde)
 

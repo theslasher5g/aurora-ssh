@@ -107,4 +107,8 @@ pub const T: &[(&str, &str)] = &[
         "Security screen / sign-in",
     ),
     ("Getrennt", "Disconnected"),
+    (
+        "„{}“ ist ausführbar – zum Bearbeiten erst einen Editor in den Einstellungen festlegen",
+        "\"{}\" is executable – set an editor in Settings before editing it",
+    ),
 ];

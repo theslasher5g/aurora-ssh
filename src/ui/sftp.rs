@@ -567,13 +567,21 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
                     ));
                     continue;
                 }
-                let dir = std::env::temp_dir()
-                    .join("aurora-edit")
-                    .join(uuid::Uuid::new_v4().simple().to_string());
-                if let Err(e) = std::fs::create_dir_all(&dir) {
-                    toasts.push((t!("Temp-Ordner: {}", e), theme::red()));
+                let editor_set = !editor.trim().is_empty();
+                if !editor_set && runs_when_opened(&name) {
+                    toasts.push((
+                        t!("„{}“ ist ausführbar – zum Bearbeiten erst einen Editor in den Einstellungen festlegen", name),
+                        theme::amber(),
+                    ));
                     continue;
                 }
+                let dir = match crate::store::private_temp_dir("aurora-edit") {
+                    Ok(d) => d,
+                    Err(e) => {
+                        toasts.push((t!("Temp-Ordner: {}", e), theme::red()));
+                        continue;
+                    }
+                };
                 next_id += 1;
                 if let Some(r) = &pane.remote {
                     let _ = r.tx.send(SftpCmd::Download {
@@ -1101,6 +1109,43 @@ fn entry_row(
 
 /// Opens a local file in the configured editor command, or the system default app.
 /// The path is passed as a single argument (no shell), so odd file names are harmless.
+/// File types the system's default handler would execute instead of opening for editing.
+fn runs_when_opened(name: &str) -> bool {
+    const RISKY: &[&str] = &[
+        "exe",
+        "com",
+        "bat",
+        "cmd",
+        "ps1",
+        "psm1",
+        "vbs",
+        "vbe",
+        "js",
+        "jse",
+        "wsf",
+        "wsh",
+        "hta",
+        "msi",
+        "msp",
+        "scr",
+        "lnk",
+        "url",
+        "pif",
+        "cpl",
+        "jar",
+        "reg",
+        "appref-ms",
+        "library-ms",
+        "desktop",
+        "appimage",
+        "app",
+        "command",
+        "run",
+    ];
+    name.rsplit_once('.')
+        .is_some_and(|(_, ext)| RISKY.contains(&ext.trim().to_lowercase().as_str()))
+}
+
 fn open_in_editor(editor: &str, path: &std::path::Path) -> std::io::Result<()> {
     let editor = editor.trim();
     if !editor.is_empty() {
@@ -1112,8 +1157,11 @@ fn open_in_editor(editor: &str, path: &std::path::Path) -> std::io::Result<()> {
             .spawn()?;
         return Ok(());
     }
+    // Windows: always a text editor – the shell's default action could run the file.
     #[cfg(windows)]
-    std::process::Command::new("explorer").arg(path).spawn()?;
+    std::process::Command::new("notepad.exe")
+        .arg(path)
+        .spawn()?;
     #[cfg(target_os = "macos")]
     std::process::Command::new("open").arg(path).spawn()?;
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -1411,4 +1459,15 @@ fn source_combo(ui: &mut egui::Ui, id: &str, value: &mut Option<Uuid>, hosts: &[
                 ui.selectable_value(value, Some(*hid), name);
             }
         });
+}
+
+#[cfg(test)]
+mod edit_tests {
+    #[test]
+    fn executables_are_not_opened() {
+        assert!(super::runs_when_opened("deploy.CMD"));
+        assert!(super::runs_when_opened("notes.txt   .hta"));
+        assert!(!super::runs_when_opened("nginx.conf"));
+        assert!(!super::runs_when_opened("README"));
+    }
 }

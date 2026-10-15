@@ -220,9 +220,9 @@ fn install_blocking(release: &Release, sink: &Sink<UpdateEvent>) -> Result<bool>
         bail!(t!("Prüfsumme stimmt nicht – Download verworfen"));
     }
 
-    let dir = std::env::temp_dir().join(format!("aurora-update-{}", release.version_text()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir)?;
+    // Private, randomly named directory: another local user must not be able to
+    // swap the verified file before the installer / pkexec reads it.
+    let dir = crate::store::private_temp_dir("aurora-update")?;
     let file = dir.join(&asset.name);
     std::fs::write(&file, &data)?;
 
