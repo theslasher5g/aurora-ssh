@@ -150,6 +150,8 @@ pub enum TabKind {
 pub struct Tab {
     pub id: u64,
     pub title: String,
+    /// `user@host:port` or serial port, shown under the title.
+    pub subtitle: String,
     pub color: Color32,
     pub kind: TabKind,
 }
@@ -220,7 +222,8 @@ pub struct App {
     pub next_id: u64,
 
     pub search: String,
-    pub quick_connect: String,
+    /// Hosts view filter: 0 all, 1 SSH, 2 RDP, 3 Serial, 4 favorites.
+    pub host_filter: usize,
     pub snippet_search: String,
     pub keychain_search: String,
     pub broadcast: bool,
@@ -249,6 +252,7 @@ pub enum Action {
     OpenSftp(Uuid),
     QuickConnect(String),
     NewHost(Option<Uuid>),
+    NewHostOf(Protocol, Option<Uuid>),
     EditHost(Uuid),
     DuplicateHost(Uuid),
     DeleteHost(Uuid),
@@ -270,6 +274,7 @@ pub enum Action {
     OpenPalette,
     Lock,
     SetTheme(String),
+    Reconnect(u64),
     /// Ask before running the inner (destructive) action.
     Confirm(String, Box<Action>),
 }
@@ -280,16 +285,13 @@ impl App {
         let store = Store::new(data_dir.clone());
         let lib = match store.load_library() {
             Ok(Some(lib)) => lib,
-            Ok(None) => {
-                let mut lib = Library::default();
-                lib.seed_examples();
-                lib
-            }
+            Ok(None) => Library::default(),
             Err(e) => {
                 log::error!("library konnte nicht geladen werden: {e:#}");
                 Library::default()
             }
         };
+        theme::install_fonts(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx, &lib.settings.theme);
         let (prompts_sink, prompts_rx) = Sink::new(cc.egui_ctx.clone());
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -310,7 +312,7 @@ impl App {
             active: None,
             next_id: 1,
             search: String::new(),
-            quick_connect: String::new(),
+            host_filter: 0,
             snippet_search: String::new(),
             keychain_search: String::new(),
             broadcast: false,
@@ -332,7 +334,7 @@ impl App {
     }
 
     pub fn accent(&self) -> Color32 {
-        theme::teal()
+        theme::accent()
     }
 
     pub fn toast(&mut self, text: impl Into<String>, color: Color32) {
@@ -536,13 +538,21 @@ impl App {
                 TabKind::Rdp(Box::new(tab))
             }
         };
-        let prefix = match &kind {
-            TabKind::Sftp(_) => "🗁 ",
-            _ => "",
+        let subtitle = match host.protocol {
+            Protocol::Serial => host.subtitle(),
+            _ => {
+                let user = if user.is_empty() {
+                    String::new()
+                } else {
+                    format!("{user}@")
+                };
+                format!("{user}{}:{}", host.hostname.trim(), host.port)
+            }
         };
         self.tabs.push(Tab {
             id,
-            title: format!("{prefix}{}", host.display_name()),
+            title: host.display_name().to_string(),
+            subtitle,
             color,
             kind,
         });
@@ -588,6 +598,10 @@ impl App {
             fresh.show_snippets = t.show_snippets;
             fresh.term.feed(b"\r\n\x1b[2m--- reconnect ---\x1b[0m\r\n");
             self.tabs[idx].kind = TabKind::Term(Box::new(fresh));
+        } else if let TabKind::Rdp(t) = &mut self.tabs[idx].kind {
+            if let Some(v) = t.embedded.as_mut() {
+                v.reconnect();
+            }
         } else if let TabKind::Sftp(t) = &self.tabs[idx].kind {
             let (sink, rx) = Sink::new(ctx.clone());
             let tx =
@@ -659,7 +673,7 @@ impl App {
         } else if sent > 1 {
             self.toast(
                 format!("Snippet an {sent} Sessions gesendet"),
-                theme::teal(),
+                theme::accent(),
             );
         }
     }
@@ -678,8 +692,15 @@ impl App {
                     while let Ok(ev) = t.rx.try_recv() {
                         match ev {
                             TermEvent::Status(s) => {
+                                let a = theme::accent();
                                 t.term.feed(
-                                    format!("\x1b[38;2;45;226;195m●\x1b[0m {s}\r\n").as_bytes(),
+                                    format!(
+                                        "\x1b[38;2;{};{};{}m›\x1b[0m {s}\r\n",
+                                        a.r(),
+                                        a.g(),
+                                        a.b()
+                                    )
+                                    .as_bytes(),
                                 );
                                 t.state = ConnState::Connecting(s);
                             }
@@ -756,6 +777,19 @@ impl App {
                 Some(host) => self.connect_host(host, Purpose::Terminal, ctx),
                 None => self.toast("Format: user@host[:port]", theme::amber()),
             },
+            Action::NewHostOf(protocol, group) => {
+                let host = Host {
+                    group_id: group,
+                    protocol,
+                    port: protocol.default_port(),
+                    ..Default::default()
+                };
+                self.host_editor = Some(HostEditor {
+                    host,
+                    is_new: true,
+                    tags_text: String::new(),
+                });
+            }
             Action::NewHost(group) => {
                 let host = Host {
                     group_id: group,
@@ -903,6 +937,7 @@ impl App {
                 self.palette.query.clear();
                 self.palette.selected = 0;
             }
+            Action::Reconnect(id) => self.reconnect(id, ctx),
             Action::SetTheme(id) => {
                 theme::apply(ctx, &id);
                 self.lib.settings.theme = id;
@@ -922,232 +957,6 @@ impl App {
 
     // ------------------------------------------------------------------ layout
 
-    fn top_bar(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        egui::Panel::top("top")
-            .exact_size(46.0)
-            .frame(
-                egui::Frame::NONE
-                    .fill(theme::bg_deep())
-                    .inner_margin(Margin::symmetric(12, 0)),
-            )
-            .show(ui, |ui| {
-                ui.horizontal_centered(|ui| {
-                    // Brand
-                    theme::logo(ui, 24.0);
-                    ui.label(
-                        RichText::new("aurora")
-                            .size(17.0)
-                            .strong()
-                            .color(theme::text()),
-                    );
-                    ui.add_space(14.0);
-
-                    // Home tab
-                    let home_sel = self.active.is_none();
-                    if tab_button(ui, "🏠 Vault", home_sel, theme::teal(), None)
-                        .0
-                        .clicked()
-                    {
-                        self.active = None;
-                    }
-
-                    let mut close = None;
-                    let mut activate = None;
-                    egui::ScrollArea::horizontal()
-                        .max_width(ui.available_width() - 190.0)
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                for tab in &self.tabs {
-                                    let status = match &tab.kind {
-                                        TabKind::Term(t) => Some(state_color(&t.state)),
-                                        TabKind::Sftp(t) => Some(state_color(&t.state)),
-                                        TabKind::Rdp(t) => Some(t.status_color()),
-                                    };
-                                    let (resp, closed) = tab_button(
-                                        ui,
-                                        &tab.title,
-                                        self.active == Some(tab.id),
-                                        tab.color,
-                                        status,
-                                    );
-                                    if resp.clicked() {
-                                        activate = Some(tab.id);
-                                    }
-                                    if resp.middle_clicked() || closed {
-                                        close = Some(tab.id);
-                                    }
-                                }
-                            });
-                        });
-                    if let Some(id) = activate {
-                        self.active = Some(id);
-                    }
-                    if let Some(id) = close {
-                        self.close_tab(id);
-                    }
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add(egui::Button::new(
-                                RichText::new("⌘K  Suche").color(theme::text_dim()),
-                            ))
-                            .on_hover_text("Befehlspalette (Ctrl+K)")
-                            .clicked()
-                        {
-                            actions.push(Action::OpenPalette);
-                        }
-                        let bc = if self.broadcast {
-                            theme::pink()
-                        } else {
-                            theme::text_dim()
-                        };
-                        let btn = egui::Button::new(RichText::new("📡 Broadcast").color(bc)).fill(
-                            if self.broadcast {
-                                theme::pink().linear_multiply(0.15)
-                            } else {
-                                theme::bg_card()
-                            },
-                        );
-                        if ui
-                            .add(btn)
-                            .on_hover_text("Eingaben an alle verbundenen Terminals senden")
-                            .clicked()
-                        {
-                            self.broadcast = !self.broadcast;
-                        }
-                    });
-                });
-            });
-    }
-
-    fn sidebar(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        egui::Panel::left("nav")
-            .exact_size(214.0)
-            .resizable(false)
-            .frame(
-                egui::Frame::NONE
-                    .fill(theme::bg_panel())
-                    .inner_margin(Margin::symmetric(12, 16)),
-            )
-            .show(ui, |ui| {
-                let items = [
-                    (View::Hosts, "🖧", "Hosts", self.lib.hosts.len()),
-                    (
-                        View::Keychain,
-                        "🔑",
-                        "Keychain",
-                        self.keychain.identities.len(),
-                    ),
-                    (View::Snippets, "⚡", "Snippets", self.lib.snippets.len()),
-                    (View::Settings, "⚙", "Einstellungen", 0),
-                ];
-                for (view, icon, label, count) in items {
-                    let selected = self.active.is_none() && self.view == view;
-                    if nav_item(ui, icon, label, count, selected, self.accent()).clicked() {
-                        actions.push(Action::Navigate(view));
-                    }
-                }
-
-                ui.add_space(18.0);
-                theme::section_title(ui, "Gruppen");
-                ui.add_space(4.0);
-                let groups: Vec<(Uuid, String, [u8; 3], String, usize)> = self
-                    .lib
-                    .groups
-                    .iter()
-                    .filter(|g| g.parent_id.is_none())
-                    .map(|g| {
-                        let n = self
-                            .lib
-                            .hosts
-                            .iter()
-                            .filter(|h| h.group_id == Some(g.id))
-                            .count();
-                        (g.id, g.name.clone(), g.color, g.icon.clone(), n)
-                    })
-                    .collect();
-                for (_id, name, color, icon, n) in groups {
-                    let r = ui.horizontal(|ui| {
-                        let (dot, _) =
-                            ui.allocate_exact_size(Vec2::splat(10.0), egui::Sense::hover());
-                        ui.painter()
-                            .circle_filled(dot.center(), 4.0, theme::rgb(color));
-                        ui.add(
-                            egui::Label::new(format!("{icon} {name}"))
-                                .sense(egui::Sense::click())
-                                .truncate(),
-                        )
-                    });
-                    if r.inner.on_hover_text(format!("{n} Hosts")).clicked() {
-                        self.search = format!("group:{name}");
-                        actions.push(Action::Navigate(View::Hosts));
-                    }
-                }
-                if ui.small_button("➕ Neue Gruppe").clicked() {
-                    actions.push(Action::NewGroup(None));
-                }
-
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                    if ui
-                        .add(
-                            egui::Button::new("🔒 Sperren")
-                                .min_size(Vec2::new(ui.available_width(), 30.0)),
-                        )
-                        .clicked()
-                    {
-                        actions.push(Action::Lock);
-                    }
-                });
-            });
-    }
-
-    fn status_bar(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::bottom("status")
-            .exact_size(26.0)
-            .frame(
-                egui::Frame::NONE
-                    .fill(theme::bg_deep())
-                    .inner_margin(Margin::symmetric(14, 0)),
-            )
-            .show(ui, |ui| {
-                ui.horizontal_centered(|ui| {
-                    let connected = self
-                        .tabs
-                        .iter()
-                        .filter(|t| match &t.kind {
-                            TabKind::Term(t) => matches!(t.state, ConnState::Connected),
-                            TabKind::Sftp(t) => matches!(t.state, ConnState::Connected),
-                            TabKind::Rdp(t) => t.is_live(),
-                        })
-                        .count();
-                    let small = |t: String| RichText::new(t).size(11.5).color(theme::text_dim());
-                    ui.label(RichText::new("⏺").size(10.0).color(if connected > 0 {
-                        theme::green()
-                    } else {
-                        theme::text_dim()
-                    }));
-                    ui.label(small(format!("{connected} aktive Sessions")));
-                    ui.label(small("·".into()));
-                    ui.label(small(format!(
-                        "{} Hosts · {} Snippets",
-                        self.lib.hosts.len(),
-                        self.lib.snippets.len()
-                    )));
-                    if self.broadcast {
-                        ui.label(
-                            RichText::new("· BROADCAST AKTIV")
-                                .size(11.5)
-                                .color(theme::pink())
-                                .strong(),
-                        );
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(small("🔐 Vault entsperrt".into()));
-                    });
-                });
-            });
-    }
-
     fn terminal_tab(&mut self, ui: &mut egui::Ui, tab_id: u64, actions: &mut Vec<Action>) {
         let ctx = ui.ctx().clone();
         let broadcast = self.broadcast;
@@ -1159,114 +968,120 @@ impl App {
             .iter()
             .map(|s| (s.id, s.name.clone(), s.script.clone()))
             .collect();
+        let mut reconnect = false;
+        let mut input = None;
+        let index = self.tabs.iter().position(|t| t.id == tab_id).unwrap_or(0) + 1;
         let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
             return;
         };
+        let (title, subtitle) = (tab.title.clone(), tab.subtitle.clone());
         let TabKind::Term(t) = &mut tab.kind else {
             return;
         };
-        let mut reconnect = false;
-        let mut input = None;
 
-        // Toolbar
-        egui::Panel::top(egui::Id::new(("term-bar", tab_id)))
-            .exact_size(38.0)
-            .frame(
-                egui::Frame::NONE
-                    .fill(theme::bg_panel())
-                    .inner_margin(Margin::symmetric(12, 4)),
-            )
-            .show(ui, |ui| {
-                ui.horizontal_centered(|ui| {
-                    let (label, color) = match &t.state {
-                        ConnState::Connecting(s) => (s.clone(), theme::amber()),
-                        ConnState::Connected => ("Verbunden".into(), theme::green()),
-                        ConnState::Closed(Some(e)) => (format!("Getrennt: {e}"), theme::red()),
-                        ConnState::Closed(None) => ("Getrennt".into(), theme::text_dim()),
-                    };
-                    ui.label(RichText::new("⏺").color(color));
-                    ui.add(
-                        egui::Label::new(RichText::new(label).color(theme::text_dim()).size(12.5))
-                            .truncate(),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .selectable_label(t.show_snippets, "⚡ Snippets")
-                            .on_hover_text("Snippet-Leiste ein/aus")
-                            .clicked()
-                        {
-                            t.show_snippets = !t.show_snippets;
-                        }
-                        if matches!(t.state, ConnState::Closed(_))
-                            && ui.button("⟳ Neu verbinden").clicked()
-                        {
-                            reconnect = true;
-                        }
-                    });
-                });
-            });
+        let state = crate::ui::chrome::state_pair(&t.state);
+        let closed = matches!(t.state, ConnState::Closed(_));
+        let mut toggle_snippets = false;
+        crate::ui::chrome::session_header(
+            ui,
+            egui::Id::new(("term-bar", tab_id)),
+            index,
+            &title,
+            &subtitle,
+            state,
+            |ui| {
+                if theme::icon_button(ui, "⚡", "Snippets ein-/ausblenden").clicked() {
+                    toggle_snippets = true;
+                }
+                if closed && theme::icon_button(ui, "⟳", "Neu verbinden (Enter)").clicked() {
+                    reconnect = true;
+                }
+            },
+        );
+        if toggle_snippets {
+            t.show_snippets = !t.show_snippets;
+        }
 
         if t.show_snippets {
             egui::Panel::right(egui::Id::new(("term-snips", tab_id)))
-                .default_size(260.0)
+                .default_size(280.0)
                 .frame(
                     egui::Frame::NONE
                         .fill(theme::bg_panel())
-                        .inner_margin(Margin::same(10)),
+                        .inner_margin(Margin::symmetric(14, 14)),
                 )
                 .show(ui, |ui| {
                     theme::section_title(ui, "Snippets");
                     ui.add(
-                        egui::TextEdit::singleline(&mut t.snippet_filter).hint_text("🔍 Filtern…"),
+                        egui::TextEdit::singleline(&mut t.snippet_filter)
+                            .hint_text("Filtern")
+                            .desired_width(f32::INFINITY),
                     );
+                    ui.add_space(4.0);
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         let f = t.snippet_filter.to_lowercase();
+                        if snippets.is_empty() {
+                            ui.label(RichText::new("Noch keine Snippets").color(theme::text_dim()));
+                        }
                         for (id, name, script) in snippets.iter().filter(|(_, n, s)| {
                             f.is_empty()
                                 || n.to_lowercase().contains(&f)
                                 || s.to_lowercase().contains(&f)
                         }) {
-                            theme::card_frame()
-                                .inner_margin(Margin::same(10))
-                                .show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new(name).strong());
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                if ui
-                                                    .small_button("▶")
-                                                    .on_hover_text("Ausführen")
-                                                    .clicked()
-                                                {
-                                                    actions.push(Action::RunSnippet(*id, false));
-                                                }
-                                            },
-                                        );
-                                    });
-                                    ui.add(
-                                        egui::Label::new(
-                                            RichText::new(script)
-                                                .monospace()
-                                                .size(11.5)
-                                                .color(theme::text_dim()),
-                                        )
-                                        .truncate(),
-                                    );
-                                });
+                            let (rect, resp) = ui.allocate_exact_size(
+                                Vec2::new(ui.available_width(), 46.0),
+                                egui::Sense::click(),
+                            );
+                            if resp.hovered() {
+                                ui.painter().rect_filled(
+                                    rect,
+                                    CornerRadius::same(6),
+                                    theme::bg_hover(),
+                                );
+                            }
+                            let p = ui.painter();
+                            p.text(
+                                rect.left_top() + Vec2::new(10.0, 8.0),
+                                egui::Align2::LEFT_TOP,
+                                name,
+                                theme::semibold(13.0),
+                                theme::text(),
+                            );
+                            let line = script.lines().next().unwrap_or_default();
+                            p.with_clip_rect(rect.shrink(4.0)).text(
+                                rect.left_top() + Vec2::new(10.0, 26.0),
+                                egui::Align2::LEFT_TOP,
+                                line,
+                                egui::FontId::monospace(11.5),
+                                theme::text_dim(),
+                            );
+                            if resp
+                                .on_hover_text("Klicken zum Ausführen")
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            {
+                                actions.push(Action::RunSnippet(*id, false));
+                            }
                         }
                     });
                 });
         }
 
+        let term_bg = theme::palette().term_bg;
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::NONE
-                    .fill(theme::bg_deep())
-                    .inner_margin(Margin::same(8)),
+                    .fill(term_bg)
+                    .inner_margin(Margin::symmetric(10, 6)),
             )
             .show(ui, |ui| {
+                if broadcast {
+                    crate::ui::chrome::band(
+                        ui.painter(),
+                        ui.max_rect().expand2(Vec2::new(10.0, 6.0)),
+                        theme::pink(),
+                    );
+                }
                 let overlay = match &t.state {
                     ConnState::Connecting(_) if t.term.contents().trim().is_empty() => {
                         Some("Verbinde…")
@@ -1280,7 +1095,7 @@ impl App {
                         font_size: settings.font_size,
                         accent,
                         copy_on_select: settings.copy_on_select,
-                        glow: broadcast.then_some(theme::pink().linear_multiply(0.7)),
+                        glow: None,
                         overlay,
                     },
                 );
@@ -1308,11 +1123,11 @@ impl App {
     }
 
     fn rdp_tab(&mut self, ui: &mut egui::Ui, tab_id: u64) {
+        let index = self.tabs.iter().position(|t| t.id == tab_id).unwrap_or(0) + 1;
         let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
             return;
         };
-        let color = tab.color;
-        let title = tab.title.clone();
+        let (title, subtitle) = (tab.title.clone(), tab.subtitle.clone());
         let TabKind::Rdp(t) = &mut tab.kind else {
             return;
         };
@@ -1321,7 +1136,9 @@ impl App {
             let action = view.show(
                 ui,
                 egui::Id::new(("rdp", tab_id)),
+                index,
                 &title,
+                &subtitle,
                 &t.launch,
                 &mut toasts,
             );
@@ -1334,50 +1151,83 @@ impl App {
             return;
         }
         let mut relaunch = false;
-        egui::CentralPanel::default()
-            .frame(
-                egui::Frame::NONE
-                    .fill(theme::bg_deep())
-                    .inner_margin(Margin::same(40)),
-            )
-            .show(ui, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(60.0);
-                    theme::avatar(ui, 84.0, color, "🖥");
-                    ui.add_space(12.0);
-                    ui.label(RichText::new(&title).size(24.0).strong());
-                    let mut target = format!("{}:{}", t.launch.host, t.launch.port);
-                    if !t.launch.username.is_empty() {
-                        target = format!("{}@{target}", t.launch.username);
+        let mut stop = false;
+        let state = if t.running {
+            (t.status.clone(), theme::green())
+        } else {
+            (t.status.clone(), theme::text_dim())
+        };
+        let running = t.running;
+        crate::ui::chrome::session_header(
+            ui,
+            egui::Id::new(("rdp-ext-bar", tab_id)),
+            index,
+            &title,
+            &subtitle,
+            state,
+            |ui| {
+                if running {
+                    if theme::icon_button(ui, "⏹", "Beenden").clicked() {
+                        stop = true;
                     }
-                    ui.label(RichText::new(target).color(theme::text_dim()));
-                    ui.add_space(16.0);
-                    let c = if t.running {
+                } else if theme::icon_button(ui, "⟳", "Erneut starten").clicked() {
+                    relaunch = true;
+                }
+            },
+        );
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(theme::bg_deep()))
+            .show(ui, |ui| {
+                let r = ui.max_rect();
+                let p = ui.painter();
+                // A single big jack: the session lives in an external window.
+                let c = r.center() - Vec2::new(0.0, 40.0);
+                let ring = if running {
+                    theme::accent()
+                } else {
+                    theme::border()
+                };
+                p.circle_stroke(c, 34.0, Stroke::new(2.0, ring));
+                p.circle_filled(c, 9.0, ring);
+                theme::led(
+                    p,
+                    c + Vec2::new(40.0, -40.0),
+                    if running {
                         theme::green()
                     } else {
-                        theme::amber()
-                    };
-                    theme::chip(ui, &t.status, c);
-                    if t.running {
-                        ui.label(
-                            RichText::new(format!("seit {}s", t.started.elapsed().as_secs()))
-                                .color(theme::text_dim())
-                                .size(12.0),
-                        );
-                        ui.ctx().request_repaint_after(Duration::from_secs(1));
-                    }
-                    ui.add_space(20.0);
-                    if t.running {
-                        if ui.button("⏹ Beenden").clicked()
-                            && let Some(child) = t.process.as_mut().and_then(|p| p.child.as_mut())
-                        {
-                            let _ = child.kill();
-                        }
-                    } else if theme::primary_button(ui, "⟳ Erneut starten").clicked() {
-                        relaunch = true;
-                    }
-                });
+                        theme::text_dim()
+                    },
+                    running,
+                );
+                p.text(
+                    c + Vec2::new(0.0, 70.0),
+                    egui::Align2::CENTER_CENTER,
+                    if running {
+                        "Läuft im System-Client"
+                    } else {
+                        "Fenster geschlossen"
+                    },
+                    theme::semibold(18.0),
+                    theme::text(),
+                );
+                let detail = if running {
+                    ui.ctx().request_repaint_after(Duration::from_secs(1));
+                    let s = t.started.elapsed().as_secs();
+                    format!("{:02}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+                } else {
+                    format!("{}:{}", t.launch.host, t.launch.port)
+                };
+                p.text(
+                    c + Vec2::new(0.0, 96.0),
+                    egui::Align2::CENTER_CENTER,
+                    detail,
+                    egui::FontId::monospace(13.0),
+                    theme::text_dim(),
+                );
             });
+        if stop && let Some(child) = t.process.as_mut().and_then(|p| p.child.as_mut()) {
+            let _ = child.kill();
+        }
         if relaunch {
             t.launch_external();
         }
@@ -1396,17 +1246,21 @@ impl App {
             .show(ctx, |ui| {
                 for t in &self.toasts {
                     egui::Frame::NONE
-                        .fill(theme::bg_card())
-                        .stroke(Stroke::new(1.0, t.color.linear_multiply(0.6)))
-                        .corner_radius(CornerRadius::same(10))
+                        .fill(theme::bg_panel())
+                        .stroke(Stroke::new(1.0, theme::border()))
+                        .corner_radius(CornerRadius::same(4))
                         .inner_margin(Margin::symmetric(14, 10))
                         .show(ui, |ui| {
                             ui.set_max_width(380.0);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("⏺").color(t.color));
+                                let (r, _) =
+                                    ui.allocate_exact_size(Vec2::splat(10.0), egui::Sense::hover());
+                                theme::led(ui.painter(), r.center(), t.color, true);
+                                ui.add_space(4.0);
                                 ui.label(&t.text);
                             });
                         });
+                    ui.add_space(6.0);
                 }
             });
     }
@@ -1427,6 +1281,28 @@ impl App {
         }
         if close_tab && let Some(id) = self.active {
             self.close_tab(id);
+        }
+        // Ctrl+1…9 jumps to a port, Ctrl+0 back to the overview.
+        let digits = [
+            egui::Key::Num0,
+            egui::Key::Num1,
+            egui::Key::Num2,
+            egui::Key::Num3,
+            egui::Key::Num4,
+            egui::Key::Num5,
+            egui::Key::Num6,
+            egui::Key::Num7,
+            egui::Key::Num8,
+            egui::Key::Num9,
+        ];
+        for (n, key) in digits.into_iter().enumerate() {
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, key)) {
+                self.active = if n == 0 {
+                    None
+                } else {
+                    self.tabs.get(n - 1).map(|t| t.id).or(self.active)
+                };
+            }
         }
         if next_tab && !self.tabs.is_empty() {
             let idx = self
@@ -1454,8 +1330,7 @@ impl eframe::App for App {
 
         let mut actions = Vec::new();
         self.shortcuts(&ctx, &mut actions);
-        self.top_bar(ui, &mut actions);
-        self.status_bar(ui);
+        crate::ui::chrome::rail(self, ui, &mut actions);
 
         match self.active {
             Some(id) if self.tabs.iter().any(|t| t.id == id) => {
@@ -1472,12 +1347,11 @@ impl eframe::App for App {
             }
             _ => {
                 self.active = None;
-                self.sidebar(ui, &mut actions);
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::NONE
                             .fill(theme::bg_deep())
-                            .inner_margin(Margin::symmetric(28, 22)),
+                            .inner_margin(Margin::symmetric(40, 30)),
                     )
                     .show(ui, |ui| match self.view {
                         View::Hosts => crate::ui::hosts::show(self, ui, &mut actions),
@@ -1546,124 +1420,6 @@ pub fn parse_quick(s: &str) -> Option<Host> {
         username: user,
         ..Default::default()
     })
-}
-
-fn nav_item(
-    ui: &mut egui::Ui,
-    icon: &str,
-    label: &str,
-    count: usize,
-    selected: bool,
-    accent: Color32,
-) -> egui::Response {
-    let (rect, resp) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), egui::Sense::click());
-    let p = ui.painter();
-    if selected {
-        p.rect_filled(rect, CornerRadius::same(9), accent.linear_multiply(0.14));
-        let bar =
-            egui::Rect::from_min_size(rect.left_top() + Vec2::new(0.0, 8.0), Vec2::new(3.0, 20.0));
-        p.rect_filled(bar, CornerRadius::same(2), accent);
-    } else if resp.hovered() {
-        p.rect_filled(rect, CornerRadius::same(9), theme::bg_hover());
-    }
-    let fg = if selected {
-        theme::text()
-    } else {
-        theme::text_dim()
-    };
-    p.text(
-        rect.left_center() + Vec2::new(14.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        icon,
-        egui::FontId::proportional(15.0),
-        if selected { accent } else { fg },
-    );
-    p.text(
-        rect.left_center() + Vec2::new(40.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::FontId::proportional(14.0),
-        fg,
-    );
-    if count > 0 {
-        p.text(
-            rect.right_center() - Vec2::new(12.0, 0.0),
-            egui::Align2::RIGHT_CENTER,
-            count.to_string(),
-            egui::FontId::proportional(11.5),
-            theme::text_dim(),
-        );
-    }
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
-/// Pill-shaped tab; returns (response, close_clicked).
-fn tab_button(
-    ui: &mut egui::Ui,
-    title: &str,
-    selected: bool,
-    color: Color32,
-    status: Option<Color32>,
-) -> (egui::Response, bool) {
-    let font = egui::FontId::proportional(13.0);
-    let galley = ui
-        .painter()
-        .layout_no_wrap(title.to_string(), font, theme::text());
-    let closable = status.is_some();
-    let w = galley.size().x + 30.0 + if closable { 22.0 } else { 0.0 };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w.min(240.0), 30.0), egui::Sense::click());
-    let p = ui.painter_at(rect);
-    let bg = if selected {
-        theme::bg_card()
-    } else if resp.hovered() {
-        theme::bg_panel()
-    } else {
-        Color32::TRANSPARENT
-    };
-    p.rect_filled(rect, CornerRadius::same(9), bg);
-    if selected {
-        let line = egui::Rect::from_min_size(
-            rect.left_bottom() - Vec2::new(-10.0, 2.0),
-            Vec2::new(rect.width() - 20.0, 2.0),
-        );
-        theme::gradient_rect(&p, line, color, theme::violet(), 0.0);
-    }
-    p.circle_filled(
-        rect.left_center() + Vec2::new(12.0, 0.0),
-        3.5,
-        status.unwrap_or(color),
-    );
-    p.galley(
-        rect.left_center() + Vec2::new(22.0, -galley.size().y / 2.0),
-        galley,
-        if selected {
-            theme::text()
-        } else {
-            theme::text_dim()
-        },
-    );
-    let mut closed = false;
-    if closable {
-        let x_rect = egui::Rect::from_center_size(
-            rect.right_center() - Vec2::new(14.0, 0.0),
-            Vec2::splat(18.0),
-        );
-        let x_resp = ui.interact(x_rect, resp.id.with("x"), egui::Sense::click());
-        if x_resp.hovered() {
-            ui.painter()
-                .rect_filled(x_rect, CornerRadius::same(5), theme::bg_hover());
-        }
-        ui.painter().text(
-            x_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            "×",
-            egui::FontId::proportional(15.0),
-            theme::text_dim(),
-        );
-        closed = x_resp.clicked();
-    }
-    (resp, closed)
 }
 
 #[cfg(test)]

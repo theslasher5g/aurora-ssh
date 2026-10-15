@@ -6,8 +6,10 @@ use crate::app::{Action, App};
 use crate::theme;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-    ui.label(RichText::new("Einstellungen").size(26.0).strong());
-    ui.add_space(10.0);
+    ui.label(theme::heading("Einstellungen", 24.0));
+    ui.add_space(14.0);
+    theme::hairline(ui);
+    ui.add_space(14.0);
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -113,7 +115,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                             app.serial_ports = crate::backend::serial::available_ports();
                             app.toast(
                                 format!("{} serielle Ports", app.serial_ports.len()),
-                                theme::teal(),
+                                theme::accent(),
                             );
                         }
                     });
@@ -139,7 +141,7 @@ fn theme_card(ui: &mut egui::Ui, t: &theme::Palette, selected: bool) -> egui::Re
     };
     p.rect(
         rect,
-        CornerRadius::same(12),
+        CornerRadius::same(8),
         t.bg_deep,
         stroke,
         egui::StrokeKind::Inside,
@@ -165,25 +167,18 @@ fn theme_card(ui: &mut egui::Ui, t: &theme::Palette, selected: bool) -> egui::Re
             color,
         );
     }
-    let bar = egui::Rect::from_min_size(
-        egui::pos2(inner.left(), inner.bottom() - 16.0),
-        Vec2::new(36.0, 4.0),
+    p.circle_filled(
+        egui::pos2(inner.left() + 5.0, inner.bottom() - 9.0),
+        4.0,
+        t.accent,
     );
-    theme::gradient_rect(p, bar, t.accent, t.accent2, 2.0);
     p.text(
-        egui::pos2(inner.left() + 44.0, inner.bottom() - 14.0),
+        egui::pos2(inner.left() + 16.0, inner.bottom() - 9.0),
         egui::Align2::LEFT_CENTER,
         t.name,
-        egui::FontId::proportional(13.0),
+        theme::semibold(13.0),
         t.text,
     );
-    if selected {
-        p.circle_filled(
-            egui::pos2(inner.right() - 6.0, inner.bottom() - 14.0),
-            5.0,
-            t.accent,
-        );
-    }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -206,7 +201,7 @@ fn known_hosts(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
-                    ui.label(RichText::new(&host).strong());
+                    ui.label(theme::mono(&host, 12.5).color(theme::text()));
                     ui.add(
                         egui::Label::new(
                             RichText::new(&fp)
@@ -218,7 +213,7 @@ fn known_hosts(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     );
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if theme::icon_button(ui, "🗑", "Entfernen").clicked() {
+                    if theme::icon_button(ui, "×", "Entfernen").clicked() {
                         actions.push(Action::ForgetKnownHost(host.clone()));
                     }
                 });

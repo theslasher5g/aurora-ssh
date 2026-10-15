@@ -317,15 +317,6 @@ impl Identity {
             ..Default::default()
         }
     }
-
-    pub fn kind(&self) -> &'static str {
-        match (self.private_key.is_empty(), self.password.is_empty()) {
-            (false, false) => "Key + Passwort",
-            (false, true) => "SSH-Key",
-            (true, false) => "Passwort",
-            (true, true) => "Nur Benutzer",
-        }
-    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
@@ -348,7 +339,7 @@ impl Default for Settings {
         Self {
             font_size: 14.0,
             scrollback: 5000,
-            theme: "aurora".into(),
+            theme: "phosphor".into(),
             copy_on_select: true,
         }
     }
@@ -416,94 +407,6 @@ impl Library {
             next = self.group(id).and_then(|g| g.parent_id);
         }
         false
-    }
-
-    pub fn seed_examples(&mut self) {
-        let prod = Group {
-            name: "Production".into(),
-            color: [248, 113, 113],
-            icon: "🔥".into(),
-            ..Default::default()
-        };
-        let lab = Group {
-            name: "Homelab".into(),
-            color: [45, 226, 195],
-            icon: "🏠".into(),
-            ..Default::default()
-        };
-        self.hosts.push(Host {
-            label: "web-01".into(),
-            hostname: "web-01.example.com".into(),
-            username: "deploy".into(),
-            group_id: Some(prod.id),
-            tags: vec!["nginx".into()],
-            ..Default::default()
-        });
-        self.hosts.push(Host {
-            label: "Raspberry Pi".into(),
-            hostname: "192.168.1.50".into(),
-            username: "pi".into(),
-            group_id: Some(lab.id),
-            favorite: true,
-            ..Default::default()
-        });
-        self.hosts.push(Host {
-            label: "Windows Desktop".into(),
-            protocol: Protocol::Rdp,
-            hostname: "192.168.1.20".into(),
-            port: 3389,
-            group_id: Some(lab.id),
-            ..Default::default()
-        });
-        self.hosts.push(Host {
-            label: "Router Console".into(),
-            protocol: Protocol::Serial,
-            port: 0,
-            group_id: Some(lab.id),
-            serial: SerialSettings {
-                port_name: if cfg!(windows) {
-                    "COM3".into()
-                } else {
-                    "/dev/ttyUSB0".into()
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-        self.groups.push(prod);
-        self.groups.push(lab);
-
-        let snippets = [
-            (
-                "System-Update",
-                "Pakete aktualisieren",
-                "sudo apt update && sudo apt upgrade -y",
-            ),
-            ("Disk Usage", "Belegung aller Mounts", "df -h"),
-            (
-                "Top Prozesse",
-                "CPU-hungrigste Prozesse",
-                "ps aux --sort=-%cpu | head -n 15",
-            ),
-            (
-                "Logs folgen",
-                "journalctl eines Dienstes",
-                "sudo journalctl -fu {{service}}",
-            ),
-            (
-                "Docker PS",
-                "Laufende Container",
-                "docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'",
-            ),
-        ];
-        for (name, desc, script) in snippets {
-            self.snippets.push(Snippet {
-                name: name.into(),
-                description: desc.into(),
-                script: script.into(),
-                ..Default::default()
-            });
-        }
     }
 }
 

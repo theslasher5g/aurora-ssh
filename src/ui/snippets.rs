@@ -1,26 +1,23 @@
 //! Snippet library with `{{variable}}` placeholders.
 
-use egui::{CornerRadius, Margin, RichText};
+use egui::{CornerRadius, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 
 use crate::app::{Action, App};
 use crate::theme;
-use crate::ui::fuzzy;
+use crate::ui::{empty_list, fuzzy, page_header, row_buttons};
 
 pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("Snippets").size(26.0).strong());
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if theme::primary_button(ui, "➕ Snippet").clicked() {
-                actions.push(Action::NewSnippet);
-            }
-            ui.add(
-                egui::TextEdit::singleline(&mut app.snippet_search)
-                    .hint_text("🔍 Suchen…")
-                    .desired_width(220.0),
-            );
-        });
-    });
-    ui.add_space(12.0);
+    let count = app.lib.snippets.len();
+    if page_header(
+        ui,
+        "Snippets",
+        count,
+        &mut app.snippet_search,
+        "Suchen",
+        "Neu",
+    ) {
+        actions.push(Action::NewSnippet);
+    }
 
     let q = app.snippet_search.clone();
     let mut list: Vec<_> = app
@@ -43,80 +40,84 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         .collect();
     list.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.name.cmp(&b.1.name)));
 
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            for (_, s) in list {
-                theme::card_frame().show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("⚡").color(theme::amber()).size(18.0));
-                        ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing.y = 2.0;
-                            ui.label(RichText::new(&s.name).strong().size(15.0));
-                            if !s.description.is_empty() {
-                                ui.label(
-                                    RichText::new(&s.description)
-                                        .color(theme::text_dim())
-                                        .size(12.5),
-                                );
-                            }
-                        });
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("🗑").clicked() {
-                                actions.push(Action::Confirm(
-                                    format!("Snippet „{}“ löschen?", s.name),
-                                    Box::new(Action::DeleteSnippet(s.id)),
-                                ));
-                            }
-                            if ui.button("✏").clicked() {
-                                actions.push(Action::EditSnippet(s.id));
-                            }
-                            if ui.button("📋").on_hover_text("Kopieren").clicked() {
-                                ui.ctx().copy_text(s.script.clone());
-                            }
-                            if ui
-                                .button("▶▶ Alle")
-                                .on_hover_text("In allen verbundenen Terminals ausführen")
-                                .clicked()
-                            {
-                                actions.push(Action::RunSnippet(s.id, true));
-                            }
-                            if ui
-                                .button("▶ Ausführen")
-                                .on_hover_text("Im zuletzt aktiven Terminal ausführen")
-                                .clicked()
-                            {
-                                actions.push(Action::RunSnippet(s.id, false));
-                            }
-                        });
-                    });
-                    egui::Frame::NONE
-                        .fill(theme::bg_deep())
-                        .corner_radius(CornerRadius::same(8))
-                        .inner_margin(Margin::symmetric(12, 8))
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.label(
-                                RichText::new(&s.script)
-                                    .monospace()
-                                    .size(12.5)
-                                    .color(theme::teal()),
-                            );
-                        });
-                    let vars = s.variables();
-                    if !s.tags.is_empty() || !vars.is_empty() {
-                        ui.horizontal(|ui| {
-                            for t in &s.tags {
-                                theme::chip(ui, &format!("#{t}"), theme::rgb(theme::hash_color(t)));
-                            }
-                            for v in &vars {
-                                theme::chip(ui, &format!("{{{{{v}}}}}"), theme::violet());
-                            }
-                        });
-                    }
-                });
-                ui.add_space(8.0);
+    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        if count == 0 {
+            if empty_list(
+                ui,
+                "Noch keine Snippets",
+                "Speichere Befehle, die du oft brauchst. Platzhalter wie {{dienst}} fragt Aurora beim Ausführen ab.",
+                "Snippet anlegen",
+            ) {
+                actions.push(Action::NewSnippet);
             }
-        });
+            return;
+        }
+        for (_, s) in list {
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 58.0), Sense::click());
+            let hovered = ui.rect_contains_pointer(rect);
+            let p = ui.painter().with_clip_rect(rect);
+            if hovered {
+                p.rect_filled(rect, CornerRadius::same(6), theme::bg_hover());
+            }
+            p.rect_filled(
+                Rect::from_min_max(Pos2::new(rect.left() + 10.0, rect.bottom() - 1.0), rect.right_bottom()),
+                CornerRadius::ZERO,
+                theme::border().linear_multiply(0.6),
+            );
+            let left = rect.left() + 12.0;
+            let name_g = p.layout_no_wrap(s.name.clone(), theme::semibold(14.0), theme::text());
+            let nw = name_g.size().x;
+            p.galley(Pos2::new(left, rect.top() + 9.0), name_g, theme::text());
+            if !s.description.is_empty() {
+                p.text(
+                    Pos2::new(left + nw + 10.0, rect.top() + 18.0),
+                    egui::Align2::LEFT_CENTER,
+                    &s.description,
+                    FontId::proportional(12.5),
+                    theme::text_dim(),
+                );
+            }
+            // Script preview: prompt glyph in accent, first line in mono.
+            p.text(Pos2::new(left, rect.top() + 39.0), egui::Align2::LEFT_CENTER, "$", FontId::monospace(12.5), theme::accent());
+            p.text(
+                Pos2::new(left + 14.0, rect.top() + 39.0),
+                egui::Align2::LEFT_CENTER,
+                s.script.lines().next().unwrap_or_default(),
+                FontId::monospace(12.5),
+                theme::text_dim(),
+            );
+            if hovered {
+                let labels = ["Ausführen", "In allen", "Bearbeiten", "Löschen"];
+                match row_buttons(ui, rect, s.id, &labels) {
+                    Some(0) => actions.push(Action::RunSnippet(s.id, false)),
+                    Some(1) => actions.push(Action::RunSnippet(s.id, true)),
+                    Some(2) => actions.push(Action::EditSnippet(s.id)),
+                    Some(3) => actions.push(Action::Confirm(
+                        format!("Snippet „{}“ löschen?", s.name),
+                        Box::new(Action::DeleteSnippet(s.id)),
+                    )),
+                    _ => {}
+                }
+            } else {
+                // Variables and tags as small outlined labels, right aligned.
+                let mut x = rect.right() - 12.0;
+                let labels: Vec<(String, egui::Color32)> = s
+                    .variables()
+                    .into_iter()
+                    .map(|v| (format!("{{{{{v}}}}}"), theme::accent()))
+                    .chain(s.tags.iter().map(|t| (format!("#{t}"), theme::text_dim())))
+                    .collect();
+                for (label, color) in labels.into_iter().rev() {
+                    let g = p.layout_no_wrap(label, FontId::monospace(10.5), color);
+                    let r = Rect::from_min_size(Pos2::new(x - g.size().x - 10.0, rect.center().y - 9.0), g.size() + Vec2::new(10.0, 6.0));
+                    p.rect_stroke(r, CornerRadius::same(3), Stroke::new(1.0, color.linear_multiply(0.4)), egui::StrokeKind::Inside);
+                    p.galley(r.min + Vec2::new(5.0, 3.0), g, color);
+                    x = r.left() - 6.0;
+                }
+            }
+            if resp.double_clicked() {
+                actions.push(Action::RunSnippet(s.id, false));
+            }
+        }
+    });
 }

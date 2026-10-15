@@ -1,3 +1,4 @@
+pub mod chrome;
 pub mod dialogs;
 pub mod editors;
 pub mod hosts;
@@ -51,8 +52,97 @@ pub fn relative_time(t: chrono::DateTime<chrono::Utc>) -> String {
         0..=59 => "gerade eben".into(),
         60..=3599 => format!("vor {} min", secs / 60),
         3600..=86399 => format!("vor {} h", secs / 3600),
+        86400..=172799 => "gestern".into(),
         _ => format!("vor {} Tagen", secs / 86400),
     }
+}
+
+/// Page header shared by the list views: title + count left, search and primary action right.
+/// Returns true when the primary button was clicked.
+pub fn page_header(
+    ui: &mut egui::Ui,
+    title: &str,
+    count: usize,
+    search: &mut String,
+    hint: &str,
+    add: &str,
+) -> bool {
+    let mut clicked = false;
+    ui.horizontal(|ui| {
+        ui.label(crate::theme::heading(title, 24.0));
+        ui.label(crate::theme::mono(count.to_string(), 13.0).color(crate::theme::text_dim()));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            clicked = crate::theme::primary_button(ui, add).clicked();
+            ui.add(
+                egui::TextEdit::singleline(search)
+                    .hint_text(hint)
+                    .desired_width(260.0)
+                    .margin(egui::Margin::symmetric(10, 6)),
+            );
+        });
+    });
+    ui.add_space(14.0);
+    crate::theme::hairline(ui);
+    ui.add_space(6.0);
+    clicked
+}
+
+/// Text buttons drawn right-aligned inside a list row on hover; returns the clicked index.
+pub fn row_buttons(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    id: impl std::hash::Hash + std::fmt::Debug + Copy,
+    labels: &[&str],
+) -> Option<usize> {
+    use egui::{CornerRadius, Rect, Sense, Stroke, Vec2};
+    let theme = crate::theme::palette();
+    let mut clicked = None;
+    let mut x = rect.right() - 8.0;
+    let cy = rect.center().y;
+    for (i, label) in labels.iter().enumerate().rev() {
+        let danger = label.starts_with("Löschen");
+        let g = ui.painter().layout_no_wrap(
+            label.to_string(),
+            egui::FontId::proportional(12.5),
+            theme.text,
+        );
+        let r = Rect::from_min_size(
+            egui::pos2(x - g.size().x - 20.0, cy - 13.0),
+            Vec2::new(g.size().x + 20.0, 26.0),
+        );
+        x = r.left() - 6.0;
+        let b = ui.interact(r, ui.id().with((id, i)), Sense::click());
+        let fill = if b.hovered() {
+            theme.bg_card
+        } else {
+            egui::Color32::TRANSPARENT
+        };
+        ui.painter().rect(
+            r,
+            CornerRadius::same(5),
+            fill,
+            Stroke::new(1.0, theme.border),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().galley(
+            r.center() - g.size() / 2.0,
+            g,
+            if danger { theme.red } else { theme.text },
+        );
+        if b.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            clicked = Some(i);
+        }
+    }
+    clicked
+}
+
+/// Empty list placeholder with one action.
+pub fn empty_list(ui: &mut egui::Ui, title: &str, body: &str, action: &str) -> bool {
+    ui.add_space(40.0);
+    ui.label(crate::theme::heading(title, 18.0));
+    ui.label(egui::RichText::new(body).color(crate::theme::text_dim()));
+    ui.add_space(12.0);
+    crate::theme::primary_button(ui, action).clicked()
 }
 
 #[cfg(test)]

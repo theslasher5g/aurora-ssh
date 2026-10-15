@@ -1,4 +1,4 @@
-# ✦ Aurora
+# Aurora
 
 Moderner Client für **SSH, SFTP, RDP und serielle Konsolen** – in Rust, schlicht, schnell, mit
 verschlüsselter Keychain, Snippets, Host-Gruppen und umschaltbaren Themes.
@@ -27,21 +27,23 @@ Unter [Releases](../../releases) gibt es zwei getrennte Downloads:
 | **Keychain** | Passwörter & SSH-Keys, Ed25519-Generator, verschlüsselt mit Argon2id + XChaCha20-Poly1305 |
 | **Snippets** | Platzhalter `{{variable}}` mit Live-Vorschau, Snippet-Leiste im Terminal, in allen Sessions ausführen, Startup-Snippet pro Host |
 | **Gruppen** | Verschachtelt, Farbe & Icon, vererbte Standard-User/-Identität, Favoriten, Zuletzt verbunden, Tags |
-| **Design** | 6 Themes (Aurora, Midnight, Nord, Dracula, Ember, Daylight), Befehlspalette `Ctrl/⌘+K`, Broadcast-Modus |
+| **Design** | Eigenes „Patchbay“-Design: Sessions als nummerierte Ports mit Status-LED in der Leiste, IBM Plex Sans/Mono. 5 Themes (Phosphor, Glacier, Nord, Dracula, Paper), Befehlspalette `Ctrl/⌘+K`, Broadcast-Modus |
 
 | | |
 |---|---|
-| ![RDP](docs/screenshots/rdp.png) | ![Themes](docs/screenshots/themes.png) |
 | ![Terminal](docs/screenshots/terminal.png) | ![SFTP](docs/screenshots/sftp.png) |
-| ![Befehlspalette](docs/screenshots/palette.png) | ![Host-Key-Prüfung](docs/screenshots/hostkey.png) |
+| ![RDP](docs/screenshots/rdp.png) | ![Paper-Theme](docs/screenshots/paper.png) |
+| ![Befehlspalette](docs/screenshots/palette.png) | ![Snippets](docs/screenshots/snippets.png) |
+| ![Einstellungen & Themes](docs/screenshots/themes.png) | ![Tresor](docs/screenshots/lock.png) |
 
 ## Tastenkürzel
 
 | Kürzel | Aktion |
 |---|---|
 | `Ctrl/⌘ + K` | Befehlspalette (Hosts, Snippets, Themes, `user@host`) |
-| `Ctrl + Tab` | Nächster Tab |
-| `Ctrl/⌘ + Shift + W` | Tab schließen |
+| `Ctrl + 1…9` | Zu Port/Session 1…9 springen, `Ctrl + 0` zurück zur Übersicht |
+| `Ctrl + Tab` | Nächste Session |
+| `Ctrl/⌘ + Shift + W` | Session schließen |
 | `Ctrl + Shift + C` / Auswahl | Kopieren im Terminal |
 | `Enter` in getrennter Session | Neu verbinden |
 
@@ -78,10 +80,11 @@ Details und Review-Ergebnisse: [SECURITY.md](SECURITY.md).
 src/
 ├── app.rs             Zustand, Tabs, Session-Lifecycle, Layout
 ├── terminal.rs        vt100 + Renderer + Tastatur→Escape-Sequenzen
-├── theme.rs           Themes und gemeinsame Widgets
+├── theme.rs           Design-System „Patchbay“: Paletten, Fonts, Widgets
 ├── model.rs / store.rs  Daten, Persistenz, Vault
 ├── backend/           ssh, sftp, serial, rdp (System-Client), rdp_embed (Hilfsprozess)
-└── ui/                Hosts, Keychain, Snippets, SFTP, RDP, Einstellungen, Dialoge, Palette
+└── ui/                Port-Leiste (chrome), Hosts, Keychain, Snippets, SFTP, RDP, Einstellungen, Dialoge, Palette
+assets/fonts/          IBM Plex Sans/Mono (SIL OFL)
 crates/aurora-rdp/     IronRDP-Hilfsprozess (stdio-Protokoll)
 packaging/             .deb/.tar.gz-Skript, Inno-Setup-Installer
 ```

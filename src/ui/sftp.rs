@@ -120,13 +120,29 @@ enum PaneAction {
 pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
     let accent = app.accent();
     let mut next_id = app.next_id;
+    let index = app.tabs.iter().position(|t| t.id == tab_id).unwrap_or(0) + 1;
     let Some(tab) = app.tabs.iter_mut().find(|t| t.id == tab_id) else {
         return;
     };
+    let (title, subtitle) = (tab.title.clone(), tab.subtitle.clone());
     let TabKind::Sftp(t) = &mut tab.kind else {
         return;
     };
     let mut reconnect = false;
+    let closed = matches!(t.state, ConnState::Closed(_));
+    crate::ui::chrome::session_header(
+        ui,
+        egui::Id::new(("sftp-bar", tab_id)),
+        index,
+        &title,
+        &format!("sftp  {subtitle}"),
+        crate::ui::chrome::state_pair(&t.state),
+        |ui| {
+            if closed && theme::icon_button(ui, "⟳", "Neu verbinden").clicked() {
+                reconnect = true;
+            }
+        },
+    );
 
     // Drag & drop from the OS uploads into the current remote directory.
     let dropped: Vec<PathBuf> = ui.input(|i| {
@@ -145,35 +161,57 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
 
     egui::Panel::bottom(egui::Id::new(("sftp-transfers", tab_id)))
         .resizable(true)
-        .default_size(130.0)
+        .default_size(120.0)
         .frame(
             egui::Frame::NONE
                 .fill(theme::bg_panel())
-                .inner_margin(Margin::same(12)),
+                .stroke(egui::Stroke::new(1.0, theme::border()))
+                .inner_margin(Margin::symmetric(18, 12)),
         )
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 theme::section_title(ui, "Übertragungen");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("Fertige entfernen").clicked() {
-                        t.transfers.retain(|x| !x.finished);
-                    }
-                });
+                if t.transfers.iter().any(|x| x.finished)
+                    && ui
+                        .add(
+                            egui::Label::new(
+                                RichText::new("aufräumen")
+                                    .size(12.0)
+                                    .color(theme::text_dim()),
+                            )
+                            .sense(egui::Sense::click()),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                {
+                    t.transfers.retain(|x| !x.finished);
+                }
             });
+            ui.add_space(6.0);
             egui::ScrollArea::vertical().show(ui, |ui| {
                 if t.transfers.is_empty() {
                     ui.label(
-                        RichText::new("Dateien hierher ziehen oder ⬆/⬇ verwenden.")
+                        RichText::new("Dateien hierher ziehen oder doppelklicken.")
+                            .size(12.5)
                             .color(theme::text_dim()),
                     );
                 }
                 for tr in t.transfers.iter().rev() {
                     ui.horizontal(|ui| {
-                        ui.label(if tr.upload { "⬆" } else { "⬇" });
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        ui.label(
+                            RichText::new(if tr.upload { "↑" } else { "↓" })
+                                .font(theme::mono_medium(13.0))
+                                .color(if tr.upload {
+                                    theme::accent()
+                                } else {
+                                    theme::accent2()
+                                }),
+                        );
                         ui.allocate_ui_with_layout(
-                            Vec2::new(220.0, 18.0),
+                            Vec2::new(240.0, 18.0),
                             egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| ui.add(egui::Label::new(&tr.name).truncate()),
+                            |ui| ui.add(egui::Label::new(theme::mono(&tr.name, 12.5)).truncate()),
                         );
                         let frac = if tr.total > 0 {
                             tr.done as f32 / tr.total as f32
@@ -190,13 +228,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
                                 format!("{} / {}", human_size(tr.done), human_size(tr.total)),
                             ),
                         };
-                        ui.add(
-                            egui::ProgressBar::new(frac)
-                                .fill(color)
-                                .desired_width(220.0)
-                                .desired_height(8.0),
-                        );
-                        ui.label(RichText::new(text).size(11.5).color(theme::text_dim()));
+                        let (r, _) =
+                            ui.allocate_exact_size(Vec2::new(200.0, 12.0), egui::Sense::hover());
+                        let line =
+                            egui::Rect::from_center_size(r.center(), Vec2::new(r.width(), 2.0));
+                        ui.painter()
+                            .rect_filled(line, CornerRadius::ZERO, theme::border());
+                        let mut done = line;
+                        done.set_width(line.width() * frac.clamp(0.0, 1.0));
+                        ui.painter().rect_filled(done, CornerRadius::ZERO, color);
+                        ui.label(theme::mono(&text, 11.5).color(if tr.error.is_some() {
+                            theme::red()
+                        } else {
+                            theme::text_dim()
+                        }));
                     });
                 }
             });
@@ -206,38 +251,29 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
         .frame(
             egui::Frame::NONE
                 .fill(theme::bg_deep())
-                .inner_margin(Margin::same(12)),
+                .inner_margin(Margin::symmetric(18, 14)),
         )
         .show(ui, |ui| {
-            if let ConnState::Connecting(s) | ConnState::Closed(Some(s)) = &t.state {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("⏺").color(crate::app::state_color(&t.state)));
-                    ui.label(s.as_str());
-                    if matches!(t.state, ConnState::Closed(_))
-                        && ui.button("⟳ Neu verbinden").clicked()
-                    {
-                        reconnect = true;
-                    }
-                });
-            } else if matches!(t.state, ConnState::Closed(None))
-                && ui.button("⟳ Neu verbinden").clicked()
-            {
-                reconnect = true;
-            }
-
-            let remote_title = format!("🌐 {}", t.params.host_id());
+            let remote_title = "Server".to_string();
             let mut local_act = None;
             let mut remote_act = None;
+            let mid = ui.max_rect().center().x;
+            ui.painter().vline(
+                mid,
+                ui.max_rect().y_range(),
+                egui::Stroke::new(1.0, theme::border()),
+            );
+            ui.spacing_mut().item_spacing.x = 36.0;
             ui.columns(2, |cols| {
                 local_act = pane(
                     &mut cols[0],
                     "local",
-                    "💻 Lokal",
+                    "Lokal",
                     &mut t.local.edit,
                     &t.local.entries,
                     t.local.selected.as_deref(),
                     t.local.error.as_deref(),
-                    "⬆ Hochladen",
+                    "Hochladen →",
                     accent,
                 );
                 remote_act = pane(
@@ -248,7 +284,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
                     &t.remote_entries,
                     t.remote_selected.as_deref(),
                     None,
-                    "⬇ Herunterladen",
+                    "← Herunterladen",
                     accent,
                 );
             });
@@ -405,172 +441,205 @@ fn pane(
     accent: Color32,
 ) -> Option<PaneAction> {
     let mut action = None;
-    theme::card_frame()
-        .inner_margin(Margin::same(10))
-        .show(ui, |ui| {
-            ui.set_min_size(ui.available_size());
-            ui.set_max_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(title).strong());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let sel = selected.map(str::to_string);
-                    ui.add_enabled_ui(sel.is_some(), |ui| {
-                        if ui
-                            .button(RichText::new(transfer_label).color(accent))
-                            .clicked()
-                            && let Some(s) = &sel
-                        {
-                            action = Some(PaneAction::Transfer(s.clone()));
-                        }
-                        if ui.button("🗑").on_hover_text("Löschen").clicked()
-                            && let Some(s) = &sel
-                        {
-                            let is_dir = entries.iter().any(|e| &e.name == s && e.is_dir);
-                            action = Some(PaneAction::Delete(s.clone(), is_dir));
-                        }
-                        if ui.button("✏").on_hover_text("Umbenennen").clicked()
-                            && let Some(s) = &sel
-                        {
-                            action = Some(PaneAction::Rename(s.clone()));
-                        }
-                    });
-                    if ui.button("🗀➕").on_hover_text("Neuer Ordner").clicked() {
-                        action = Some(PaneAction::Mkdir);
+    egui::Frame::NONE.show(ui, |ui| {
+        ui.set_min_size(ui.available_size());
+        ui.set_max_width(ui.available_width());
+        ui.horizontal(|ui| {
+            theme::section_title(ui, title);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 14.0;
+                let sel = selected.map(str::to_string);
+                ui.add_enabled_ui(sel.is_some(), |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new(transfer_label).size(12.5).color(
+                                if sel.is_some() {
+                                    accent
+                                } else {
+                                    theme::text_dim()
+                                },
+                            ))
+                            .frame(false),
+                        )
+                        .clicked()
+                        && let Some(s) = &sel
+                    {
+                        action = Some(PaneAction::Transfer(s.clone()));
+                    }
+                    if text_button(ui, "Löschen").clicked()
+                        && let Some(s) = &sel
+                    {
+                        let is_dir = entries.iter().any(|e| &e.name == s && e.is_dir);
+                        action = Some(PaneAction::Delete(s.clone(), is_dir));
+                    }
+                    if text_button(ui, "Umbenennen").clicked()
+                        && let Some(s) = &sel
+                    {
+                        action = Some(PaneAction::Rename(s.clone()));
                     }
                 });
-            });
-            ui.horizontal(|ui| {
-                if ui
-                    .button("⬆")
-                    .on_hover_text("Übergeordneter Ordner")
-                    .clicked()
-                {
-                    action = Some(PaneAction::Up);
-                }
-                if ui.button("⟳").clicked() {
-                    action = Some(PaneAction::Refresh);
-                }
-                let r = ui.add(
-                    egui::TextEdit::singleline(path_edit)
-                        .font(egui::TextStyle::Monospace)
-                        .desired_width(f32::INFINITY),
-                );
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    action = Some(PaneAction::Navigate(path_edit.clone()));
+                if text_button(ui, "+ Ordner").clicked() {
+                    action = Some(PaneAction::Mkdir);
                 }
             });
-            if let Some(e) = error {
-                ui.label(RichText::new(e).color(theme::red()).size(12.0));
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            if theme::icon_button(ui, "↑", "Übergeordneter Ordner").clicked() {
+                action = Some(PaneAction::Up);
+            }
+            if theme::icon_button(ui, "⟳", "Aktualisieren").clicked() {
+                action = Some(PaneAction::Refresh);
             }
             ui.add_space(4.0);
-            egui::ScrollArea::vertical()
-                .id_salt(id)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    for e in entries {
-                        let is_sel = selected == Some(e.name.as_str());
-                        let (rect, resp) = ui.allocate_exact_size(
-                            Vec2::new(ui.available_width(), 26.0),
-                            egui::Sense::click(),
+            let r = ui.add(
+                egui::TextEdit::singleline(path_edit)
+                    .font(egui::FontId::monospace(12.5))
+                    .margin(Margin::symmetric(8, 6))
+                    .desired_width(f32::INFINITY),
+            );
+            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                action = Some(PaneAction::Navigate(path_edit.clone()));
+            }
+        });
+        if let Some(e) = error {
+            ui.label(RichText::new(e).color(theme::red()).size(12.0));
+        }
+        ui.add_space(8.0);
+        theme::hairline(ui);
+        egui::ScrollArea::vertical()
+            .id_salt(id)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for e in entries {
+                    let is_sel = selected == Some(e.name.as_str());
+                    let (rect, resp) = ui.allocate_exact_size(
+                        Vec2::new(ui.available_width(), 28.0),
+                        egui::Sense::click(),
+                    );
+                    let p = ui.painter();
+                    if is_sel {
+                        p.rect_filled(rect, CornerRadius::ZERO, accent.linear_multiply(0.10));
+                        p.rect_filled(
+                            egui::Rect::from_min_size(rect.min, Vec2::new(2.0, rect.height())),
+                            CornerRadius::ZERO,
+                            accent,
                         );
-                        if is_sel {
-                            ui.painter().rect_filled(
-                                rect,
-                                CornerRadius::same(6),
-                                accent.linear_multiply(0.18),
-                            );
-                        } else if resp.hovered() {
-                            ui.painter().rect_filled(
-                                rect,
-                                CornerRadius::same(6),
-                                theme::bg_hover(),
-                            );
-                        }
-                        let icon = if e.is_dir {
-                            "🗀"
-                        } else if e.is_link {
-                            "🔗"
-                        } else {
-                            "🗋"
-                        };
-                        let p = ui.painter();
-                        let font = egui::FontId::proportional(13.0);
+                    } else if resp.hovered() {
+                        p.rect_filled(rect, CornerRadius::ZERO, theme::bg_hover());
+                    }
+                    // Glyph: filled block for folders, outline for files, arrow for links.
+                    let g = egui::Rect::from_center_size(
+                        rect.left_center() + Vec2::new(16.0, 0.0),
+                        Vec2::new(10.0, 8.0),
+                    );
+                    if e.is_dir {
+                        p.rect_filled(
+                            g,
+                            CornerRadius::same(1),
+                            theme::accent2().linear_multiply(0.8),
+                        );
+                    } else if e.is_link {
                         p.text(
-                            rect.left_center() + Vec2::new(8.0, 0.0),
-                            egui::Align2::LEFT_CENTER,
-                            icon,
-                            font.clone(),
-                            theme::text(),
+                            g.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "↗",
+                            egui::FontId::monospace(12.0),
+                            theme::text_dim(),
                         );
-                        let name_color = if e.is_dir {
-                            theme::text()
+                    } else {
+                        p.rect_stroke(
+                            g,
+                            CornerRadius::same(1),
+                            egui::Stroke::new(1.0, theme::text_dim()),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                    let font = if e.is_dir {
+                        theme::semibold(13.0)
+                    } else {
+                        egui::FontId::proportional(13.0)
+                    };
+                    let name_color = if e.is_dir || is_sel {
+                        theme::text()
+                    } else {
+                        theme::text_dim().linear_multiply(1.3)
+                    };
+                    let name_rect = egui::Rect::from_min_max(
+                        rect.left_top() + Vec2::new(32.0, 0.0),
+                        rect.right_bottom() - Vec2::new(190.0, 0.0),
+                    );
+                    p.with_clip_rect(name_rect).text(
+                        name_rect.left_center(),
+                        egui::Align2::LEFT_CENTER,
+                        &e.name,
+                        font,
+                        name_color,
+                    );
+                    let meta = egui::FontId::monospace(11.5);
+                    if !e.is_dir {
+                        p.text(
+                            rect.right_center() - Vec2::new(116.0, 0.0),
+                            egui::Align2::RIGHT_CENTER,
+                            human_size(e.size),
+                            meta.clone(),
+                            theme::text_dim(),
+                        );
+                    }
+                    if let Some(m) = e.modified {
+                        p.text(
+                            rect.right_center() - Vec2::new(8.0, 0.0),
+                            egui::Align2::RIGHT_CENTER,
+                            short_date(m),
+                            meta,
+                            theme::text_dim(),
+                        );
+                    }
+                    if resp.clicked() {
+                        action = Some(PaneAction::Open(e.name.clone()));
+                    }
+                    if resp.double_clicked() {
+                        action = Some(if e.is_dir {
+                            PaneAction::Navigate(e.name.clone())
                         } else {
-                            theme::text_dim().linear_multiply(1.3)
-                        };
-                        let name_rect = egui::Rect::from_min_max(
-                            rect.left_top() + Vec2::new(32.0, 0.0),
-                            rect.right_bottom() - Vec2::new(170.0, 0.0),
-                        );
-                        p.with_clip_rect(name_rect).text(
-                            name_rect.left_center(),
-                            egui::Align2::LEFT_CENTER,
-                            &e.name,
-                            font.clone(),
-                            name_color,
-                        );
-                        if !e.is_dir {
-                            p.text(
-                                rect.right_center() - Vec2::new(100.0, 0.0),
-                                egui::Align2::RIGHT_CENTER,
-                                human_size(e.size),
-                                egui::FontId::proportional(11.5),
-                                theme::text_dim(),
-                            );
-                        }
-                        if let Some(m) = e.modified {
-                            p.text(
-                                rect.right_center() - Vec2::new(8.0, 0.0),
-                                egui::Align2::RIGHT_CENTER,
-                                short_date(m),
-                                egui::FontId::proportional(11.5),
-                                theme::text_dim(),
-                            );
-                        }
-                        if resp.clicked() {
-                            action = Some(PaneAction::Open(e.name.clone()));
-                        }
-                        if resp.double_clicked() {
-                            action = Some(if e.is_dir {
-                                PaneAction::Navigate(e.name.clone())
-                            } else {
-                                PaneAction::Transfer(e.name.clone())
-                            });
-                        }
-                        resp.context_menu(|ui| {
-                            if e.is_dir && ui.button("🗁 Öffnen").clicked() {
-                                action = Some(PaneAction::Navigate(e.name.clone()));
-                                ui.close();
-                            }
-                            if ui.button(transfer_label).clicked() {
-                                action = Some(PaneAction::Transfer(e.name.clone()));
-                                ui.close();
-                            }
-                            if ui.button("✏ Umbenennen").clicked() {
-                                action = Some(PaneAction::Rename(e.name.clone()));
-                                ui.close();
-                            }
-                            if ui
-                                .button(RichText::new("🗑 Löschen").color(theme::red()))
-                                .clicked()
-                            {
-                                action = Some(PaneAction::Delete(e.name.clone(), e.is_dir));
-                                ui.close();
-                            }
+                            PaneAction::Transfer(e.name.clone())
                         });
                     }
-                });
-        });
+                    resp.context_menu(|ui| {
+                        if e.is_dir && ui.button("Öffnen").clicked() {
+                            action = Some(PaneAction::Navigate(e.name.clone()));
+                            ui.close();
+                        }
+                        if ui.button(transfer_label).clicked() {
+                            action = Some(PaneAction::Transfer(e.name.clone()));
+                            ui.close();
+                        }
+                        if ui.button("Umbenennen").clicked() {
+                            action = Some(PaneAction::Rename(e.name.clone()));
+                            ui.close();
+                        }
+                        if ui
+                            .button(RichText::new("Löschen").color(theme::red()))
+                            .clicked()
+                        {
+                            action = Some(PaneAction::Delete(e.name.clone(), e.is_dir));
+                            ui.close();
+                        }
+                    });
+                }
+            });
+    });
     action
+}
+
+fn text_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let color = if ui.is_enabled() {
+        theme::text_dim()
+    } else {
+        theme::text_dim().linear_multiply(0.45)
+    };
+    ui.add(egui::Button::new(RichText::new(label).size(12.5).color(color)).frame(false))
 }
 
 fn short_date(t: SystemTime) -> String {
@@ -588,19 +657,15 @@ fn fs_dialog(ctx: &egui::Context, t: &mut SftpTab) {
         let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
         match dialog {
             FsDialog::Mkdir { name, .. } => {
-                ui.label(RichText::new("Neuer Ordner").size(17.0).strong());
+                ui.label(theme::heading("Neuer Ordner", 18.0));
                 ui.text_edit_singleline(name).request_focus();
             }
             FsDialog::Rename { to, from, .. } => {
-                ui.label(
-                    RichText::new(format!("„{from}“ umbenennen"))
-                        .size(17.0)
-                        .strong(),
-                );
+                ui.label(theme::heading(format!("„{from}“ umbenennen"), 18.0));
                 ui.text_edit_singleline(to).request_focus();
             }
             FsDialog::Delete { name, is_dir, .. } => {
-                ui.label(RichText::new("Löschen?").size(17.0).strong());
+                ui.label(theme::heading("Löschen?", 18.0));
                 ui.label(if *is_dir {
                     format!("Ordner „{name}“ inklusive Inhalt löschen?")
                 } else {

@@ -8,11 +8,10 @@ use crate::model::{FlowControl, Group, LineEnding, Parity, Protocol};
 use crate::theme;
 
 fn modal_header(ui: &mut egui::Ui, title: &str) {
-    ui.label(RichText::new(title).size(20.0).strong());
-    let (rect, _) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 3.0), egui::Sense::hover());
-    theme::gradient_rect(ui.painter(), rect, theme::teal(), theme::violet(), 2.0);
-    ui.add_space(6.0);
+    ui.label(theme::heading(title, 20.0));
+    ui.add_space(4.0);
+    theme::hairline(ui);
+    ui.add_space(8.0);
 }
 
 /// Returns (save, cancel).
@@ -615,7 +614,7 @@ fn identity_editor(app: &mut App, ctx: &egui::Context) {
                         ui.ctx().copy_text(public);
                         toast = Some((
                             "Key erzeugt — Public Key in die Zwischenablage kopiert".into(),
-                            theme::teal(),
+                            theme::accent(),
                         ));
                     }
                     Err(e) => toast = Some((format!("{e}"), theme::red())),
@@ -738,7 +737,7 @@ fn snippet_editor(app: &mut App, ctx: &egui::Context) {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Variablen:").color(theme::text_dim()));
                 for v in vars {
-                    theme::chip(ui, &v, theme::violet());
+                    theme::chip(ui, &v, theme::accent2());
                 }
             });
         }

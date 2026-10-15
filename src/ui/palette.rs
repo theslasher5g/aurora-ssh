@@ -25,9 +25,9 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         let hay = format!("{} {} {}", h.display_name(), h.hostname, h.tags.join(" "));
         if let Some(score) = fuzzy(&q, &hay) {
             items.push(Item {
-                icon: h.protocol.icon().into(),
+                icon: crate::ui::hosts::protocol_tag(h.protocol).into(),
                 title: h.display_name().to_string(),
-                subtitle: format!("Verbinden · {}", h.subtitle()),
+                subtitle: h.subtitle(),
                 action: Action::Connect(h.id),
                 score: score + 30,
             });
@@ -35,9 +35,9 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                 && let Some(score) = fuzzy(&q, &format!("sftp {hay}"))
             {
                 items.push(Item {
-                    icon: "🗁".into(),
+                    icon: "SFTP".into(),
                     title: format!("SFTP: {}", h.display_name()),
-                    subtitle: "Dateien übertragen".into(),
+                    subtitle: "Dateien".into(),
                     action: Action::OpenSftp(h.id),
                     score,
                 });
@@ -47,7 +47,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
     for s in &app.lib.snippets {
         if let Some(score) = fuzzy(&q, &format!("{} {}", s.name, s.script)) {
             items.push(Item {
-                icon: "⚡".into(),
+                icon: "SNIP".into(),
                 title: s.name.clone(),
                 subtitle: s.script.lines().next().unwrap_or_default().to_string(),
                 action: Action::RunSnippet(s.id, false),
@@ -56,23 +56,31 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         }
     }
     let commands = [
-        ("➕", "Neuer Host", Action::NewHost(None)),
-        ("🗀", "Neue Gruppe", Action::NewGroup(None)),
-        ("🔑", "Neue Identität", Action::NewIdentity),
-        ("⚡", "Neues Snippet", Action::NewSnippet),
-        ("🖧", "Hosts anzeigen", Action::Navigate(View::Hosts)),
-        ("🔑", "Keychain anzeigen", Action::Navigate(View::Keychain)),
-        ("⚡", "Snippets anzeigen", Action::Navigate(View::Snippets)),
-        ("⚙", "Einstellungen", Action::Navigate(View::Settings)),
-        ("🔒", "Vault sperren", Action::Lock),
+        ("CMD", "Neuer Host", Action::NewHost(None)),
+        ("CMD", "Neue Gruppe", Action::NewGroup(None)),
+        ("CMD", "Neue Identität", Action::NewIdentity),
+        ("CMD", "Neues Snippet", Action::NewSnippet),
+        (
+            "CMD",
+            "Verbindungen anzeigen",
+            Action::Navigate(View::Hosts),
+        ),
+        (
+            "CMD",
+            "Schlüssel anzeigen",
+            Action::Navigate(View::Keychain),
+        ),
+        ("CMD", "Snippets anzeigen", Action::Navigate(View::Snippets)),
+        ("CMD", "Einstellungen", Action::Navigate(View::Settings)),
+        ("CMD", "Tresor sperren", Action::Lock),
     ];
     for t in crate::theme::THEMES {
         let title = format!("Theme: {}", t.name);
         if let Some(score) = fuzzy(&q, &title) {
             items.push(Item {
-                icon: "🎨".into(),
+                icon: "THEME".into(),
                 title,
-                subtitle: "Design wechseln".into(),
+                subtitle: String::new(),
                 action: Action::SetTheme(t.id.to_string()),
                 score: score - 20,
             });
@@ -83,7 +91,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             items.push(Item {
                 icon: icon.into(),
                 title: title.into(),
-                subtitle: "Befehl".into(),
+                subtitle: String::new(),
                 action,
                 score: score - 10,
             });
@@ -93,9 +101,9 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         items.insert(
             0,
             Item {
-                icon: "⚡".into(),
-                title: format!("Quick Connect: {q}"),
-                subtitle: "Ad-hoc SSH-Verbindung".into(),
+                icon: "SSH".into(),
+                title: format!("Direkt verbinden: {q}"),
+                subtitle: "Enter".into(),
                 action: Action::QuickConnect(q.clone()),
                 score: i32::MAX,
             },
@@ -132,28 +140,24 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             egui::Frame::NONE
                 .fill(theme::bg_card())
                 .stroke(Stroke::new(1.0, theme::border()))
-                .corner_radius(CornerRadius::same(16))
-                .inner_margin(Margin::same(12)),
+                .corner_radius(CornerRadius::same(10))
+                .inner_margin(Margin::same(10)),
         )
         .show(ctx, |ui| {
             ui.set_width(560.0);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("🔍").size(18.0).color(theme::teal()));
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut app.palette.query)
-                        .hint_text("Host, Snippet oder Befehl… (user@host für Quick Connect)")
-                        .frame(egui::Frame::NONE)
-                        .font(egui::FontId::proportional(17.0))
-                        .desired_width(f32::INFINITY),
-                );
-                r.request_focus();
-                if r.changed() {
-                    app.palette.selected = 0;
-                }
-            });
-            let (rect, _) =
-                ui.allocate_exact_size(Vec2::new(ui.available_width(), 2.0), egui::Sense::hover());
-            theme::gradient_rect(ui.painter(), rect, theme::teal(), theme::violet(), 1.0);
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut app.palette.query)
+                    .hint_text("Host, Snippet, Befehl oder user@host")
+                    .frame(egui::Frame::NONE)
+                    .font(theme::semibold(18.0))
+                    .margin(egui::Margin::symmetric(6, 8))
+                    .desired_width(f32::INFINITY),
+            );
+            r.request_focus();
+            if r.changed() {
+                app.palette.selected = 0;
+            }
+            theme::hairline(ui);
             ui.add_space(4.0);
             if items.is_empty() {
                 ui.label(RichText::new("Keine Treffer").color(theme::text_dim()));
@@ -161,13 +165,13 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             for (i, item) in items.iter().enumerate() {
                 let selected = i == app.palette.selected;
                 let (rect, resp) = ui.allocate_exact_size(
-                    Vec2::new(ui.available_width(), 44.0),
+                    Vec2::new(ui.available_width(), 38.0),
                     egui::Sense::click(),
                 );
                 if selected || resp.hovered() {
                     ui.painter().rect_filled(
                         rect,
-                        CornerRadius::same(10),
+                        CornerRadius::same(6),
                         if selected {
                             theme::bg_hover()
                         } else {
@@ -175,34 +179,30 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                         },
                     );
                 }
-                if selected {
-                    let bar = egui::Rect::from_min_size(
-                        rect.left_top() + Vec2::new(0.0, 10.0),
-                        Vec2::new(3.0, 24.0),
-                    );
-                    ui.painter()
-                        .rect_filled(bar, CornerRadius::same(2), theme::teal());
-                }
                 let p = ui.painter();
                 p.text(
-                    rect.left_center() + Vec2::new(16.0, 0.0),
+                    rect.left_center() + Vec2::new(12.0, 0.0),
                     egui::Align2::LEFT_CENTER,
                     &item.icon,
-                    egui::FontId::proportional(16.0),
-                    theme::teal(),
+                    egui::FontId::monospace(10.5),
+                    if selected {
+                        theme::accent()
+                    } else {
+                        theme::text_dim()
+                    },
                 );
                 p.text(
-                    rect.left_top() + Vec2::new(44.0, 6.0),
-                    egui::Align2::LEFT_TOP,
+                    rect.left_center() + Vec2::new(70.0, 0.0),
+                    egui::Align2::LEFT_CENTER,
                     &item.title,
-                    egui::FontId::proportional(14.5),
+                    theme::semibold(14.0),
                     theme::text(),
                 );
-                p.text(
-                    rect.left_bottom() + Vec2::new(44.0, -6.0),
-                    egui::Align2::LEFT_BOTTOM,
+                p.with_clip_rect(rect).text(
+                    rect.right_center() - Vec2::new(12.0, 0.0),
+                    egui::Align2::RIGHT_CENTER,
                     &item.subtitle,
-                    egui::FontId::proportional(11.5),
+                    egui::FontId::monospace(11.5),
                     theme::text_dim(),
                 );
                 if resp.clicked() {
@@ -211,7 +211,8 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             }
             ui.add_space(4.0);
             ui.label(
-                RichText::new("⬆⬇ auswählen · Enter ausführen · Esc schließen")
+                RichText::new("↑↓ auswählen   Enter ausführen   Esc schließen")
+                    .font(egui::FontId::monospace(10.5))
                     .size(11.0)
                     .color(theme::text_dim()),
             );

@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use egui::{Color32, CornerRadius, Event, Margin, Pos2, Rect, RichText, Sense, Vec2};
+use egui::{Color32, CornerRadius, Event, Pos2, Rect, RichText, Sense, Vec2};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::app::ConnState;
@@ -176,8 +176,10 @@ impl RdpView {
                         self.clip_local_seen = text.clone();
                         self.clip_remote = text;
                         if std::mem::take(&mut self.announce_clip) {
-                            toasts
-                                .push(("Zwischenablage vom Host übernommen".into(), theme::teal()));
+                            toasts.push((
+                                "Zwischenablage vom Host übernommen".into(),
+                                theme::accent(),
+                            ));
                         }
                     }
                 }
@@ -228,103 +230,77 @@ impl RdpView {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
         id: egui::Id,
+        index: usize,
         title: &str,
+        subtitle: &str,
         launch: &RdpLaunch,
         toasts: &mut Vec<(String, Color32)>,
     ) -> RdpAction {
         let mut action = RdpAction::None;
         let connected = self.connected();
 
-        egui::Panel::top(id.with("bar"))
-            .exact_size(40.0)
-            .frame(
-                egui::Frame::NONE
-                    .fill(theme::bg_panel())
-                    .inner_margin(Margin::symmetric(12, 4)),
-            )
-            .show(ui, |ui| {
-                ui.horizontal_centered(|ui| {
-                    ui.label(
-                        RichText::new("⏺")
-                            .color(crate::app::state_color(&self.state))
-                            .size(10.0),
-                    );
-                    ui.label(RichText::new(title).strong());
-                    if let ConnState::Connecting(s) | ConnState::Closed(Some(s)) = &self.state {
-                        ui.add(
-                            egui::Label::new(RichText::new(s).color(theme::text_dim()).size(12.0))
-                                .truncate(),
-                        );
+        let state = crate::ui::chrome::state_pair(&self.state);
+        crate::ui::chrome::session_header(
+            ui,
+            id.with("bar"),
+            index,
+            title,
+            subtitle,
+            state,
+            |ui| {
+                if theme::icon_button(ui, "↗", "Im System-RDP-Client öffnen").clicked() {
+                    action = RdpAction::OpenExternal;
+                }
+                if matches!(self.state, ConnState::Closed(_)) {
+                    if theme::icon_button(ui, "⟳", "Neu verbinden").clicked() {
+                        self.reconnect();
                     }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if theme::icon_button(ui, "↗", "Im System-RDP-Client öffnen").clicked() {
-                            action = RdpAction::OpenExternal;
+                    return;
+                }
+                ui.add_enabled_ui(connected, |ui| {
+                    if theme::icon_button(ui, "⊞", "Windows-Taste").clicked() {
+                        self.tap(SC_LWIN);
+                    }
+                    if theme::icon_button(ui, "⌨", "Zwischenablage als Tastatureingabe tippen")
+                        .clicked()
+                    {
+                        let text = self
+                            .clipboard
+                            .get_or_insert_with(|| arboard::Clipboard::new().expect("clipboard"))
+                            .get_text()
+                            .unwrap_or_default();
+                        self.type_text(&text);
+                    }
+                    if theme::icon_button(ui, "📤", "Lokale Zwischenablage an den Host senden")
+                        .clicked()
+                    {
+                        match self.sync_local_clipboard(true) {
+                            Some(_) => toasts
+                                .push(("Zwischenablage an Host gesendet".into(), theme::accent())),
+                            None => toasts
+                                .push(("Lokale Zwischenablage ist leer".into(), theme::amber())),
                         }
-                        if matches!(self.state, ConnState::Closed(_)) {
-                            if theme::icon_button(ui, "⟳", "Neu verbinden").clicked() {
-                                self.reconnect();
-                            }
-                            return;
-                        }
-                        ui.add_enabled_ui(connected, |ui| {
-                            if theme::icon_button(ui, "⊞", "Windows-Taste").clicked() {
-                                self.tap(SC_LWIN);
-                            }
-                            if theme::icon_button(
-                                ui,
-                                "⌨",
-                                "Zwischenablage als Tastatureingabe tippen",
-                            )
-                            .clicked()
-                            {
-                                let text = self
-                                    .clipboard
-                                    .get_or_insert_with(|| {
-                                        arboard::Clipboard::new().expect("clipboard")
-                                    })
-                                    .get_text()
-                                    .unwrap_or_default();
-                                self.type_text(&text);
-                            }
-                            if theme::icon_button(
-                                ui,
-                                "📤",
-                                "Lokale Zwischenablage an den Host senden",
-                            )
-                            .clicked()
-                            {
-                                match self.sync_local_clipboard(true) {
-                                    Some(_) => toasts.push((
-                                        "Zwischenablage an Host gesendet".into(),
-                                        theme::teal(),
-                                    )),
-                                    None => toasts.push((
-                                        "Lokale Zwischenablage ist leer".into(),
-                                        theme::amber(),
-                                    )),
-                                }
-                            }
-                            if theme::icon_button(ui, "📥", "Zwischenablage vom Host kopieren")
-                                .clicked()
-                            {
-                                self.announce_clip = true;
-                                self.send(RdpCmd::ClipGet);
-                            }
-                            if ui
-                                .add(egui::Button::new(RichText::new("Ctrl+Alt+Del").size(12.5)))
-                                .on_hover_text("Sicherheitsbildschirm / Anmeldung")
-                                .clicked()
-                            {
-                                self.send(RdpCmd::CtrlAltDel);
-                            }
-                        });
-                    });
+                    }
+                    if theme::icon_button(ui, "📥", "Zwischenablage vom Host kopieren").clicked()
+                    {
+                        self.announce_clip = true;
+                        self.send(RdpCmd::ClipGet);
+                    }
+                    if ui
+                        .add(egui::Button::new(RichText::new("Ctrl+Alt+Del").size(12.5)))
+                        .on_hover_text("Sicherheitsbildschirm / Anmeldung")
+                        .clicked()
+                    {
+                        self.send(RdpCmd::CtrlAltDel);
+                    }
                 });
-            });
+            },
+        );
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(Color32::BLACK))
