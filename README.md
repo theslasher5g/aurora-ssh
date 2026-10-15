@@ -1,88 +1,87 @@
 # ✦ Aurora
 
-Ein moderner SSH-Client in **Rust** – inspiriert von Termius, aber mit eigenem Look:
-tiefes Nacht-Blau mit Teal→Violett-„Polarlicht"-Akzenten, Befehlspalette, Broadcast-Modus
-und ein verschlüsselter Vault für alle Zugangsdaten.
+Moderner Client für **SSH, SFTP, RDP und serielle Konsolen** – in Rust, schlicht, schnell, mit
+verschlüsselter Keychain, Snippets, Host-Gruppen und umschaltbaren Themes.
 
 ![Hosts](docs/screenshots/hosts.png)
 
+## Download
+
+Unter [Releases](../../releases) gibt es zwei getrennte Downloads:
+
+| System | Datei | Installation |
+|---|---|---|
+| **Windows** (x64) | `Aurora-<version>-windows-x64-setup.exe` | Installer ausführen |
+| | `Aurora-<version>-windows-x64-portable.zip` | entpacken, `Aurora.exe` starten |
+| **Linux** (x86_64) | `aurora_<version>_amd64.deb` | `sudo apt install ./aurora_<version>_amd64.deb` |
+| | `aurora-<version>-linux-x86_64.tar.gz` | entpacken, `./install.sh` oder `./aurora` |
+
 ## Features
 
-| Bereich | Was drin ist |
+| Bereich | |
 |---|---|
-| **SSH** | Eingebauter Terminal-Emulator (xterm-256color, Truecolor, Scrollback, Maus-Auswahl, Bracketed Paste, Resize), Auth per Key / Passwort / Keyboard-Interactive, Keepalive, Reconnect per Enter |
-| **SFTP** | Zwei-Pane-Browser lokal ⇄ remote, rekursiver Up-/Download mit Fortschritt, Drag & Drop aus dem Dateimanager, Ordner anlegen / umbenennen / löschen |
-| **RDP** | Startet den nativen Client mit generiertem Profil: `mstsc` (Windows, Credentials via `cmdkey`), Windows App (macOS), FreeRDP 2/3 oder Remmina (Linux). Passwort geht per stdin, nicht über die Kommandozeile |
-| **Serial** | Port-Erkennung, Baudrate, Datenbits, Parität, Stopbits, Flusskontrolle, Zeilenende (CR/LF/CRLF), lokales Echo |
-| **Keychain** | Identitäten (User + Passwort und/oder Private Key), Ed25519-Key-Generator, Public-Key-Export, Fingerprint-Anzeige. Alles verschlüsselt mit **Argon2id + XChaCha20-Poly1305** |
-| **Snippets** | Snippet-Bibliothek mit `{{variablen}}`-Platzhaltern (werden beim Ausführen abgefragt, mit Live-Vorschau), Tags, Snippet-Leiste direkt im Terminal, „in allen Sessions ausführen", Startup-Snippet pro Host |
-| **Gruppen** | Verschachtelte Gruppen mit Farbe & Icon, Standard-User und Standard-Identität werden an Hosts vererbt, Favoriten, „Zuletzt verbunden", Tags, Suche (`group:Name`) |
-| **Extras** | ⌘K/Ctrl+K-Befehlspalette (Fuzzy-Suche über Hosts, Snippets, Aktionen, `user@host` für Quick Connect), Broadcast-Modus (Eingabe an alle Terminals), Known-Hosts mit MITM-Warnung, Akzentfarbe wählbar |
-
-## Screenshots
+| **SSH** | Eigener Terminal-Emulator (256 Farben/Truecolor, Scrollback, Auswahl, Bracketed Paste, Resize), Key/Passwort/Keyboard-Interactive, Keepalive, Reconnect per Enter |
+| **SFTP** | Zwei Spalten lokal ⇄ Server, rekursive Transfers mit Fortschritt, Drag & Drop |
+| **RDP** | Direkt im Tab (IronRDP): passt sich der Fenstergröße an, **Zwischenablage in beide Richtungen** (automatisch + Buttons „vom Host kopieren"/„an Host senden"), **Ctrl+Alt+Del**, Windows-Taste, Zwischenablage als Tastatureingabe tippen (für Login-Masken/Konsolen). Optional im System-Client (mstsc, FreeRDP, Remmina) |
+| **Serial** | Port-Erkennung, Baudrate, Format, Flusskontrolle, Zeilenende, lokales Echo |
+| **Keychain** | Passwörter & SSH-Keys, Ed25519-Generator, verschlüsselt mit Argon2id + XChaCha20-Poly1305 |
+| **Snippets** | Platzhalter `{{variable}}` mit Live-Vorschau, Snippet-Leiste im Terminal, in allen Sessions ausführen, Startup-Snippet pro Host |
+| **Gruppen** | Verschachtelt, Farbe & Icon, vererbte Standard-User/-Identität, Favoriten, Zuletzt verbunden, Tags |
+| **Design** | 6 Themes (Aurora, Midnight, Nord, Dracula, Ember, Daylight), Befehlspalette `Ctrl/⌘+K`, Broadcast-Modus |
 
 | | |
 |---|---|
+| ![RDP](docs/screenshots/rdp.png) | ![Themes](docs/screenshots/themes.png) |
 | ![Terminal](docs/screenshots/terminal.png) | ![SFTP](docs/screenshots/sftp.png) |
-| ![Befehlspalette](docs/screenshots/palette.png) | ![Broadcast](docs/screenshots/broadcast.png) |
-| ![Host-Key-Prüfung](docs/screenshots/hostkey.png) | ![Vault](docs/screenshots/lock.png) |
-
-## Bauen & Starten
-
-Voraussetzung: Rust ≥ 1.88 (Edition 2024).
-
-```bash
-cargo run --release
-```
-
-Unter Linux werden zur Laufzeit X11/Wayland-Bibliotheken benötigt (z. B. `libxkbcommon-x11-0`, `libgl1`).
-Für RDP muss `xfreerdp3`/`xfreerdp` oder `remmina` installiert sein.
-
-```bash
-cargo test     # Unit-Tests (Vault-Krypto, Snippet-Variablen, Key-Mapping, Quick-Connect-Parser, …)
-```
+| ![Befehlspalette](docs/screenshots/palette.png) | ![Host-Key-Prüfung](docs/screenshots/hostkey.png) |
 
 ## Tastenkürzel
 
 | Kürzel | Aktion |
 |---|---|
-| `Ctrl/⌘ + K` | Befehlspalette |
+| `Ctrl/⌘ + K` | Befehlspalette (Hosts, Snippets, Themes, `user@host`) |
 | `Ctrl + Tab` | Nächster Tab |
 | `Ctrl/⌘ + Shift + W` | Tab schließen |
-| `Ctrl + Shift + C` / Auswahl | Kopieren (Kopieren-bei-Auswahl ist einstellbar) |
-| `Ctrl + V` / `Ctrl + Shift + V` | Einfügen |
+| `Ctrl + Shift + C` / Auswahl | Kopieren im Terminal |
 | `Enter` in getrennter Session | Neu verbinden |
+
+## Selbst bauen
+
+Rust ≥ 1.88:
+
+```bash
+cargo build --release                                              # App
+cargo build --release --manifest-path crates/aurora-rdp/Cargo.toml # RDP-Komponente
+cargo test
+```
+
+Die RDP-Komponente ist ein eigenes Crate (`crates/aurora-rdp`), weil IronRDP Krypto-Vorabversionen
+pinnt, die mit russh kollidieren. Sie läuft als Hilfsprozess neben `aurora` und streamt nur
+geänderte Bildbereiche. Zwei kleine Fixes an IronRDP liegen unter `crates/aurora-rdp/vendor`
+(markiert mit `AURORA PATCH`).
+
+Releases: Tag `v<version>-windows` bzw. `v<version>-linux` pushen – GitHub Actions baut und
+veröffentlicht das jeweilige Release (`.github/workflows/release.yml`).
 
 ## Daten & Sicherheit
 
-* `library.json` – Hosts, Gruppen, Snippets, Einstellungen, Known Hosts (keine Geheimnisse)
-* `vault.json` – Keychain, verschlüsselt (Argon2id m=64 MiB, t=3 → XChaCha20-Poly1305, neue Nonce pro Speichern)
+* `library.json` – Hosts, Gruppen, Snippets, Einstellungen, vertrauenswürdige Server (keine Geheimnisse)
+* `vault.json` – Keychain, verschlüsselt
+* Ort: `~/.local/share/AuroraTerm`, `%APPDATA%\Aurora\AuroraTerm\data` oder `AURORA_DATA_DIR`
 
-Speicherort: das plattformübliche Datenverzeichnis (`~/.local/share/AuroraTerm`, `%APPDATA%\Aurora\AuroraTerm`,
-`~/Library/Application Support/dev.Aurora.AuroraTerm`) oder `AURORA_DATA_DIR`.
-
-Server-Keys werden beim ersten Verbinden per SHA256-Fingerprint bestätigt (Trust on First Use).
-Ändert sich ein Key, zeigt Aurora eine deutliche Warnung mit altem und neuem Fingerprint.
+Server-Keys (SSH) und TLS-Zertifikate (RDP) werden beim ersten Verbinden bestätigt und gepinnt.
+Details und Review-Ergebnisse: [SECURITY.md](SECURITY.md).
 
 ## Architektur
 
 ```
 src/
-├── main.rs            Fenster-Setup (eframe/egui)
-├── app.rs             App-Zustand, Tabs, Session-Lifecycle, Layout
-├── terminal.rs        vt100-Parser + Renderer + Tastatur→Escape-Sequenzen
-├── theme.rs           Aurora-Theme, Gradients, Chips, Avatare, Logo
-├── model.rs           Hosts, Gruppen, Snippets, Identitäten (serde)
-├── store.rs           Persistenz + verschlüsselter Vault
-├── keygen.rs          Ed25519-Erzeugung, Public-Key/Fingerprint
-├── backend/
-│   ├── ssh.rs         russh: Verbindung, Auth, Host-Key-Prüfung, Shell
-│   ├── sftp.rs        russh-sftp: Listing, rekursive Transfers
-│   ├── serial.rs      serialport auf eigenem Thread
-│   └── rdp.rs         Start des nativen RDP-Clients
-└── ui/                Views (Hosts, Keychain, Snippets, SFTP, Einstellungen),
-                       Editoren, Dialoge, Befehlspalette, Lock-Screen
+├── app.rs             Zustand, Tabs, Session-Lifecycle, Layout
+├── terminal.rs        vt100 + Renderer + Tastatur→Escape-Sequenzen
+├── theme.rs           Themes und gemeinsame Widgets
+├── model.rs / store.rs  Daten, Persistenz, Vault
+├── backend/           ssh, sftp, serial, rdp (System-Client), rdp_embed (Hilfsprozess)
+└── ui/                Hosts, Keychain, Snippets, SFTP, RDP, Einstellungen, Dialoge, Palette
+crates/aurora-rdp/     IronRDP-Hilfsprozess (stdio-Protokoll)
+packaging/             .deb/.tar.gz-Skript, Inno-Setup-Installer
 ```
-
-Netzwerk läuft auf einer tokio-Runtime; jede Session kommuniziert mit der UI nur über Channels
-und weckt sie per `request_repaint`, sodass die App im Leerlauf keine CPU verbraucht.

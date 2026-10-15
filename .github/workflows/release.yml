@@ -1,0 +1,122 @@
+# Builds and publishes releases. Two separate releases per version:
+#   git tag v0.1.0-windows && git push origin v0.1.0-windows   -> Windows installer + portable zip
+#   git tag v0.1.0-linux   && git push origin v0.1.0-linux     -> .deb + portable tar.gz
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*-windows"
+      - "v*-linux"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    if: endsWith(github.ref_name, '-windows')
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            crates/aurora-rdp -> target
+
+      - name: Test
+        run: cargo test --release --locked
+
+      - name: Build
+        run: |
+          cargo build --release --locked
+          cargo build --release --locked --manifest-path crates/aurora-rdp/Cargo.toml
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', '' -replace '-windows$', ''
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          New-Item -ItemType Directory -Force dist/Aurora | Out-Null
+          Copy-Item target/release/aurora-term.exe dist/Aurora/Aurora.exe
+          Copy-Item crates/aurora-rdp/target/release/aurora-rdp.exe dist/Aurora/
+          Copy-Item README.md, SECURITY.md dist/Aurora/
+          Compress-Archive -Path dist/Aurora/* -DestinationPath "dist/Aurora-$version-windows-x64-portable.zip"
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            choco install innosetup -y --no-progress
+            $env:PATH += ";C:\Program Files (x86)\Inno Setup 6"
+          }
+          iscc /DAppVersion=$version packaging/windows/aurora.iss
+          Get-ChildItem dist -File | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
+          } | Out-File -Encoding ascii dist/SHA256SUMS-windows.txt
+          Get-ChildItem dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Aurora ${{ env.VERSION }} für Windows
+          body: |
+            **Aurora ${{ env.VERSION }} – Windows (x64)**
+
+            * `Aurora-${{ env.VERSION }}-windows-x64-setup.exe` – Installer (Startmenü, optional Desktop-Verknüpfung, Deinstallation über „Apps")
+            * `Aurora-${{ env.VERSION }}-windows-x64-portable.zip` – ohne Installation: entpacken und `Aurora.exe` starten
+
+            Das Programm ist nicht signiert; Windows SmartScreen fragt beim ersten Start evtl. nach („Weitere Informationen" → „Trotzdem ausführen").
+            Prüfsummen: `SHA256SUMS-windows.txt`.
+          files: |
+            dist/*.exe
+            dist/*.zip
+            dist/SHA256SUMS-windows.txt
+
+  linux:
+    if: endsWith(github.ref_name, '-linux')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            crates/aurora-rdp -> target
+
+      - name: Test
+        run: cargo test --release --locked
+
+      - name: Build
+        run: |
+          cargo build --release --locked
+          cargo build --release --locked --manifest-path crates/aurora-rdp/Cargo.toml
+
+      - name: Package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${VERSION%-linux}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          packaging/linux/build.sh "$VERSION" dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Aurora ${{ env.VERSION }} für Linux
+          body: |
+            **Aurora ${{ env.VERSION }} – Linux (x86_64)**
+
+            * `aurora_${{ env.VERSION }}_amd64.deb` – für Debian/Ubuntu/Mint: `sudo apt install ./aurora_${{ env.VERSION }}_amd64.deb`
+            * `aurora-${{ env.VERSION }}-linux-x86_64.tar.gz` – für andere Distributionen: entpacken, `./install.sh` (installiert nach `~/.local`) oder direkt `./aurora` starten
+
+            Benötigt glibc ≥ 2.35 sowie X11 oder Wayland mit OpenGL.
+            Prüfsummen: `SHA256SUMS-linux.txt`.
+          files: |
+            dist/*.deb
+            dist/*.tar.gz
+            dist/SHA256SUMS-linux.txt

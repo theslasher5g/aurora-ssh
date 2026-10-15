@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Aurora
+GenericName=SSH-, SFTP-, RDP- & Serial-Client
+Comment=Moderner Client für SSH, SFTP, RDP und serielle Konsolen
+Exec=aurora
+Icon=aurora
+Terminal=false
+Categories=Network;RemoteAccess;System;TerminalEmulator;
+Keywords=ssh;sftp;rdp;serial;terminal;remote;
+StartupWMClass=aurora-term
