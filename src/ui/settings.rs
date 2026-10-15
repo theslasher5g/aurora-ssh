@@ -108,6 +108,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                                 .color(theme::text_dim()),
                         );
                         ui.end_row();
+                        ui.label("Sprache / Language");
+                        ui.horizontal(|ui| {
+                            for (code, label) in [("", "Deutsch"), ("en", "English")] {
+                                if ui
+                                    .selectable_label(app.lib.settings.language == code, label)
+                                    .clicked()
+                                {
+                                    app.lib.settings.language = code.to_string();
+                                    crate::i18n::set_language(code);
+                                    changed = true;
+                                }
+                            }
+                        });
+                        ui.end_row();
                         ui.label("Sessions");
                         changed |= ui
                             .checkbox(

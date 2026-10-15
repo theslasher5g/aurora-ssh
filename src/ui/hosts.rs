@@ -1222,6 +1222,19 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
 
     // Right side: last used, or actions on hover.
     if hovered || resp.context_menu_opened() {
+        // Cover whatever info sits under the buttons.
+        ui.painter().rect_filled(
+            Rect::from_min_max(
+                Pos2::new(rect.right() - 300.0, rect.top() + 1.0),
+                rect.right_bottom() - Vec2::new(0.0, 2.0),
+            ),
+            CornerRadius::same(6),
+            if selected {
+                theme::lerp(theme::bg_hover(), theme::accent(), 0.12)
+            } else {
+                theme::bg_hover()
+            },
+        );
         let mut bx = rect.right() - 8.0;
         let mut button = |label: &str, tip: &str, action: Action, primary: bool| {
             let font = if primary {

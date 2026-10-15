@@ -296,7 +296,10 @@ async fn run_shell(
     events: &Sink<TermEvent>,
     prompts: Sink<HostKeyPrompt>,
 ) -> Result<()> {
-    events.send(TermEvent::Status(format!("Verbinde mit {}…", p.host_id())));
+    events.send(TermEvent::Status(match &p.jump {
+        Some(j) => format!("Verbinde mit {} über {}…", p.host_id(), j.host),
+        None => format!("Verbinde mit {}…", p.host_id()),
+    }));
     let handle = Arc::new(connect(p, prompts).await?);
     events.send(TermEvent::Status("Öffne Shell…".into()));
     let channel = handle.channel_open_session().await?;

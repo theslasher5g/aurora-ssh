@@ -680,7 +680,11 @@ fn transfers_panel(ui: &mut egui::Ui, tab_id: u64, t: &mut SftpTab, accent: Colo
             for (i, ed) in t.edits.iter().enumerate() {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 10.0;
-                    ui.label(RichText::new("✎").color(theme::accent()));
+                    ui.label(
+                        RichText::new("EDIT")
+                            .font(egui::FontId::monospace(10.5))
+                            .color(theme::accent()),
+                    );
                     let name = ed.remote_path.rsplit('/').next().unwrap_or_default();
                     ui.label(theme::mono(name, 12.5));
                     ui.label(
@@ -709,8 +713,8 @@ fn transfers_panel(ui: &mut egui::Ui, tab_id: u64, t: &mut SftpTab, accent: Colo
                 if t.transfers.is_empty() && t.edits.is_empty() {
                     ui.label(
                         RichText::new(
-                            "Doppelklick oder Kopieren-Button überträgt auf die andere Seite. \
-                             Server ⇄ Server läuft direkt über Aurora.",
+                            "Doppelklick auf eine Server-Datei öffnet sie im Editor (Speichern lädt hoch). \
+                             Kopieren-Button überträgt auf die andere Seite, auch Server ⇄ Server.",
                         )
                         .size(12.5)
                         .color(theme::text_dim()),

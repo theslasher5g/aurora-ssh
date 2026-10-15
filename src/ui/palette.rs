@@ -31,15 +31,32 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                 action: Action::Connect(h.id),
                 score: score + 30,
             });
-            if matches!(h.protocol, Protocol::Ssh | Protocol::Rdp)
-                && let Some(score) = fuzzy(&q, &format!("sftp dateien {hay}"))
-            {
+        }
+        if matches!(h.protocol, Protocol::Ssh | Protocol::Rdp)
+            && let Some(score) = fuzzy(&q, &format!("sftp dateien {hay}"))
+        {
+            items.push(Item {
+                icon: "SFTP".into(),
+                title: format!("SFTP: {}", h.display_name()),
+                subtitle: "Dateien".into(),
+                action: Action::OpenSftp(h.id),
+                score,
+            });
+        }
+        for t in &h.tunnels {
+            if let Some(score) = fuzzy(&q, &format!("tunnel {} {hay}", t.label())) {
+                let on = app.tunnels.contains_key(&t.id);
                 items.push(Item {
-                    icon: "SFTP".into(),
-                    title: format!("SFTP: {}", h.display_name()),
-                    subtitle: "Dateien".into(),
-                    action: Action::OpenSftp(h.id),
-                    score,
+                    icon: "TUN".into(),
+                    title: format!(
+                        "Tunnel {}: {} ({})",
+                        if on { "schließen" } else { "öffnen" },
+                        t.label(),
+                        h.display_name()
+                    ),
+                    subtitle: format!("localhost:{}", t.local_port),
+                    action: Action::ToggleTunnel(h.id, t.id),
+                    score: score - 5,
                 });
             }
         }

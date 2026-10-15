@@ -58,13 +58,34 @@ jobs:
           cargo build --release --locked
           cargo build --release --locked --manifest-path crates/aurora-rdp/Cargo.toml
 
+      # Code signing (optional): set the repository secrets WINDOWS_CERT_PFX (base64 of a
+      # .pfx code-signing certificate) and WINDOWS_CERT_PASSWORD. Without them the build
+      # stays unsigned and SmartScreen warns on first start.
       - name: Package
         shell: pwsh
+        env:
+          CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
           $version = $env:VERSION
+          $sign = $false
+          if ($env:CERT_PFX) {
+            [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cert.pfx", [Convert]::FromBase64String($env:CERT_PFX))
+            $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+              Where-Object { $_.FullName -match 'x64' } | Sort-Object FullName -Descending | Select-Object -First 1
+            $sign = $true
+          }
+          function Sign($file) {
+            if (-not $sign) { return }
+            & $signtool.FullName sign /f "$env:RUNNER_TEMP\cert.pfx" /p $env:CERT_PASSWORD `
+              /fd sha256 /tr http://timestamp.digicert.com /td sha256 /d "Aurora" $file
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed for $file" }
+          }
           New-Item -ItemType Directory -Force dist/Aurora | Out-Null
           Copy-Item target/release/aurora-term.exe dist/Aurora/Aurora.exe
           Copy-Item crates/aurora-rdp/target/release/aurora-rdp.exe dist/Aurora/
+          Sign dist/Aurora/Aurora.exe
+          Sign dist/Aurora/aurora-rdp.exe
           Copy-Item README.md, SECURITY.md dist/Aurora/
           Compress-Archive -Path dist/Aurora/* -DestinationPath "dist/Aurora-$version-windows-x64-portable.zip"
           if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
@@ -72,6 +93,8 @@ jobs:
             $env:PATH += ";C:\Program Files (x86)\Inno Setup 6"
           }
           iscc /DAppVersion=$version packaging/windows/aurora.iss
+          Sign "dist/Aurora-$version-windows-x64-setup.exe"
+          if ($sign) { Remove-Item "$env:RUNNER_TEMP\cert.pfx" }
           Get-ChildItem dist
 
       - uses: actions/upload-artifact@v4
@@ -153,7 +176,7 @@ jobs:
             Ab dieser Version prüft Aurora beim Start auf neue Versionen und aktualisiert sich auf Wunsch selbst
             (Einstellungen → Updates; Download wird gegen `SHA256SUMS.txt` geprüft).
 
-            Windows: nicht signiert – SmartScreen fragt beim ersten Start evtl. nach („Weitere Informationen" → „Trotzdem ausführen").
+            Windows: Ist kein Code-Signing-Zertifikat hinterlegt, fragt SmartScreen beim ersten Start evtl. nach („Weitere Informationen" → „Trotzdem ausführen").
             Linux: benötigt glibc ≥ 2.35 sowie X11 oder Wayland mit OpenGL.
           files: |
             dist/*.exe

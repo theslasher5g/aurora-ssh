@@ -486,6 +486,7 @@ impl App {
                 Library::default()
             }
         };
+        crate::i18n::set_language(&lib.settings.language);
         theme::install_fonts(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx, &lib.settings.theme);
         let (prompts_sink, prompts_rx) = Sink::new(cc.egui_ctx.clone());
