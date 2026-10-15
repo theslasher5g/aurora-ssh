@@ -108,6 +108,21 @@ pub struct SftpTab {
     pub panes: [FilePane; 2],
     pub transfers: Vec<Transfer>,
     pub dialog: Option<(usize, FsDialog)>,
+    /// Remote files opened in a local editor; saved changes are uploaded back.
+    pub edits: Vec<EditFile>,
+}
+
+pub struct EditFile {
+    pub pane: usize,
+    pub remote_path: String,
+    pub local: PathBuf,
+    /// Download transfer; the editor opens once it is done.
+    pub transfer: u64,
+    pub ready: bool,
+    pub opened: bool,
+    pub mtime: Option<std::time::SystemTime>,
+    pub last_check: Instant,
+    pub uploads: u32,
 }
 
 impl SftpTab {
@@ -200,6 +215,23 @@ pub enum Purpose {
     Terminal,
     /// Connect the given pane of a file tab.
     Pane(u64, usize),
+    /// Start the port forwarding with this id.
+    Tunnel(Uuid),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TunnelState {
+    Connecting,
+    Up,
+    Failed(String),
+}
+
+/// A running (or failed) port forwarding.
+pub struct TunnelRun {
+    pub host: Uuid,
+    pub state: TunnelState,
+    pub conns: i32,
+    pub stop: Option<UnboundedSender<()>>,
 }
 
 pub struct PasswordPrompt {
@@ -332,6 +364,17 @@ pub struct App {
     pub key_sink: Sink<Result<(), String>>,
     pub key_rx: UnboundedReceiver<Result<(), String>>,
     pub scan: Option<ScanState>,
+    /// Sessions of the last run were reopened (or skipped) already.
+    pub restored: bool,
+    /// Multi-selection in the host list.
+    pub selected_hosts: std::collections::HashSet<Uuid>,
+    /// Settings → Export/Import form.
+    pub export_path: String,
+    pub export_pw: String,
+    pub select_anchor: Option<Uuid>,
+    pub tunnels: std::collections::HashMap<Uuid, TunnelRun>,
+    pub tunnel_sink: Sink<backend::tunnel::TunnelEvent>,
+    pub tunnel_rx: UnboundedReceiver<backend::tunnel::TunnelEvent>,
     pub next_id: u64,
 
     pub search: String,
@@ -417,6 +460,16 @@ pub enum Action {
     SetupKey(Uuid),
     /// Connect and run the package manager's upgrade.
     RunUpdates(Uuid),
+    /// Start or stop a port forwarding: (host, tunnel).
+    ToggleTunnel(Uuid, Uuid),
+    /// Host list selection: 0 = only this, 1 = toggle (Ctrl), 2 = range (Shift).
+    SelectHost(Uuid, u8),
+    ClearSelection,
+    MoveHosts(Vec<Uuid>, Option<Uuid>),
+    /// Connect several hosts; up to four end up side by side.
+    ConnectMany(Vec<Uuid>),
+    SetEnvMany(Vec<Uuid>, Env),
+    DeleteHosts(Vec<Uuid>),
     /// Ask before running the inner (destructive) action.
     Confirm(String, Box<Action>),
 }
@@ -438,6 +491,7 @@ impl App {
         let (prompts_sink, prompts_rx) = Sink::new(cc.egui_ctx.clone());
         let (update_sink, update_rx) = Sink::new(cc.egui_ctx.clone());
         let (key_sink, key_rx) = Sink::new(cc.egui_ctx.clone());
+        let (tunnel_sink, tunnel_rx) = Sink::new(cc.egui_ctx.clone());
         let mut update = UpdateState::default();
         if lib.settings.check_updates {
             update.checking = true;
@@ -475,6 +529,17 @@ impl App {
             key_sink,
             key_rx,
             scan: None,
+            restored: false,
+            selected_hosts: Default::default(),
+            export_path: dirs_home()
+                .join("aurora-export.aurora")
+                .to_string_lossy()
+                .into_owned(),
+            export_pw: String::new(),
+            select_anchor: None,
+            tunnels: Default::default(),
+            tunnel_sink,
+            tunnel_rx,
             next_id: 1,
             search: String::new(),
             host_filter: 0,
@@ -622,6 +687,22 @@ impl App {
         let color = self.host_color(host);
         let id = self.alloc_id();
         let ssh_params = || self.ssh_params(host, &user, &password, &ident);
+        if let Purpose::Tunnel(tid) = purpose {
+            let tunnel = host.tunnels.iter().find(|t| t.id == tid).cloned();
+            if let Some(t) = tunnel {
+                let stop = backend::tunnel::spawn(
+                    &self.rt,
+                    ssh_params(),
+                    t,
+                    self.tunnel_sink.clone(),
+                    self.prompts_sink.clone(),
+                );
+                if let Some(run) = self.tunnels.get_mut(&tid) {
+                    run.stop = Some(stop);
+                }
+            }
+            return;
+        }
         if let Purpose::Pane(tab_id, idx) = purpose {
             let conn = crate::ui::sftp::spawn_conn(
                 &self.rt,
@@ -749,7 +830,34 @@ impl App {
                 .known_hosts
                 .get(&format!("{}:{}", host.hostname.trim(), host.port))
                 .cloned(),
+            jump: self.jump_params(host),
         }
+    }
+
+    /// ProxyJump: the jump host's own connection parameters (stored credentials only;
+    /// one level, no chains).
+    fn jump_params(&self, host: &Host) -> Option<Box<SshParams>> {
+        let jump = host
+            .jump_host
+            .filter(|j| *j != host.id)
+            .and_then(|j| self.lib.host(j))?
+            .clone();
+        let (user, ident) = self.credentials(&jump);
+        let password = ident
+            .as_ref()
+            .map(|i| i.password.clone())
+            .filter(|p| !p.is_empty());
+        let mut p = self.ssh_params(
+            &Host {
+                jump_host: None,
+                ..jump
+            },
+            &user,
+            &password,
+            &ident,
+        );
+        p.jump = None;
+        Some(Box::new(p))
     }
 
     /// New file tab with two panes; `None` means the local disk.
@@ -768,6 +876,7 @@ impl App {
             unsaved: None,
             host_id: None,
             kind: TabKind::Sftp(Box::new(SftpTab {
+                edits: Vec::new(),
                 panes: [
                     crate::ui::sftp::local_pane(home.clone()),
                     crate::ui::sftp::local_pane(home),
@@ -1094,6 +1203,143 @@ impl App {
             },
             theme::green(),
         );
+    }
+
+    /// Open sessions as (host, kind) for "restore sessions".
+    fn session_snapshot(&self) -> Vec<crate::model::SavedSession> {
+        self.tabs
+            .iter()
+            .filter_map(|t| {
+                let (host, kind) = match &t.kind {
+                    TabKind::Term(_) => (t.host_id?, "term"),
+                    TabKind::Rdp(_) => (t.host_id?, "rdp"),
+                    TabKind::Sftp(f) => (
+                        f.panes
+                            .iter()
+                            .rev()
+                            .find_map(|p| p.remote.as_ref()?.host_id)?,
+                        "files",
+                    ),
+                };
+                Some(crate::model::SavedSession {
+                    host,
+                    kind: kind.into(),
+                    in_split: self.split.contains(&t.id),
+                })
+            })
+            .collect()
+    }
+
+    /// Reopens the sessions of the last run (once, right after unlocking).
+    fn restore_sessions(&mut self, ctx: &egui::Context) {
+        let saved = std::mem::take(&mut self.lib.settings.last_session);
+        if !self.lib.settings.restore_sessions || saved.is_empty() {
+            return;
+        }
+        self.group_split = saved
+            .iter()
+            .filter(|s| s.in_split && s.kind != "files")
+            .map(|s| s.host)
+            .collect();
+        let mut n = 0;
+        for s in saved {
+            let Some(h) = self.lib.host(s.host).cloned() else {
+                continue;
+            };
+            n += 1;
+            if s.kind == "files" {
+                self.open_files(None, Some(h.id), ctx);
+            } else {
+                self.connect_host(h, Purpose::Terminal, ctx);
+            }
+        }
+        if n > 0 {
+            self.toast(
+                format!("{n} Sessions der letzten Sitzung wiederhergestellt"),
+                theme::accent(),
+            );
+        }
+    }
+
+    /// Writes hosts, groups, snippets, keys and known hosts into an encrypted file.
+    pub fn export_data(&mut self) {
+        if self.export_pw.chars().count() < 8 {
+            self.toast("Export-Passwort: mindestens 8 Zeichen", theme::amber());
+            return;
+        }
+        let bundle = crate::store::ExportBundle {
+            version: 1,
+            hosts: self.lib.hosts.clone(),
+            groups: self.lib.groups.clone(),
+            snippets: self.lib.snippets.clone(),
+            identities: self.keychain.identities.clone(),
+            known_hosts: self.lib.known_hosts.clone(),
+        };
+        let path = PathBuf::from(self.export_path.trim());
+        let r = serde_json::to_vec(&bundle)
+            .map_err(anyhow::Error::from)
+            .and_then(|plain| crate::store::seal(&self.export_pw, &plain))
+            .and_then(|text| crate::store::write_export(&path, &text));
+        match r {
+            Ok(()) => {
+                self.export_pw.clear();
+                self.toast(
+                    format!("Exportiert nach {} – verschlüsselt", path.display()),
+                    theme::green(),
+                );
+            }
+            Err(e) => self.toast(format!("Export fehlgeschlagen: {e:#}"), theme::red()),
+        }
+    }
+
+    /// Adds everything from an export file that isn't here yet (matched by id).
+    pub fn import_data(&mut self) {
+        let path = PathBuf::from(self.export_path.trim());
+        let r = std::fs::read_to_string(&path)
+            .map_err(anyhow::Error::from)
+            .and_then(|text| crate::store::unseal(&self.export_pw, &text))
+            .and_then(|plain| {
+                serde_json::from_slice::<crate::store::ExportBundle>(&plain).map_err(Into::into)
+            });
+        let bundle = match r {
+            Ok(b) => b,
+            Err(e) => {
+                self.toast(format!("Import fehlgeschlagen: {e:#}"), theme::red());
+                return;
+            }
+        };
+        let mut n = 0;
+        for g in bundle.groups {
+            if self.lib.group(g.id).is_none() {
+                self.lib.groups.push(g);
+                n += 1;
+            }
+        }
+        for h in bundle.hosts {
+            if self.lib.host(h.id).is_none() {
+                self.lib.hosts.push(h);
+                n += 1;
+            }
+        }
+        for sn in bundle.snippets {
+            if self.lib.snippet(sn.id).is_none() {
+                self.lib.snippets.push(sn);
+                n += 1;
+            }
+        }
+        for i in bundle.identities {
+            if !self.keychain.identities.iter().any(|x| x.id == i.id) {
+                self.keychain.identities.push(i);
+                n += 1;
+            }
+        }
+        for (k, v) in bundle.known_hosts {
+            self.lib.known_hosts.entry(k).or_insert(v);
+        }
+        self.export_pw.clear();
+        self.save_library();
+        self.save_keychain();
+        self.toast(format!("{n} Einträge importiert"), theme::green());
     }
 
     /// Coloured frame around PROD / STAGING sessions.
@@ -1584,6 +1830,48 @@ impl App {
             }
             self.save_library();
         }
+        while let Ok(ev) = self.tunnel_rx.try_recv() {
+            use backend::tunnel::TunnelEvent;
+            match ev {
+                TunnelEvent::Up(tid) => {
+                    let Some(run) = self.tunnels.get_mut(&tid) else {
+                        continue;
+                    };
+                    run.state = TunnelState::Up;
+                    let tunnel = self
+                        .lib
+                        .host(run.host)
+                        .and_then(|h| h.tunnels.iter().find(|t| t.id == tid))
+                        .cloned();
+                    if let Some(t) = tunnel {
+                        self.toast(
+                            format!("Tunnel „{}“ offen: localhost:{}", t.label(), t.local_port),
+                            theme::green(),
+                        );
+                        if t.open_browser {
+                            crate::update::open_url(&format!("http://localhost:{}", t.local_port));
+                        }
+                    }
+                }
+                TunnelEvent::Conns(tid, d) => {
+                    if let Some(run) = self.tunnels.get_mut(&tid) {
+                        run.conns = (run.conns + d).max(0);
+                    }
+                }
+                TunnelEvent::Down(tid, err) => match err {
+                    Some(e) => {
+                        if let Some(run) = self.tunnels.get_mut(&tid) {
+                            run.state = TunnelState::Failed(e.clone());
+                            run.stop = None;
+                        }
+                        self.toast(format!("Tunnel: {e}"), theme::red());
+                    }
+                    None => {
+                        self.tunnels.remove(&tid);
+                    }
+                },
+            }
+        }
         while let Ok(r) = self.key_rx.try_recv() {
             self.finish_key_setup(r);
         }
@@ -1953,6 +2241,92 @@ impl App {
                         error: None,
                         generated: None,
                     });
+                }
+            }
+            Action::SelectHost(id, mode) => match mode {
+                1 => {
+                    if !self.selected_hosts.remove(&id) {
+                        self.selected_hosts.insert(id);
+                    }
+                    self.select_anchor = Some(id);
+                }
+                2 => {
+                    let order: Vec<Uuid> = ctx
+                        .data(|d| d.get_temp(crate::ui::hosts::order_id()))
+                        .unwrap_or_default();
+                    let anchor = self.select_anchor.unwrap_or(id);
+                    let a = order.iter().position(|x| *x == anchor);
+                    let b = order.iter().position(|x| *x == id);
+                    if let (Some(a), Some(b)) = (a, b) {
+                        let (lo, hi) = (a.min(b), a.max(b));
+                        self.selected_hosts.extend(order[lo..=hi].iter().copied());
+                    } else {
+                        self.selected_hosts.insert(id);
+                    }
+                }
+                _ => {
+                    self.selected_hosts.clear();
+                    self.select_anchor = Some(id);
+                }
+            },
+            Action::ClearSelection => {
+                self.selected_hosts.clear();
+                self.select_anchor = None;
+            }
+            Action::MoveHosts(ids, group) => {
+                for h in self.lib.hosts.iter_mut().filter(|h| ids.contains(&h.id)) {
+                    h.group_id = group;
+                }
+                self.save_library();
+            }
+            Action::ConnectMany(ids) => {
+                let hosts: Vec<Host> = ids
+                    .iter()
+                    .filter_map(|id| self.lib.host(*id).cloned())
+                    .filter(|h| h.protocol != Protocol::Serial)
+                    .collect();
+                if hosts.len() > 1 {
+                    self.split.clear();
+                    self.maximized = None;
+                    self.group_split = hosts
+                        .iter()
+                        .take(crate::ui::chrome::MAX_SPLIT)
+                        .map(|h| h.id)
+                        .collect();
+                }
+                for h in hosts {
+                    self.connect_host(h, Purpose::Terminal, ctx);
+                }
+                self.selected_hosts.clear();
+            }
+            Action::SetEnvMany(ids, env) => {
+                for h in self.lib.hosts.iter_mut().filter(|h| ids.contains(&h.id)) {
+                    h.env = env;
+                }
+                self.save_library();
+            }
+            Action::DeleteHosts(ids) => {
+                self.lib.hosts.retain(|h| !ids.contains(&h.id));
+                for id in &ids {
+                    self.lib.facts.remove(id);
+                }
+                self.selected_hosts.clear();
+                self.save_library();
+            }
+            Action::ToggleTunnel(host_id, tid) => {
+                if let Some(run) = self.tunnels.remove(&tid) {
+                    drop(run.stop);
+                } else if let Some(h) = self.lib.host(host_id).cloned() {
+                    self.tunnels.insert(
+                        tid,
+                        TunnelRun {
+                            host: host_id,
+                            state: TunnelState::Connecting,
+                            conns: 0,
+                            stop: None,
+                        },
+                    );
+                    self.connect_host(h, Purpose::Tunnel(tid), ctx);
                 }
             }
             Action::RunUpdates(id) => {
@@ -2509,6 +2883,10 @@ impl eframe::App for App {
 
         if self.vault.is_none() {
             crate::ui::lock::show(self, ui);
+            if self.vault.is_some() && !self.restored {
+                self.restored = true;
+                self.restore_sessions(&ctx);
+            }
             // The idle timer starts again after unlocking.
             self.last_activity = Instant::now();
             self.toasts_ui(&ctx);
@@ -2643,6 +3021,10 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.vault.is_some() {
+            self.lib.settings.last_session = self.session_snapshot();
+            self.save_library();
+        }
         for tab in &self.tabs {
             match &tab.kind {
                 TabKind::Term(t) => {
@@ -2733,6 +3115,13 @@ pub fn state_color(s: &ConnState) -> Color32 {
 }
 
 /// Parses `user@host:port` (user and port optional) into an ad-hoc SSH host.
+fn dirs_home() -> PathBuf {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
 /// Hosts from `~/.ssh/config`, if there is one.
 pub fn ssh_config_hosts() -> Vec<Host> {
     let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) else {

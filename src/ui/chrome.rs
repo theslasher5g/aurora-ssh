@@ -352,6 +352,42 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     if rail_button(ui, "🔒", "Sperren", false, None).clicked() {
                         actions.push(Action::Lock);
                     }
+                    if !app.tunnels.is_empty() {
+                        let up = app
+                            .tunnels
+                            .values()
+                            .filter(|r| r.state == crate::app::TunnelState::Up)
+                            .count();
+                        let resp = rail_button(
+                            ui,
+                            "⇄",
+                            &format!("{up} Tunnel offen"),
+                            false,
+                            Some(theme::green()),
+                        );
+                        egui::Popup::menu(&resp).show(|ui| {
+                            ui.set_min_width(260.0);
+                            for (tid, run) in &app.tunnels {
+                                let Some(h) = app.lib.host(run.host) else { continue };
+                                let Some(t) = h.tunnels.iter().find(|t| t.id == *tid) else {
+                                    continue;
+                                };
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{} · localhost:{}",
+                                            t.label(),
+                                            t.local_port
+                                        ))
+                                        .size(12.5),
+                                    );
+                                    if ui.small_button("Schließen").clicked() {
+                                        actions.push(Action::ToggleTunnel(run.host, *tid));
+                                    }
+                                });
+                            }
+                        });
+                    }
                     if rail_button(ui, "?", "Tastenkürzel (F1)", app.show_shortcuts, None).clicked() {
                         app.show_shortcuts = true;
                     }

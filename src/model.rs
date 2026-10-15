@@ -134,6 +134,55 @@ impl Default for RdpSettings {
     }
 }
 
+/// Local port forwarding: `localhost:local_port` → (as seen from the server)
+/// `remote_host:remote_port`.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[serde(default)]
+pub struct Tunnel {
+    pub id: Uuid,
+    pub name: String,
+    pub local_port: u16,
+    pub remote_host: String,
+    pub remote_port: u16,
+    /// Open `http://localhost:<local_port>` once the tunnel is up.
+    pub open_browser: bool,
+}
+
+impl Default for Tunnel {
+    fn default() -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: String::new(),
+            local_port: 8080,
+            remote_host: "localhost".into(),
+            remote_port: 80,
+            open_browser: false,
+        }
+    }
+}
+
+impl Tunnel {
+    pub fn label(&self) -> String {
+        if self.name.trim().is_empty() {
+            format!(
+                "{}:{} → :{}",
+                self.remote_host, self.remote_port, self.local_port
+            )
+        } else {
+            self.name.clone()
+        }
+    }
+}
+
+/// One session of the last run, for "restore sessions".
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub struct SavedSession {
+    pub host: Uuid,
+    /// "term", "files" or "rdp"
+    pub kind: String,
+    pub in_split: bool,
+}
+
 /// Environment label of a host or group; production sessions get a red frame and
 /// confirm dangerous commands.
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
@@ -177,6 +226,10 @@ pub struct Host {
     pub notes: String,
     /// `Env::None` inherits from the group.
     pub env: Env,
+    /// Connect through this SSH host (ProxyJump).
+    pub jump_host: Option<Uuid>,
+    /// Saved port forwardings.
+    pub tunnels: Vec<Tunnel>,
     pub startup_snippet: Option<Uuid>,
     pub last_connected: Option<DateTime<Utc>>,
     pub serial: SerialSettings,
@@ -199,6 +252,8 @@ impl Default for Host {
             favorite: false,
             notes: String::new(),
             env: Env::None,
+            jump_host: None,
+            tunnels: Vec::new(),
             startup_snippet: None,
             last_connected: None,
             serial: SerialSettings::default(),
@@ -378,6 +433,17 @@ pub struct Settings {
     pub onboarded: bool,
     /// Subnets for which "group these hosts" was dismissed.
     pub dismissed_subnets: Vec<String>,
+    /// Smaller rows in the host list.
+    pub compact: bool,
+    /// Host list order inside a group: 0 name, 1 last used, 2 online first.
+    pub sort: u8,
+    /// Reopen the sessions of the last run after unlocking.
+    pub restore_sessions: bool,
+    pub last_session: Vec<SavedSession>,
+    /// Command used to open files for editing (empty = system default).
+    pub editor: String,
+    /// "de" or "en".
+    pub language: String,
 }
 
 impl Default for Settings {
@@ -393,6 +459,12 @@ impl Default for Settings {
             warn_everywhere: false,
             onboarded: false,
             dismissed_subnets: Vec::new(),
+            compact: false,
+            sort: 0,
+            restore_sessions: true,
+            last_session: Vec::new(),
+            editor: String::new(),
+            language: String::new(),
         }
     }
 }

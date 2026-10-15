@@ -108,6 +108,24 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                                 .color(theme::text_dim()),
                         );
                         ui.end_row();
+                        ui.label("Sessions");
+                        changed |= ui
+                            .checkbox(
+                                &mut app.lib.settings.restore_sessions,
+                                "beim Start wieder öffnen",
+                            )
+                            .changed();
+                        ui.end_row();
+                        ui.label("Editor");
+                        changed |= ui
+                            .add(
+                                egui::TextEdit::singleline(&mut app.lib.settings.editor)
+                                    .hint_text("Standard-App (z.B. code, notepad++)")
+                                    .desired_width(240.0),
+                            )
+                            .on_hover_text("Programm zum Bearbeiten von Server-Dateien; leer = Standard-App des Systems")
+                            .changed();
+                        ui.end_row();
                         ui.label("Gefährliche Befehle");
                         changed |= ui
                             .checkbox(
@@ -132,6 +150,40 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         });
                         ui.end_row();
                     });
+            });
+            ui.add_space(18.0);
+
+            theme::section_title(ui, "Export / Import");
+            theme::card_frame().show(ui, |ui| {
+                ui.set_width(ui.available_width().min(560.0));
+                ui.label(
+                    RichText::new(
+                        "Hosts, Gruppen, Snippets und Schlüssel in eine verschlüsselte Datei – \
+                         zum Umziehen auf einen anderen PC oder als Backup.",
+                    )
+                    .size(12.5)
+                    .color(theme::text_dim()),
+                );
+                ui.add_space(6.0);
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.export_path)
+                        .desired_width(f32::INFINITY)
+                        .font(egui::FontId::monospace(12.5)),
+                );
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app.export_pw)
+                            .password(true)
+                            .hint_text("Passwort für die Datei")
+                            .desired_width(220.0),
+                    );
+                    if ui.button("Exportieren").clicked() {
+                        app.export_data();
+                    }
+                    if ui.button("Importieren").clicked() {
+                        app.import_data();
+                    }
+                });
             });
             ui.add_space(18.0);
 

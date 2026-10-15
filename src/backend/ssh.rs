@@ -23,6 +23,8 @@ pub struct SshParams {
     pub passphrase: Option<String>,
     /// Previously accepted fingerprint for this `host:port`.
     pub known_fingerprint: Option<String>,
+    /// Connect through this host first (ProxyJump).
+    pub jump: Option<Box<SshParams>>,
 }
 
 impl SshParams {
@@ -35,6 +37,8 @@ pub struct Client {
     host_id: String,
     known: Option<String>,
     prompts: Sink<HostKeyPrompt>,
+    /// Keeps the jump host connection alive as long as this session lives.
+    _via: Option<Arc<SshHandle>>,
 }
 
 impl client::Handler for Client {
@@ -71,94 +75,200 @@ impl client::Handler for Client {
 
 pub type SshHandle = client::Handle<Client>;
 
-/// Connects and authenticates. Tries public key, then password, then keyboard-interactive.
-pub async fn connect(p: &SshParams, prompts: Sink<HostKeyPrompt>) -> Result<SshHandle> {
-    let config = Arc::new(client::Config {
-        inactivity_timeout: None,
-        keepalive_interval: Some(Duration::from_secs(30)),
-        keepalive_max: 4,
-        ..Default::default()
-    });
-    let handler = Client {
-        host_id: p.host_id(),
-        known: p.known_fingerprint.clone(),
-        prompts,
-    };
-    let addr = (p.host.as_str(), p.port);
-    let mut session = tokio::time::timeout(
-        Duration::from_secs(20),
-        client::connect(config, addr, handler),
-    )
-    .await
-    .map_err(|_| anyhow!("Zeitüberschreitung – Host nicht erreichbar"))?
-    .map_err(friendly_error)?;
+/// Connects and authenticates (through the jump host, if set). Tries public key, then
+/// password, then keyboard-interactive.
+pub fn connect(
+    p: &SshParams,
+    prompts: Sink<HostKeyPrompt>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<SshHandle>> + Send + '_>> {
+    Box::pin(async move {
+        let config = Arc::new(client::Config {
+            inactivity_timeout: None,
+            keepalive_interval: Some(Duration::from_secs(30)),
+            keepalive_max: 4,
+            ..Default::default()
+        });
+        let mut session = match &p.jump {
+            None => {
+                let handler = Client {
+                    host_id: p.host_id(),
+                    known: p.known_fingerprint.clone(),
+                    prompts: prompts.clone(),
+                    _via: None,
+                };
+                let addr = (p.host.as_str(), p.port);
+                tokio::time::timeout(
+                    Duration::from_secs(20),
+                    client::connect(config, addr, handler),
+                )
+                .await
+                .map_err(|_| anyhow!("Zeitüberschreitung – Host nicht erreichbar"))?
+                .map_err(friendly_error)?
+            }
+            Some(jump) => {
+                let via = Arc::new(
+                    connect(jump, prompts.clone())
+                        .await
+                        .map_err(|e| anyhow!("Jump-Host {}: {e:#}", jump.host))?,
+                );
+                let channel = via
+                    .channel_open_direct_tcpip(p.host.clone(), p.port as u32, "127.0.0.1", 0)
+                    .await
+                    .map_err(|e| {
+                        anyhow!(
+                            "Jump-Host {} erreicht {}:{} nicht ({e})",
+                            jump.host,
+                            p.host,
+                            p.port
+                        )
+                    })?;
+                let handler = Client {
+                    host_id: p.host_id(),
+                    known: p.known_fingerprint.clone(),
+                    prompts: prompts.clone(),
+                    _via: Some(via),
+                };
+                tokio::time::timeout(
+                    Duration::from_secs(20),
+                    client::connect_stream(config, channel.into_stream(), handler),
+                )
+                .await
+                .map_err(|_| anyhow!("Zeitüberschreitung über den Jump-Host"))?
+                .map_err(friendly_error)?
+            }
+        };
 
-    if let Some(key_text) = p.private_key.as_deref().filter(|k| !k.trim().is_empty()) {
-        let key = decode_secret_key(key_text, p.passphrase.as_deref().filter(|s| !s.is_empty()))
-            .map_err(|e| anyhow!("SSH-Key konnte nicht gelesen werden: {e}"))?;
-        let hash = session.best_supported_rsa_hash().await?.flatten();
-        let res = session
-            .authenticate_publickey(&p.username, PrivateKeyWithHashAlg::new(Arc::new(key), hash))
-            .await?;
-        if res.success() {
-            return Ok(session);
-        }
-    }
-
-    if let Some(pw) = p.password.as_deref() {
-        if session
-            .authenticate_password(&p.username, pw)
-            .await?
-            .success()
-        {
-            return Ok(session);
-        }
-        // Many servers only offer keyboard-interactive for passwords.
-        let mut resp = session
-            .authenticate_keyboard_interactive_start(&p.username, None)
-            .await?;
-        for _ in 0..5 {
-            match resp {
-                KeyboardInteractiveAuthResponse::Success => return Ok(session),
-                KeyboardInteractiveAuthResponse::Failure { .. } => break,
-                KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
-                    let answers = prompts.iter().map(|_| pw.to_string()).collect();
-                    resp = session
-                        .authenticate_keyboard_interactive_respond(answers)
-                        .await?;
+        let mut offered: Vec<russh::MethodKind> = Vec::new();
+        let mut key_rejected = false;
+        if let Some(key_text) = p.private_key.as_deref().filter(|k| !k.trim().is_empty()) {
+            let key =
+                decode_secret_key(key_text, p.passphrase.as_deref().filter(|s| !s.is_empty()))
+                    .map_err(|e| {
+                        anyhow!(
+                            "SSH-Key konnte nicht gelesen werden – stimmt die Passphrase? ({e})"
+                        )
+                    })?;
+            let hash = session.best_supported_rsa_hash().await?.flatten();
+            match session
+                .authenticate_publickey(
+                    &p.username,
+                    PrivateKeyWithHashAlg::new(Arc::new(key), hash),
+                )
+                .await?
+            {
+                client::AuthResult::Success => return Ok(session),
+                client::AuthResult::Failure {
+                    remaining_methods, ..
+                } => {
+                    key_rejected = true;
+                    offered = remaining_methods.to_vec();
                 }
             }
         }
-    }
 
-    bail!(
-        "Authentifizierung fehlgeschlagen für {}@{}",
-        p.username,
-        p.host
-    )
+        if let Some(pw) = p.password.as_deref() {
+            match session.authenticate_password(&p.username, pw).await? {
+                client::AuthResult::Success => return Ok(session),
+                client::AuthResult::Failure {
+                    remaining_methods, ..
+                } => offered = remaining_methods.to_vec(),
+            }
+            // Many servers only offer keyboard-interactive for passwords.
+            let mut resp = session
+                .authenticate_keyboard_interactive_start(&p.username, None)
+                .await?;
+            for _ in 0..5 {
+                match resp {
+                    KeyboardInteractiveAuthResponse::Success => return Ok(session),
+                    KeyboardInteractiveAuthResponse::Failure { .. } => break,
+                    KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                        let answers = prompts.iter().map(|_| pw.to_string()).collect();
+                        resp = session
+                            .authenticate_keyboard_interactive_respond(answers)
+                            .await?;
+                    }
+                }
+            }
+        }
+
+        bail!(auth_hint(
+            &p.username,
+            &p.host,
+            p.password.is_some(),
+            key_rejected,
+            &offered
+        ))
+    })
+}
+
+/// Explains a failed login in words, with the next step.
+fn auth_hint(
+    user: &str,
+    host: &str,
+    tried_password: bool,
+    key_rejected: bool,
+    offered: &[russh::MethodKind],
+) -> String {
+    use russh::MethodKind;
+    let password_allowed = offered.is_empty()
+        || offered
+            .iter()
+            .any(|m| matches!(m, MethodKind::Password | MethodKind::KeyboardInteractive));
+    let key_allowed = offered.is_empty() || offered.contains(&MethodKind::PublicKey);
+    if tried_password && !password_allowed {
+        format!(
+            "{host} erlaubt keine Anmeldung per Passwort – nur per SSH-Key. Hinterlege einen Key in der Identität des Hosts."
+        )
+    } else if key_rejected && !tried_password {
+        format!(
+            "Der SSH-Key wurde von {host} für „{user}“ nicht angenommen – ist er in ~/.ssh/authorized_keys eingetragen? (Rechtsklick → SSH-Key einrichten)"
+        )
+    } else if !key_allowed && !tried_password {
+        format!("{host} erwartet ein Passwort für „{user}“")
+    } else {
+        format!(
+            "Anmeldung als „{user}“ an {host} abgelehnt – Benutzername oder Passwort falsch? (root-Login ist auf vielen Servern gesperrt)"
+        )
+    }
 }
 
 /// Turns low-level connection errors into short, actionable messages.
-fn friendly_error(e: anyhow::Error) -> anyhow::Error {
+pub fn friendly_error(e: anyhow::Error) -> anyhow::Error {
     let raw = format!("{e:#}");
-    let msg = if raw.contains("UnknownKey") {
+    anyhow!(friendly_text(&raw).unwrap_or(raw))
+}
+
+pub fn friendly_text(raw: &str) -> Option<String> {
+    let has = |s: &str| raw.contains(s);
+    let msg = if has("UnknownKey") {
         "Server-Key wurde abgelehnt"
-    } else if raw.contains("Connection refused")
-        || raw.contains("os error 111")
-        || raw.contains("os error 10061")
-    {
+    } else if has("Connection refused") || has("os error 111") || has("os error 10061") {
         "Verbindung abgelehnt – läuft der SSH-Dienst auf diesem Port?"
-    } else if raw.contains("failed to lookup")
-        || raw.contains("Name or service not known")
-        || raw.contains("No such host")
+    } else if has("failed to lookup")
+        || has("Name or service not known")
+        || has("No such host")
+        || has("nodename nor servname")
+        || has("os error 11001")
     {
-        "Hostname nicht gefunden"
-    } else if raw.contains("Network is unreachable") || raw.contains("No route to host") {
-        "Netzwerk nicht erreichbar"
+        "Hostname nicht gefunden – Tippfehler oder fehlt ein DNS-Eintrag?"
+    } else if has("Network is unreachable") || has("No route to host") || has("os error 10065") {
+        "Netzwerk nicht erreichbar – bist du im richtigen Netz / VPN?"
+    } else if has("Connection reset") || has("os error 104") || has("os error 10054") {
+        "Verbindung vom Server zurückgesetzt – evtl. Firewall oder fail2ban"
+    } else if has("timed out") || has("os error 110") || has("os error 10060") {
+        "Zeitüberschreitung – Host antwortet nicht (aus, Firewall oder falscher Port?)"
+    } else if has("NoCommonKexAlgo") || has("NoCommonCipher") || has("NoCommonKeyAlgo") {
+        "Server und Aurora haben keine gemeinsamen Verfahren – sehr alter SSH-Server?"
+    } else if has("Disconnect") && has("Too many authentication failures") {
+        "Zu viele Anmeldeversuche – der Server hat die Verbindung getrennt"
+    } else if has("No such file") {
+        "Datei oder Ordner existiert nicht"
+    } else if has("Permission denied") {
+        "Keine Berechtigung"
     } else {
-        return e;
+        return None;
     };
-    anyhow!(msg)
+    Some(msg.to_string())
 }
 
 /// Starts an interactive shell session; returns the command sender.

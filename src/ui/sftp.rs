@@ -10,7 +10,7 @@ use egui::{Color32, CornerRadius, Margin, RichText, Sense, Vec2};
 use uuid::Uuid;
 
 use crate::app::{
-    Action, App, ConnState, FilePane, FsDialog, RemoteConn, SftpTab, TabKind, Transfer,
+    Action, App, ConnState, EditFile, FilePane, FsDialog, RemoteConn, SftpTab, TabKind, Transfer,
 };
 use crate::backend::sftp::{Entry, SftpCmd, SftpEvent, join, normalize_remote, parent};
 use crate::backend::ssh::SshParams;
@@ -18,6 +18,7 @@ use crate::backend::{HostKeyPrompt, Sink};
 use crate::model::{Host, Protocol};
 use crate::theme;
 use crate::ui::human_size;
+use std::time::Instant;
 
 // ---------------------------------------------------------------------------- sources
 
@@ -254,10 +255,22 @@ pub fn handle_event(
             }
         }
         SftpEvent::TransferDone { id, error } => {
+            if let Some(ed) = t.edits.iter_mut().find(|e| e.transfer == id && !e.opened) {
+                match &error {
+                    None => ed.ready = true,
+                    Some(e) => toasts.push((format!("Öffnen fehlgeschlagen: {e}"), theme::red())),
+                }
+                if error.is_some() {
+                    t.edits.retain(|e| e.transfer != id);
+                }
+                t.transfers.retain(|x| x.id != id);
+                return;
+            }
             let mut refresh = None;
             if let Some(tr) = t.transfers.iter_mut().find(|x| x.id == id) {
                 tr.finished = true;
                 if let Some(e) = &error {
+                    let e = crate::backend::ssh::friendly_text(e).unwrap_or_else(|| e.clone());
                     toasts.push((format!("Übertragung fehlgeschlagen: {e}"), theme::red()));
                 } else {
                     toasts.push((format!("{} übertragen", tr.name), theme::green()));
@@ -272,7 +285,9 @@ pub fn handle_event(
         SftpEvent::Changed => {
             let _ = r.tx.send(SftpCmd::List(pane.path.clone()));
         }
-        SftpEvent::Error(e) => pane.error = Some(e),
+        SftpEvent::Error(e) => {
+            pane.error = Some(crate::backend::ssh::friendly_text(&e).unwrap_or(e));
+        }
         SftpEvent::Closed(err) => {
             if let Some(e) = &err {
                 toasts.push((format!("{}: {e}", r.label), theme::red()));
@@ -360,10 +375,13 @@ enum PaneAction {
     Delete(String, bool),
     Source(Option<Uuid>),
     Reconnect,
+    /// Open a remote file in the local editor.
+    Edit(String),
 }
 
 pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
     let accent = app.accent();
+    let editor = app.lib.settings.editor.clone();
     let hosts = sftp_hosts(app);
     let rt = app.rt.handle().clone();
     let mut next_id = app.next_id;
@@ -531,8 +549,97 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
                 t.dialog = Some((i, FsDialog::Delete { name, is_dir }))
             }
             PaneAction::Source(host) => source_change = Some((i, host)),
+            PaneAction::Edit(name) => {
+                let Some(safe) = crate::backend::sftp::safe_local_name(&name) else {
+                    toasts.push(("Unsicherer Dateiname".into(), theme::red()));
+                    continue;
+                };
+                let remote_path = pane.join(&name);
+                if t.edits
+                    .iter()
+                    .any(|e| e.remote_path == remote_path && e.pane == i)
+                {
+                    toasts.push(("Datei ist schon im Editor offen".into(), theme::accent()));
+                    continue;
+                }
+                let dir = std::env::temp_dir()
+                    .join("aurora-edit")
+                    .join(uuid::Uuid::new_v4().simple().to_string());
+                if let Err(e) = std::fs::create_dir_all(&dir) {
+                    toasts.push((format!("Temp-Ordner: {e}"), theme::red()));
+                    continue;
+                }
+                next_id += 1;
+                if let Some(r) = &pane.remote {
+                    let _ = r.tx.send(SftpCmd::Download {
+                        remote: remote_path.clone(),
+                        local_dir: dir.clone(),
+                        id: next_id,
+                    });
+                }
+                t.edits.push(EditFile {
+                    pane: i,
+                    remote_path,
+                    local: dir.join(safe),
+                    transfer: next_id,
+                    ready: false,
+                    opened: false,
+                    mtime: None,
+                    last_check: Instant::now(),
+                    uploads: 0,
+                });
+            }
             PaneAction::Reconnect => reconnect = true,
         }
+    }
+
+    // Open finished downloads in the editor; upload every save back.
+    for ed in t.edits.iter_mut() {
+        if ed.ready && !ed.opened {
+            ed.opened = true;
+            ed.mtime = std::fs::metadata(&ed.local).and_then(|m| m.modified()).ok();
+            if let Err(e) = open_in_editor(&editor, &ed.local) {
+                toasts.push((format!("Editor: {e}"), theme::red()));
+            }
+        }
+        if ed.opened && ed.last_check.elapsed() >= std::time::Duration::from_millis(800) {
+            ed.last_check = Instant::now();
+            let now = std::fs::metadata(&ed.local).and_then(|m| m.modified()).ok();
+            if now.is_some() && now != ed.mtime {
+                ed.mtime = now;
+                if let Some(r) = &t.panes[ed.pane].remote {
+                    next_id += 1;
+                    ed.uploads += 1;
+                    let _ = r.tx.send(SftpCmd::Upload {
+                        local: ed.local.clone(),
+                        remote_dir: crate::backend::sftp::parent(&ed.remote_path),
+                        id: next_id,
+                    });
+                    let name = ed
+                        .remote_path
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or_default()
+                        .to_string();
+                    t.transfers.push(Transfer {
+                        id: next_id,
+                        name: format!("{name} (gespeichert)"),
+                        current: String::new(),
+                        route: "Editor → Server".into(),
+                        dst: ed.pane,
+                        upload: true,
+                        done: 0,
+                        total: 0,
+                        finished: false,
+                        error: None,
+                    });
+                }
+            }
+        }
+    }
+    if !t.edits.is_empty() {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(800));
     }
 
     fs_dialog(ui.ctx(), t);
@@ -569,8 +676,37 @@ fn transfers_panel(ui: &mut egui::Ui, tab_id: u64, t: &mut SftpTab, accent: Colo
                 }
             });
             ui.add_space(6.0);
+            let mut close_edit = None;
+            for (i, ed) in t.edits.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    ui.label(RichText::new("✎").color(theme::accent()));
+                    let name = ed.remote_path.rsplit('/').next().unwrap_or_default();
+                    ui.label(theme::mono(name, 12.5));
+                    ui.label(
+                        RichText::new(if !ed.opened {
+                            "wird geladen…".to_string()
+                        } else if ed.uploads == 0 {
+                            "im Editor offen – Speichern lädt automatisch hoch".to_string()
+                        } else {
+                            format!("{}× gespeichert und hochgeladen", ed.uploads)
+                        })
+                        .size(12.0)
+                        .color(theme::text_dim()),
+                    );
+                    if text_button(ui, "fertig").clicked() {
+                        close_edit = Some(i);
+                    }
+                });
+            }
+            if let Some(i) = close_edit {
+                let ed = t.edits.remove(i);
+                if let Some(dir) = ed.local.parent() {
+                    let _ = std::fs::remove_dir_all(dir);
+                }
+            }
             egui::ScrollArea::vertical().show(ui, |ui| {
-                if t.transfers.is_empty() {
+                if t.transfers.is_empty() && t.edits.is_empty() {
                     ui.label(
                         RichText::new(
                             "Doppelklick oder Kopieren-Button überträgt auf die andere Seite. \
@@ -807,8 +943,14 @@ fn pane_ui(
                 );
             }
             for e in &pane.entries {
-                if let Some(a) = entry_row(ui, e, pane.selected.as_deref(), accent, transfer_label)
-                {
+                if let Some(a) = entry_row(
+                    ui,
+                    e,
+                    pane.selected.as_deref(),
+                    accent,
+                    transfer_label,
+                    is_remote,
+                ) {
                     action = Some(a);
                 }
             }
@@ -822,6 +964,7 @@ fn entry_row(
     selected: Option<&str>,
     accent: Color32,
     transfer_label: &str,
+    remote: bool,
 ) -> Option<PaneAction> {
     let mut action = None;
     let is_sel = selected == Some(e.name.as_str());
@@ -911,11 +1054,18 @@ fn entry_row(
     if resp.double_clicked() {
         action = Some(if e.is_dir {
             PaneAction::Open(e.name.clone())
+        } else if remote {
+            // Remote files open in the local editor; copying is in the menu.
+            PaneAction::Edit(e.name.clone())
         } else {
             PaneAction::Transfer(e.name.clone())
         });
     }
     resp.context_menu(|ui| {
+        if remote && !e.is_dir && ui.button("Bearbeiten (eigener Editor)").clicked() {
+            action = Some(PaneAction::Edit(e.name.clone()));
+            ui.close();
+        }
         if e.is_dir && ui.button("Öffnen").clicked() {
             action = Some(PaneAction::Open(e.name.clone()));
             ui.close();
@@ -937,6 +1087,28 @@ fn entry_row(
         }
     });
     action
+}
+
+/// Opens a local file in the configured editor command, or the system default app.
+/// The path is passed as a single argument (no shell), so odd file names are harmless.
+fn open_in_editor(editor: &str, path: &std::path::Path) -> std::io::Result<()> {
+    let editor = editor.trim();
+    if !editor.is_empty() {
+        let mut parts = editor.split_whitespace();
+        let program = parts.next().unwrap_or(editor);
+        std::process::Command::new(program)
+            .args(parts)
+            .arg(path)
+            .spawn()?;
+        return Ok(());
+    }
+    #[cfg(windows)]
+    std::process::Command::new("explorer").arg(path).spawn()?;
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open").arg(path).spawn()?;
+    #[cfg(all(unix, not(target_os = "macos")))]
+    std::process::Command::new("xdg-open").arg(path).spawn()?;
+    Ok(())
 }
 
 fn text_button(ui: &mut egui::Ui, label: &str) -> egui::Response {

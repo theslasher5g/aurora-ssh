@@ -172,8 +172,72 @@ impl Vault {
     }
 }
 
+/// Everything worth moving to another PC, as written into an `.aurora` export file.
+#[derive(Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ExportBundle {
+    pub version: u32,
+    pub hosts: Vec<crate::model::Host>,
+    pub groups: Vec<crate::model::Group>,
+    pub snippets: Vec<crate::model::Snippet>,
+    pub identities: Vec<crate::model::Identity>,
+    pub known_hosts: std::collections::HashMap<String, String>,
+}
+
+/// Encrypts with a password of its own (same Argon2id + XChaCha20-Poly1305 scheme as the
+/// vault, fresh salt and nonce).
+pub fn seal(password: &str, plain: &[u8]) -> Result<String> {
+    let mut salt = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut salt);
+    let mut nonce = [0u8; 24];
+    rand::rngs::OsRng.fill_bytes(&mut nonce);
+    let key = derive_key(password, &salt)?;
+    let ciphertext = XChaCha20Poly1305::new((&key).into())
+        .encrypt(XNonce::from_slice(&nonce), plain)
+        .map_err(|_| anyhow!("Verschlüsselung fehlgeschlagen"))?;
+    let file = VaultFile {
+        version: 1,
+        kdf: "argon2id-m65536-t3-p1".into(),
+        salt: B64.encode(salt),
+        nonce: B64.encode(nonce),
+        ciphertext: B64.encode(ciphertext),
+    };
+    Ok(serde_json::to_string_pretty(&file)?)
+}
+
+pub fn unseal(password: &str, text: &str) -> Result<Vec<u8>> {
+    let file: VaultFile =
+        serde_json::from_str(text).map_err(|_| anyhow!("Keine Aurora-Exportdatei"))?;
+    let salt: [u8; 16] = B64
+        .decode(&file.salt)?
+        .try_into()
+        .map_err(|_| anyhow!("ungültiger Salt"))?;
+    let nonce = B64.decode(&file.nonce)?;
+    if nonce.len() != 24 {
+        bail!("ungültige Nonce");
+    }
+    let key = derive_key(password, &salt)?;
+    XChaCha20Poly1305::new((&key).into())
+        .decrypt(
+            XNonce::from_slice(&nonce),
+            B64.decode(&file.ciphertext)?.as_ref(),
+        )
+        .map_err(|_| anyhow!("Falsches Passwort oder beschädigte Datei"))
+}
+
+pub fn write_export(path: &Path, text: &str) -> Result<()> {
+    write_atomic(path, text.as_bytes())
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn export_roundtrip() {
+        let sealed = super::seal("pw-123456", b"hello").unwrap();
+        assert_eq!(super::unseal("pw-123456", &sealed).unwrap(), b"hello");
+        assert!(super::unseal("wrong", &sealed).is_err());
+    }
+
     use super::*;
     use crate::model::Identity;
 

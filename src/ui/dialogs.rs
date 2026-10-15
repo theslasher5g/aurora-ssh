@@ -357,6 +357,9 @@ fn password(app: &mut App, ctx: &egui::Context) {
         }
     });
     if cancel {
+        if let Some(Purpose::Tunnel(tid)) = app.password_prompt.as_ref().map(|p| p.purpose) {
+            app.tunnels.remove(&tid);
+        }
         app.password_prompt = None;
     } else if submit && let Some(pp) = app.password_prompt.take() {
         let (user, ident) = app.credentials(&pp.host);

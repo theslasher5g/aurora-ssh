@@ -153,6 +153,13 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         .map(|s| (s.id, s.name.clone()))
         .collect();
     let ports = app.serial_ports.clone();
+    let ssh_hosts: Vec<(Uuid, String)> = app
+        .lib
+        .hosts
+        .iter()
+        .filter(|h| h.protocol == Protocol::Ssh)
+        .map(|h| (h.id, h.display_name().to_string()))
+        .collect();
     let Some(ed) = app.host_editor.as_mut() else {
         return;
     };
@@ -280,6 +287,68 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                     ui.selectable_value(&mut h.startup_snippet, Some(*id), n);
                                 }
                             });
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            ui.label("Verbinden über");
+                            let me = h.id;
+                            let sel = h
+                                .jump_host
+                                .and_then(|id| ssh_hosts.iter().find(|(i, _)| *i == id))
+                                .map(|(_, n)| n.clone())
+                                .unwrap_or_else(|| "— direkt —".into());
+                            egui::ComboBox::from_id_salt("jump")
+                                .selected_text(sel)
+                                .width(220.0)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut h.jump_host, None, "— direkt —");
+                                    for (id, n) in ssh_hosts.iter().filter(|(i, _)| *i != me) {
+                                        ui.selectable_value(&mut h.jump_host, Some(*id), n);
+                                    }
+                                });
+                        })
+                        .response
+                        .on_hover_text(
+                            "Jump-Host: Aurora verbindet sich zuerst mit diesem Server und von dort weiter. \
+                             Der Jump-Host braucht gespeicherte Zugangsdaten (Identität).",
+                        );
+                        ui.add_space(8.0);
+                        theme::section_title(ui, "Tunnel (Port-Weiterleitung)");
+                        ui.label(
+                            RichText::new("localhost:<lokal> → über den Server → Ziel:Port. Ein-/ausschalten in der Hostliste.")
+                                .size(12.0)
+                                .color(theme::text_dim()),
+                        );
+                        let mut remove = None;
+                        for (i, t) in h.tunnels.iter_mut().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut t.name)
+                                        .hint_text("Name")
+                                        .desired_width(110.0),
+                                );
+                                ui.label("lokal");
+                                ui.add(egui::DragValue::new(&mut t.local_port).range(1..=65535));
+                                ui.label("→");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut t.remote_host)
+                                        .hint_text("localhost")
+                                        .desired_width(100.0),
+                                );
+                                ui.label(":");
+                                ui.add(egui::DragValue::new(&mut t.remote_port).range(1..=65535));
+                                ui.checkbox(&mut t.open_browser, "")
+                                    .on_hover_text("Browser öffnen, sobald der Tunnel steht");
+                                if ui.small_button("×").on_hover_text("Entfernen").clicked() {
+                                    remove = Some(i);
+                                }
+                            });
+                        }
+                        if let Some(i) = remove {
+                            h.tunnels.remove(i);
+                        }
+                        if ui.button("+ Tunnel").clicked() {
+                            h.tunnels.push(crate::model::Tunnel::default());
+                        }
                     }
                     Protocol::Rdp => {
                         ui.add_space(8.0);

@@ -8,6 +8,7 @@ pub mod scan;
 pub mod serial;
 pub mod sftp;
 pub mod ssh;
+pub mod tunnel;
 
 use tokio::sync::{mpsc, oneshot};
 
