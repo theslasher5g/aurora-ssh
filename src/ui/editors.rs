@@ -11,7 +11,7 @@ fn modal_header(ui: &mut egui::Ui, title: &str) {
     ui.label(RichText::new(title).size(20.0).strong());
     let (rect, _) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 3.0), egui::Sense::hover());
-    theme::gradient_rect(ui.painter(), rect, theme::TEAL, theme::VIOLET, 2.0);
+    theme::gradient_rect(ui.painter(), rect, theme::teal(), theme::violet(), 2.0);
     ui.add_space(6.0);
 }
 
@@ -41,13 +41,16 @@ fn color_row(ui: &mut egui::Ui, color: &mut Option<[u8; 3]>, allow_none: bool) {
     ui.horizontal(|ui| {
         if allow_none {
             let (rect, resp) = ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::click());
-            ui.painter()
-                .circle_stroke(rect.center(), 8.0, egui::Stroke::new(1.5, theme::TEXT_DIM));
+            ui.painter().circle_stroke(
+                rect.center(),
+                8.0,
+                egui::Stroke::new(1.5, theme::text_dim()),
+            );
             if color.is_none() {
                 ui.painter().circle_stroke(
                     rect.center(),
                     11.0,
-                    egui::Stroke::new(2.0, theme::TEXT),
+                    egui::Stroke::new(2.0, theme::text()),
                 );
             }
             if resp.on_hover_text("Gruppenfarbe verwenden").clicked() {
@@ -62,7 +65,7 @@ fn color_row(ui: &mut egui::Ui, color: &mut Option<[u8; 3]>, allow_none: bool) {
                 ui.painter().circle_stroke(
                     rect.center(),
                     11.0,
-                    egui::Stroke::new(2.0, theme::TEXT),
+                    egui::Stroke::new(2.0, theme::text()),
                 );
             }
             if resp.clicked() {
@@ -296,6 +299,9 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                         egui::DragValue::new(&mut h.rdp.height).range(480..=4320),
                                     );
                                 });
+                                ui.end_row();
+                                ui.label("Anzeige");
+                                ui.checkbox(&mut h.rdp.embedded, "In Aurora anzeigen");
                                 ui.end_row();
                                 ui.label("Optionen");
                                 ui.horizontal(|ui| {
@@ -593,7 +599,7 @@ fn identity_editor(app: &mut App, ctx: &egui::Context) {
                 };
                 match std::fs::read_to_string(&path) {
                     Ok(t) => ident.private_key = t,
-                    Err(e) => toast = Some((format!("{}: {e}", path.display()), theme::RED)),
+                    Err(e) => toast = Some((format!("{}: {e}", path.display()), theme::red())),
                 }
             }
             if ui.button("✨ Ed25519 erzeugen").clicked() {
@@ -609,10 +615,10 @@ fn identity_editor(app: &mut App, ctx: &egui::Context) {
                         ui.ctx().copy_text(public);
                         toast = Some((
                             "Key erzeugt — Public Key in die Zwischenablage kopiert".into(),
-                            theme::TEAL,
+                            theme::teal(),
                         ));
                     }
-                    Err(e) => toast = Some((format!("{e}"), theme::RED)),
+                    Err(e) => toast = Some((format!("{e}"), theme::red())),
                 }
             }
         });
@@ -644,14 +650,14 @@ fn identity_editor(app: &mut App, ctx: &egui::Context) {
                         RichText::new(format!("✔ {fp}"))
                             .monospace()
                             .size(11.5)
-                            .color(theme::GREEN),
+                            .color(theme::green()),
                     );
                 }
                 Err(e) => {
                     ui.label(
                         RichText::new(format!("⚠ {e}"))
                             .size(11.5)
-                            .color(theme::AMBER),
+                            .color(theme::amber()),
                     );
                 }
             }
@@ -730,9 +736,9 @@ fn snippet_editor(app: &mut App, ctx: &egui::Context) {
         let vars = s.variables();
         if !vars.is_empty() {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Variablen:").color(theme::TEXT_DIM));
+                ui.label(RichText::new("Variablen:").color(theme::text_dim()));
                 for v in vars {
-                    theme::chip(ui, &v, theme::VIOLET);
+                    theme::chip(ui, &v, theme::violet());
                 }
             });
         }

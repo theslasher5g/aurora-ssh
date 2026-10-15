@@ -22,7 +22,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     });
     ui.label(
         RichText::new("Passwörter und SSH-Keys, verschlüsselt mit deinem Master-Passwort. Hosts und Gruppen verweisen auf Identitäten.")
-            .color(theme::TEXT_DIM),
+            .color(theme::text_dim()),
     );
     ui.add_space(12.0);
 
@@ -44,7 +44,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     ui.label(
                         RichText::new("Noch keine Identitäten")
                             .size(16.0)
-                            .color(theme::TEXT_DIM),
+                            .color(theme::text_dim()),
                     );
                 });
             }
@@ -93,11 +93,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                                             &ident.username
                                         }
                                     ))
-                                    .color(theme::TEXT_DIM),
+                                    .color(theme::text_dim()),
                                 );
-                                theme::chip(ui, ident.kind(), theme::VIOLET);
+                                theme::chip(ui, ident.kind(), theme::violet());
                                 if used_by > 0 {
-                                    theme::chip(ui, &format!("{used_by}× verwendet"), theme::TEAL);
+                                    theme::chip(
+                                        ui,
+                                        &format!("{used_by}× verwendet"),
+                                        theme::teal(),
+                                    );
                                 }
                             });
                         });
@@ -123,9 +127,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                                 ) {
                                     Ok((pubkey, _)) => {
                                         ui.ctx().copy_text(pubkey);
-                                        app.toast("Public Key kopiert", theme::TEAL);
+                                        app.toast("Public Key kopiert", theme::teal());
                                     }
-                                    Err(e) => app.toast(format!("Key ungültig: {e}"), theme::RED),
+                                    Err(e) => app.toast(format!("Key ungültig: {e}"), theme::red()),
                                 }
                             }
                         });

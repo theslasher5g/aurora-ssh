@@ -246,6 +246,7 @@ name = "aurora-term"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arboard",
  "argon2 0.5.3",
  "base64",
  "chacha20poly1305",

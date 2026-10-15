@@ -8,12 +8,12 @@ use crate::theme;
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let first_run = !app.store.vault_exists();
     egui::CentralPanel::default()
-        .frame(egui::Frame::NONE.fill(theme::BG_DEEP))
+        .frame(egui::Frame::NONE.fill(theme::bg_deep()))
         .show(ui, |ui| {
             // Aurora glow band at the top.
             let r = ui.max_rect();
             let band = egui::Rect::from_min_size(r.min, Vec2::new(r.width(), 4.0));
-            theme::gradient_rect(ui.painter(), band, theme::TEAL, theme::VIOLET, 0.0);
+            theme::gradient_rect(ui.painter(), band, theme::teal(), theme::violet(), 0.0);
 
             ui.vertical_centered(|ui| {
                 ui.add_space((r.height() * 0.18).max(30.0));
@@ -22,7 +22,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 ui.label(RichText::new("aurora").size(34.0).strong());
                 ui.label(
                     RichText::new("SSH · SFTP · RDP · Serial — dein Terminal-Cockpit")
-                        .color(theme::TEXT_DIM),
+                        .color(theme::text_dim()),
                 );
                 ui.add_space(28.0);
 
@@ -42,7 +42,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                                 } else {
                                     "Gib dein Master-Passwort ein."
                                 })
-                                .color(theme::TEXT_DIM)
+                                .color(theme::text_dim())
                                 .size(12.5),
                             );
                             ui.add_space(10.0);
@@ -71,7 +71,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                                 strength_meter(ui, &app.lock.password);
                             }
                             if let Some(e) = &app.lock.error {
-                                ui.label(RichText::new(e).color(theme::RED).size(12.5));
+                                ui.label(RichText::new(e).color(theme::red()).size(12.5));
                             }
                             ui.add_space(6.0);
                             let label = if first_run { "Vault erstellen" } else { "Entsperren" };
@@ -135,15 +135,15 @@ fn strength_meter(ui: &mut egui::Ui, pw: &str) {
     let (rect, _) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 5.0), egui::Sense::hover());
     ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(3), theme::BG_HOVER);
+        .rect_filled(rect, egui::CornerRadius::same(3), theme::bg_hover());
     let mut fill = rect;
     fill.set_width(rect.width() * score);
     let color = if score < 0.4 {
-        theme::RED
+        theme::red()
     } else if score < 0.7 {
-        theme::AMBER
+        theme::amber()
     } else {
-        theme::GREEN
+        theme::green()
     };
     ui.painter()
         .rect_filled(fill, egui::CornerRadius::same(3), color);

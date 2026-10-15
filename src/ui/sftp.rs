@@ -82,9 +82,9 @@ pub fn handle_event(t: &mut SftpTab, ev: SftpEvent, toasts: &mut Vec<(String, Co
             if let Some(tr) = t.transfers.iter_mut().find(|x| x.id == id) {
                 tr.finished = true;
                 if let Some(e) = &error {
-                    toasts.push((format!("Übertragung fehlgeschlagen: {e}"), theme::RED));
+                    toasts.push((format!("Übertragung fehlgeschlagen: {e}"), theme::red()));
                 } else {
-                    toasts.push((format!("✔ {} übertragen", tr.name), theme::GREEN));
+                    toasts.push((format!("✔ {} übertragen", tr.name), theme::green()));
                     refresh_local_pane = !tr.upload;
                 }
                 tr.error = error;
@@ -96,10 +96,10 @@ pub fn handle_event(t: &mut SftpTab, ev: SftpEvent, toasts: &mut Vec<(String, Co
         SftpEvent::Changed => {
             let _ = t.tx.send(SftpCmd::List(t.remote_path.clone()));
         }
-        SftpEvent::Error(e) => toasts.push((e, theme::RED)),
+        SftpEvent::Error(e) => toasts.push((e, theme::red())),
         SftpEvent::Closed(err) => {
             if let Some(e) = &err {
-                toasts.push((format!("SFTP: {e}"), theme::RED));
+                toasts.push((format!("SFTP: {e}"), theme::red()));
             }
             t.state = ConnState::Closed(err);
         }
@@ -148,7 +148,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
         .default_size(130.0)
         .frame(
             egui::Frame::NONE
-                .fill(theme::BG_PANEL)
+                .fill(theme::bg_panel())
                 .inner_margin(Margin::same(12)),
         )
         .show(ui, |ui| {
@@ -164,7 +164,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
                 if t.transfers.is_empty() {
                     ui.label(
                         RichText::new("Dateien hierher ziehen oder ⬆/⬇ verwenden.")
-                            .color(theme::TEXT_DIM),
+                            .color(theme::text_dim()),
                     );
                 }
                 for tr in t.transfers.iter().rev() {
@@ -183,8 +183,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
                             0.0
                         };
                         let (color, text) = match (&tr.error, tr.finished) {
-                            (Some(e), _) => (theme::RED, e.clone()),
-                            (None, true) => (theme::GREEN, "fertig".into()),
+                            (Some(e), _) => (theme::red(), e.clone()),
+                            (None, true) => (theme::green(), "fertig".into()),
                             (None, false) => (
                                 accent,
                                 format!("{} / {}", human_size(tr.done), human_size(tr.total)),
@@ -196,7 +196,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
                                 .desired_width(220.0)
                                 .desired_height(8.0),
                         );
-                        ui.label(RichText::new(text).size(11.5).color(theme::TEXT_DIM));
+                        ui.label(RichText::new(text).size(11.5).color(theme::text_dim()));
                     });
                 }
             });
@@ -205,7 +205,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
     egui::CentralPanel::default()
         .frame(
             egui::Frame::NONE
-                .fill(theme::BG_DEEP)
+                .fill(theme::bg_deep())
                 .inner_margin(Margin::same(12)),
         )
         .show(ui, |ui| {
@@ -460,7 +460,7 @@ fn pane(
                 }
             });
             if let Some(e) = error {
-                ui.label(RichText::new(e).color(theme::RED).size(12.0));
+                ui.label(RichText::new(e).color(theme::red()).size(12.0));
             }
             ui.add_space(4.0);
             egui::ScrollArea::vertical()
@@ -480,8 +480,11 @@ fn pane(
                                 accent.linear_multiply(0.18),
                             );
                         } else if resp.hovered() {
-                            ui.painter()
-                                .rect_filled(rect, CornerRadius::same(6), theme::BG_HOVER);
+                            ui.painter().rect_filled(
+                                rect,
+                                CornerRadius::same(6),
+                                theme::bg_hover(),
+                            );
                         }
                         let icon = if e.is_dir {
                             "🗀"
@@ -497,12 +500,12 @@ fn pane(
                             egui::Align2::LEFT_CENTER,
                             icon,
                             font.clone(),
-                            theme::TEXT,
+                            theme::text(),
                         );
                         let name_color = if e.is_dir {
-                            theme::TEXT
+                            theme::text()
                         } else {
-                            theme::TEXT_DIM.linear_multiply(1.3)
+                            theme::text_dim().linear_multiply(1.3)
                         };
                         let name_rect = egui::Rect::from_min_max(
                             rect.left_top() + Vec2::new(32.0, 0.0),
@@ -521,7 +524,7 @@ fn pane(
                                 egui::Align2::RIGHT_CENTER,
                                 human_size(e.size),
                                 egui::FontId::proportional(11.5),
-                                theme::TEXT_DIM,
+                                theme::text_dim(),
                             );
                         }
                         if let Some(m) = e.modified {
@@ -530,7 +533,7 @@ fn pane(
                                 egui::Align2::RIGHT_CENTER,
                                 short_date(m),
                                 egui::FontId::proportional(11.5),
-                                theme::TEXT_DIM,
+                                theme::text_dim(),
                             );
                         }
                         if resp.clicked() {
@@ -557,7 +560,7 @@ fn pane(
                                 ui.close();
                             }
                             if ui
-                                .button(RichText::new("🗑 Löschen").color(theme::RED))
+                                .button(RichText::new("🗑 Löschen").color(theme::red()))
                                 .clicked()
                             {
                                 action = Some(PaneAction::Delete(e.name.clone(), e.is_dir));

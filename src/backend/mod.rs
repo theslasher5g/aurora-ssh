@@ -2,6 +2,7 @@
 //! for serial) and talks to the UI exclusively through channels.
 
 pub mod rdp;
+pub mod rdp_embed;
 pub mod serial;
 pub mod sftp;
 pub mod ssh;

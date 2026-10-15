@@ -118,15 +118,15 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
     let modal = egui::Modal::new(egui::Id::new("palette"))
         .frame(
             egui::Frame::NONE
-                .fill(theme::BG_CARD)
-                .stroke(Stroke::new(1.0, theme::BORDER))
+                .fill(theme::bg_card())
+                .stroke(Stroke::new(1.0, theme::border()))
                 .corner_radius(CornerRadius::same(16))
                 .inner_margin(Margin::same(12)),
         )
         .show(ctx, |ui| {
             ui.set_width(560.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("🔍").size(18.0).color(theme::TEAL));
+                ui.label(RichText::new("🔍").size(18.0).color(theme::teal()));
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut app.palette.query)
                         .hint_text("Host, Snippet oder Befehl… (user@host für Quick Connect)")
@@ -141,10 +141,10 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             });
             let (rect, _) =
                 ui.allocate_exact_size(Vec2::new(ui.available_width(), 2.0), egui::Sense::hover());
-            theme::gradient_rect(ui.painter(), rect, theme::TEAL, theme::VIOLET, 1.0);
+            theme::gradient_rect(ui.painter(), rect, theme::teal(), theme::violet(), 1.0);
             ui.add_space(4.0);
             if items.is_empty() {
-                ui.label(RichText::new("Keine Treffer").color(theme::TEXT_DIM));
+                ui.label(RichText::new("Keine Treffer").color(theme::text_dim()));
             }
             for (i, item) in items.iter().enumerate() {
                 let selected = i == app.palette.selected;
@@ -157,9 +157,9 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                         rect,
                         CornerRadius::same(10),
                         if selected {
-                            theme::BG_HOVER
+                            theme::bg_hover()
                         } else {
-                            theme::BG_PANEL
+                            theme::bg_panel()
                         },
                     );
                 }
@@ -169,7 +169,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                         Vec2::new(3.0, 24.0),
                     );
                     ui.painter()
-                        .rect_filled(bar, CornerRadius::same(2), theme::TEAL);
+                        .rect_filled(bar, CornerRadius::same(2), theme::teal());
                 }
                 let p = ui.painter();
                 p.text(
@@ -177,21 +177,21 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                     egui::Align2::LEFT_CENTER,
                     &item.icon,
                     egui::FontId::proportional(16.0),
-                    theme::TEAL,
+                    theme::teal(),
                 );
                 p.text(
                     rect.left_top() + Vec2::new(44.0, 6.0),
                     egui::Align2::LEFT_TOP,
                     &item.title,
                     egui::FontId::proportional(14.5),
-                    theme::TEXT,
+                    theme::text(),
                 );
                 p.text(
                     rect.left_bottom() + Vec2::new(44.0, -6.0),
                     egui::Align2::LEFT_BOTTOM,
                     &item.subtitle,
                     egui::FontId::proportional(11.5),
-                    theme::TEXT_DIM,
+                    theme::text_dim(),
                 );
                 if resp.clicked() {
                     chosen = Some(i);
@@ -201,7 +201,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             ui.label(
                 RichText::new("⬆⬇ auswählen · Enter ausführen · Esc schließen")
                     .size(11.0)
-                    .color(theme::TEXT_DIM),
+                    .color(theme::text_dim()),
             );
         });
 

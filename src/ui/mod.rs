@@ -4,6 +4,7 @@ pub mod hosts;
 pub mod keychain;
 pub mod lock;
 pub mod palette;
+pub mod rdp;
 pub mod settings;
 pub mod sftp;
 pub mod snippets;

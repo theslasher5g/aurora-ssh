@@ -4,32 +4,9 @@ use egui::{Color32, CornerRadius, Event, FontId, Key, Modifiers, Pos2, Rect, Sen
 
 use crate::theme;
 
-/// Aurora 16-color palette (normal + bright).
-const ANSI: [Color32; 16] = [
-    Color32::from_rgb(28, 32, 44),
-    Color32::from_rgb(248, 113, 113),
-    Color32::from_rgb(74, 222, 128),
-    Color32::from_rgb(251, 191, 36),
-    Color32::from_rgb(96, 165, 250),
-    Color32::from_rgb(192, 132, 252),
-    Color32::from_rgb(45, 226, 195),
-    Color32::from_rgb(203, 213, 225),
-    Color32::from_rgb(88, 98, 122),
-    Color32::from_rgb(252, 165, 165),
-    Color32::from_rgb(134, 239, 172),
-    Color32::from_rgb(253, 224, 71),
-    Color32::from_rgb(147, 197, 253),
-    Color32::from_rgb(216, 180, 254),
-    Color32::from_rgb(94, 234, 212),
-    Color32::from_rgb(248, 250, 252),
-];
-
-pub const TERM_BG: Color32 = Color32::from_rgb(11, 13, 19);
-const TERM_FG: Color32 = Color32::from_rgb(220, 225, 236);
-
-fn idx_color(i: u8) -> Color32 {
+fn idx_color(i: u8, ansi: &[Color32; 16]) -> Color32 {
     match i {
-        0..=15 => ANSI[i as usize],
+        0..=15 => ansi[i as usize],
         16..=231 => {
             let i = i - 16;
             let level = |v: u8| if v == 0 { 0 } else { 55 + v * 40 };
@@ -42,11 +19,11 @@ fn idx_color(i: u8) -> Color32 {
     }
 }
 
-fn resolve(c: vt100::Color, default: Color32, bold: bool) -> Color32 {
+fn resolve(c: vt100::Color, default: Color32, bold: bool, ansi: &[Color32; 16]) -> Color32 {
     match c {
         vt100::Color::Default => default,
-        vt100::Color::Idx(i) if bold && i < 8 => ANSI[i as usize + 8],
-        vt100::Color::Idx(i) => idx_color(i),
+        vt100::Color::Idx(i) if bold && i < 8 => ansi[i as usize + 8],
+        vt100::Color::Idx(i) => idx_color(i, ansi),
         vt100::Color::Rgb(r, g, b) => Color32::from_rgb(r, g, b),
     }
 }
@@ -151,6 +128,8 @@ impl Terminal {
 
     pub fn show(&mut self, ui: &mut egui::Ui, id: egui::Id, view: TermView<'_>) -> TermOutput {
         let mut out = TermOutput::default();
+        let pal = theme::palette();
+        let (term_bg, term_fg) = (pal.term_bg, pal.term_fg);
         let font = FontId::monospace(view.font_size);
         let (cw, ch) = ui.fonts_mut(|f| (f.glyph_width(&font, 'M'), f.row_height(&font)));
         let cw = cw.max(1.0);
@@ -160,7 +139,7 @@ impl Terminal {
         let resp = ui.interact(full, id, Sense::click_and_drag());
         ui.allocate_rect(full, Sense::hover());
         let painter = ui.painter_at(full);
-        painter.rect_filled(full, CornerRadius::same(10), TERM_BG);
+        painter.rect_filled(full, CornerRadius::same(10), term_bg);
         if let Some(glow) = view.glow {
             painter.rect_stroke(
                 full.shrink(1.0),
@@ -344,8 +323,8 @@ impl Terminal {
                 let run_rect =
                     Rect::from_min_size(Pos2::new(x, y), Vec2::new((col - start) as f32 * cw, ch));
                 let (mut fg, mut bg) = (
-                    resolve(style.fg, TERM_FG, style.bold),
-                    resolve(style.bg, TERM_BG, false),
+                    resolve(style.fg, term_fg, style.bold, &pal.ansi),
+                    resolve(style.bg, term_bg, false, &pal.ansi),
                 );
                 if style.inverse {
                     std::mem::swap(&mut fg, &mut bg);
@@ -356,7 +335,7 @@ impl Terminal {
                 if sel {
                     bg = view.accent.linear_multiply(0.35);
                 }
-                if bg != TERM_BG {
+                if bg != term_bg {
                     painter.rect_filled(run_rect, CornerRadius::ZERO, bg);
                 }
                 if text.trim().is_empty() {
@@ -398,7 +377,7 @@ impl Terminal {
                         egui::Align2::LEFT_TOP,
                         c.contents(),
                         font.clone(),
-                        TERM_BG,
+                        term_bg,
                     );
                 }
             } else {
@@ -414,13 +393,13 @@ impl Terminal {
         if self.scrollback_rows > 0 {
             let label = format!("⬆ {} Zeilen zurück", self.scrollback_rows);
             let pos = full.right_top() + Vec2::new(-14.0, 10.0);
-            let g = painter.layout_no_wrap(label, FontId::proportional(11.0), theme::TEXT);
+            let g = painter.layout_no_wrap(label, FontId::proportional(11.0), theme::text());
             let bg = Rect::from_min_size(
                 pos - Vec2::new(g.size().x + 16.0, 0.0),
                 g.size() + Vec2::new(16.0, 8.0),
             );
-            painter.rect_filled(bg, CornerRadius::same(255), theme::BG_HOVER);
-            painter.galley(bg.min + Vec2::new(8.0, 4.0), g, theme::TEXT);
+            painter.rect_filled(bg, CornerRadius::same(255), theme::bg_hover());
+            painter.galley(bg.min + Vec2::new(8.0, 4.0), g, theme::text());
         }
 
         if let Some(msg) = view.overlay {
@@ -431,7 +410,7 @@ impl Terminal {
                 egui::Align2::CENTER_CENTER,
                 msg,
                 FontId::proportional(16.0),
-                theme::TEXT,
+                theme::text(),
             );
         }
 
@@ -557,8 +536,9 @@ mod tests {
 
     #[test]
     fn color_cube() {
-        assert_eq!(idx_color(16), Color32::from_rgb(0, 0, 0));
-        assert_eq!(idx_color(231), Color32::from_rgb(255, 255, 255));
-        assert_eq!(idx_color(232), Color32::from_rgb(8, 8, 8));
+        let ansi = theme::THEMES[0].ansi;
+        assert_eq!(idx_color(16, &ansi), Color32::from_rgb(0, 0, 0));
+        assert_eq!(idx_color(231, &ansi), Color32::from_rgb(255, 255, 255));
+        assert_eq!(idx_color(232, &ansi), Color32::from_rgb(8, 8, 8));
     }
 }

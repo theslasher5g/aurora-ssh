@@ -29,7 +29,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         RichText::new(format!(
             "Wiederverwendbare Befehle. Platzhalter wie {{{{service}}}} werden beim Ausführen abgefragt. {terms} Terminal(s) offen."
         ))
-        .color(theme::TEXT_DIM),
+        .color(theme::text_dim()),
     );
     ui.add_space(12.0);
 
@@ -61,14 +61,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 theme::card_frame().show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("⚡").color(theme::AMBER).size(18.0));
+                        ui.label(RichText::new("⚡").color(theme::amber()).size(18.0));
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 2.0;
                             ui.label(RichText::new(&s.name).strong().size(15.0));
                             if !s.description.is_empty() {
                                 ui.label(
                                     RichText::new(&s.description)
-                                        .color(theme::TEXT_DIM)
+                                        .color(theme::text_dim())
                                         .size(12.5),
                                 );
                             }
@@ -103,7 +103,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         });
                     });
                     egui::Frame::NONE
-                        .fill(theme::BG_DEEP)
+                        .fill(theme::bg_deep())
                         .corner_radius(CornerRadius::same(8))
                         .inner_margin(Margin::symmetric(12, 8))
                         .show(ui, |ui| {
@@ -112,7 +112,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                                 RichText::new(&s.script)
                                     .monospace()
                                     .size(12.5)
-                                    .color(theme::TEAL),
+                                    .color(theme::teal()),
                             );
                         });
                     let vars = s.variables();
@@ -122,7 +122,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                                 theme::chip(ui, &format!("#{t}"), theme::rgb(theme::hash_color(t)));
                             }
                             for v in &vars {
-                                theme::chip(ui, &format!("{{{{{v}}}}}"), theme::VIOLET);
+                                theme::chip(ui, &format!("{{{{{v}}}}}"), theme::violet());
                             }
                         });
                     }

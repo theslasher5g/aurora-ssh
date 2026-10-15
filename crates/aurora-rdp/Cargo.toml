@@ -1,0 +1,24 @@
+[package]
+name = "aurora-rdp"
+version = "0.1.0"
+edition = "2024"
+description = "RDP-Hilfsprozess für Aurora (IronRDP), streamt Bildbereiche über stdio"
+
+# Eigenständiges Paket: IronRDP pinnt Krypto-Vorabversionen, die mit russh im Haupt-Crate kollidieren.
+[workspace]
+
+[dependencies]
+ironrdp = { version = "0.17", features = ["client", "client-clipboard", "rustls", "cliprdr", "input", "pdu", "core"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Local fix for padded RDP6/RLE bitmaps (rows were sliced by the destination width).
+[patch.crates-io]
+ironrdp-session = { path = "vendor/ironrdp-session" }
+
+[profile.release]
+lto = "thin"
+strip = true

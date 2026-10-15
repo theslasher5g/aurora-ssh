@@ -101,10 +101,45 @@ pub struct SftpTab {
 
 pub struct RdpTab {
     pub launch: RdpLaunch,
+    /// Session rendered inside Aurora; `None` = handed off to the system client.
+    pub embedded: Option<Box<crate::ui::rdp::RdpView>>,
     pub process: Option<RdpProcess>,
     pub started: Instant,
     pub status: String,
     pub running: bool,
+}
+
+impl RdpTab {
+    pub fn is_live(&self) -> bool {
+        match &self.embedded {
+            Some(v) => matches!(v.state, ConnState::Connected),
+            None => self.running,
+        }
+    }
+
+    pub fn status_color(&self) -> Color32 {
+        match &self.embedded {
+            Some(v) => state_color(&v.state),
+            None if self.running => theme::green(),
+            None => theme::text_dim(),
+        }
+    }
+
+    fn launch_external(&mut self) {
+        self.embedded = None;
+        match backend::rdp::launch(&self.launch) {
+            Ok(p) => {
+                self.status = format!("Läuft in {}", p.client);
+                self.running = p.child.is_some();
+                self.process = Some(p);
+                self.started = Instant::now();
+            }
+            Err(e) => {
+                self.status = format!("{e:#}");
+                self.running = false;
+            }
+        }
+    }
 }
 
 pub enum TabKind {
@@ -255,7 +290,7 @@ impl App {
                 Library::default()
             }
         };
-        theme::apply(&cc.egui_ctx, theme::rgb(lib.settings.accent));
+        theme::apply(&cc.egui_ctx, &lib.settings.theme);
         let (prompts_sink, prompts_rx) = Sink::new(cc.egui_ctx.clone());
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -297,7 +332,7 @@ impl App {
     }
 
     pub fn accent(&self) -> Color32 {
-        theme::rgb(self.lib.settings.accent)
+        theme::teal()
     }
 
     pub fn toast(&mut self, text: impl Into<String>, color: Color32) {
@@ -310,7 +345,7 @@ impl App {
 
     pub fn save_library(&mut self) {
         if let Err(e) = self.store.save_library(&self.lib) {
-            self.toast(format!("Speichern fehlgeschlagen: {e:#}"), theme::RED);
+            self.toast(format!("Speichern fehlgeschlagen: {e:#}"), theme::red());
         }
     }
 
@@ -320,7 +355,7 @@ impl App {
         {
             self.toast(
                 format!("Keychain-Speichern fehlgeschlagen: {e:#}"),
-                theme::RED,
+                theme::red(),
             );
         }
     }
@@ -370,10 +405,15 @@ impl App {
 
     pub fn connect_host(&mut self, host: Host, purpose: Purpose, ctx: &egui::Context) {
         let (user, ident) = self.credentials(&host);
-        let has_secret = ident
-            .as_ref()
-            .is_some_and(|i| !i.password.is_empty() || !i.private_key.is_empty());
-        if host.protocol == Protocol::Ssh && !has_secret {
+        let has_secret = ident.as_ref().is_some_and(|i| {
+            !i.password.is_empty() || (host.protocol == Protocol::Ssh && !i.private_key.is_empty())
+        });
+        let needs_secret = match host.protocol {
+            Protocol::Ssh => true,
+            Protocol::Rdp => host.rdp.embedded,
+            Protocol::Serial => false,
+        };
+        if needs_secret && !has_secret {
             self.password_prompt = Some(PasswordPrompt {
                 host,
                 purpose,
@@ -472,21 +512,20 @@ impl App {
                     password: password.clone(),
                     settings: host.rdp.clone(),
                 };
-                let (process, status, running) = match backend::rdp::launch(&launch) {
-                    Ok(p) => {
-                        let s = format!("Läuft in {}", p.client);
-                        let running = p.child.is_some();
-                        (Some(p), s, running)
-                    }
-                    Err(e) => (None, format!("{e:#}"), false),
-                };
-                TabKind::Rdp(Box::new(RdpTab {
+                let mut tab = RdpTab {
                     launch,
-                    process,
+                    embedded: None,
+                    process: None,
                     started: Instant::now(),
-                    status,
-                    running,
-                }))
+                    status: String::new(),
+                    running: false,
+                };
+                if host.rdp.embedded && backend::rdp_embed::helper_path().is_some() {
+                    tab.embedded = Some(Box::new(crate::ui::rdp::RdpView::new()));
+                } else {
+                    tab.launch_external();
+                }
+                TabKind::Rdp(Box::new(tab))
             }
         };
         let prefix = match &kind {
@@ -608,15 +647,18 @@ impl App {
             }
         }
         if sent == 0 {
-            self.toast("Keine verbundene Terminal-Session aktiv", theme::AMBER);
+            self.toast("Keine verbundene Terminal-Session aktiv", theme::amber());
         } else if sent > 1 {
-            self.toast(format!("Snippet an {sent} Sessions gesendet"), theme::TEAL);
+            self.toast(
+                format!("Snippet an {sent} Sessions gesendet"),
+                theme::teal(),
+            );
         }
     }
 
     // ------------------------------------------------------------------ events
 
-    fn pump_events(&mut self) {
+    fn pump_events(&mut self, ctx: &egui::Context) {
         while let Ok(p) = self.prompts_rx.try_recv() {
             self.hostkey_queue.push_back(p);
         }
@@ -650,7 +692,7 @@ impl App {
                                 };
                                 t.term.feed(msg.as_bytes());
                                 if let Some(e) = &err {
-                                    toasts.push((format!("{}: {e}", tab.title), theme::RED));
+                                    toasts.push((format!("{}: {e}", tab.title), theme::red()));
                                 }
                                 t.state = ConnState::Closed(err);
                             }
@@ -663,6 +705,9 @@ impl App {
                     }
                 }
                 TabKind::Rdp(t) => {
+                    if let Some(v) = t.embedded.as_mut() {
+                        v.pump(ctx, &mut toasts);
+                    }
                     if let Some(child) = t.process.as_mut().and_then(|p| p.child.as_mut())
                         && t.running
                         && let Ok(Some(status)) = child.try_wait()
@@ -698,7 +743,7 @@ impl App {
             }
             Action::QuickConnect(s) => match parse_quick(&s) {
                 Some(host) => self.connect_host(host, Purpose::Terminal, ctx),
-                None => self.toast("Format: user@host[:port]", theme::AMBER),
+                None => self.toast("Format: user@host[:port]", theme::amber()),
             },
             Action::NewHost(group) => {
                 let host = Host {
@@ -866,7 +911,7 @@ impl App {
             .exact_size(46.0)
             .frame(
                 egui::Frame::NONE
-                    .fill(theme::BG_DEEP)
+                    .fill(theme::bg_deep())
                     .inner_margin(Margin::symmetric(12, 0)),
             )
             .show(ui, |ui| {
@@ -877,13 +922,13 @@ impl App {
                         RichText::new("aurora")
                             .size(17.0)
                             .strong()
-                            .color(theme::TEXT),
+                            .color(theme::text()),
                     );
                     ui.add_space(14.0);
 
                     // Home tab
                     let home_sel = self.active.is_none();
-                    if tab_button(ui, "🏠 Vault", home_sel, theme::TEAL, None)
+                    if tab_button(ui, "🏠 Vault", home_sel, theme::teal(), None)
                         .0
                         .clicked()
                     {
@@ -900,11 +945,7 @@ impl App {
                                     let status = match &tab.kind {
                                         TabKind::Term(t) => Some(state_color(&t.state)),
                                         TabKind::Sftp(t) => Some(state_color(&t.state)),
-                                        TabKind::Rdp(t) => Some(if t.running {
-                                            theme::GREEN
-                                        } else {
-                                            theme::TEXT_DIM
-                                        }),
+                                        TabKind::Rdp(t) => Some(t.status_color()),
                                     };
                                     let (resp, closed) = tab_button(
                                         ui,
@@ -932,7 +973,7 @@ impl App {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add(egui::Button::new(
-                                RichText::new("⌘K  Suche").color(theme::TEXT_DIM),
+                                RichText::new("⌘K  Suche").color(theme::text_dim()),
                             ))
                             .on_hover_text("Befehlspalette (Ctrl+K)")
                             .clicked()
@@ -940,15 +981,15 @@ impl App {
                             actions.push(Action::OpenPalette);
                         }
                         let bc = if self.broadcast {
-                            theme::PINK
+                            theme::pink()
                         } else {
-                            theme::TEXT_DIM
+                            theme::text_dim()
                         };
                         let btn = egui::Button::new(RichText::new("📡 Broadcast").color(bc)).fill(
                             if self.broadcast {
-                                theme::PINK.linear_multiply(0.15)
+                                theme::pink().linear_multiply(0.15)
                             } else {
-                                theme::BG_CARD
+                                theme::bg_card()
                             },
                         );
                         if ui
@@ -969,7 +1010,7 @@ impl App {
             .resizable(false)
             .frame(
                 egui::Frame::NONE
-                    .fill(theme::BG_PANEL)
+                    .fill(theme::bg_panel())
                     .inner_margin(Margin::symmetric(12, 16)),
             )
             .show(ui, |ui| {
@@ -1055,7 +1096,7 @@ impl App {
             .exact_size(26.0)
             .frame(
                 egui::Frame::NONE
-                    .fill(theme::BG_DEEP)
+                    .fill(theme::bg_deep())
                     .inner_margin(Margin::symmetric(14, 0)),
             )
             .show(ui, |ui| {
@@ -1066,14 +1107,14 @@ impl App {
                         .filter(|t| match &t.kind {
                             TabKind::Term(t) => matches!(t.state, ConnState::Connected),
                             TabKind::Sftp(t) => matches!(t.state, ConnState::Connected),
-                            TabKind::Rdp(t) => t.running,
+                            TabKind::Rdp(t) => t.is_live(),
                         })
                         .count();
-                    let small = |t: String| RichText::new(t).size(11.5).color(theme::TEXT_DIM);
+                    let small = |t: String| RichText::new(t).size(11.5).color(theme::text_dim());
                     ui.label(RichText::new("⏺").size(10.0).color(if connected > 0 {
-                        theme::GREEN
+                        theme::green()
                     } else {
-                        theme::TEXT_DIM
+                        theme::text_dim()
                     }));
                     ui.label(small(format!("{connected} aktive Sessions")));
                     ui.label(small("·".into()));
@@ -1086,7 +1127,7 @@ impl App {
                         ui.label(
                             RichText::new("· BROADCAST AKTIV")
                                 .size(11.5)
-                                .color(theme::PINK)
+                                .color(theme::pink())
                                 .strong(),
                         );
                     }
@@ -1122,26 +1163,26 @@ impl App {
             .exact_size(38.0)
             .frame(
                 egui::Frame::NONE
-                    .fill(theme::BG_PANEL)
+                    .fill(theme::bg_panel())
                     .inner_margin(Margin::symmetric(12, 4)),
             )
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     let (label, color) = match &t.state {
-                        ConnState::Connecting(s) => (s.clone(), theme::AMBER),
-                        ConnState::Connected => ("Verbunden".into(), theme::GREEN),
-                        ConnState::Closed(Some(e)) => (format!("Getrennt: {e}"), theme::RED),
-                        ConnState::Closed(None) => ("Getrennt".into(), theme::TEXT_DIM),
+                        ConnState::Connecting(s) => (s.clone(), theme::amber()),
+                        ConnState::Connected => ("Verbunden".into(), theme::green()),
+                        ConnState::Closed(Some(e)) => (format!("Getrennt: {e}"), theme::red()),
+                        ConnState::Closed(None) => ("Getrennt".into(), theme::text_dim()),
                     };
                     ui.label(RichText::new("⏺").color(color));
                     ui.add(
-                        egui::Label::new(RichText::new(label).color(theme::TEXT_DIM).size(12.5))
+                        egui::Label::new(RichText::new(label).color(theme::text_dim()).size(12.5))
                             .truncate(),
                     );
                     let (cols, rows) = t.term.size();
                     ui.label(
                         RichText::new(format!("{cols}×{rows}"))
-                            .color(theme::TEXT_DIM)
+                            .color(theme::text_dim())
                             .size(11.0)
                             .monospace(),
                     );
@@ -1167,7 +1208,7 @@ impl App {
                 .default_size(260.0)
                 .frame(
                     egui::Frame::NONE
-                        .fill(theme::BG_PANEL)
+                        .fill(theme::bg_panel())
                         .inner_margin(Margin::same(10)),
                 )
                 .show(ui, |ui| {
@@ -1206,7 +1247,7 @@ impl App {
                                             RichText::new(script)
                                                 .monospace()
                                                 .size(11.5)
-                                                .color(theme::TEXT_DIM),
+                                                .color(theme::text_dim()),
                                         )
                                         .truncate(),
                                     );
@@ -1219,7 +1260,7 @@ impl App {
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::NONE
-                    .fill(theme::BG_DEEP)
+                    .fill(theme::bg_deep())
                     .inner_margin(Margin::same(8)),
             )
             .show(ui, |ui| {
@@ -1236,7 +1277,7 @@ impl App {
                         font_size: settings.font_size,
                         accent,
                         copy_on_select: settings.copy_on_select,
-                        glow: broadcast.then_some(theme::PINK.linear_multiply(0.7)),
+                        glow: broadcast.then_some(theme::pink().linear_multiply(0.7)),
                         overlay,
                     },
                 );
@@ -1272,9 +1313,26 @@ impl App {
         let TabKind::Rdp(t) = &mut tab.kind else {
             return;
         };
+        if let Some(view) = t.embedded.as_mut() {
+            let mut toasts = Vec::new();
+            let action = view.show(
+                ui,
+                egui::Id::new(("rdp", tab_id)),
+                &title,
+                &t.launch,
+                &mut toasts,
+            );
+            if let crate::ui::rdp::RdpAction::OpenExternal = action {
+                t.launch_external();
+            }
+            for (text, c) in toasts {
+                self.toast(text, c);
+            }
+            return;
+        }
         let mut relaunch = false;
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(theme::BG_DEEP).inner_margin(Margin::same(40)))
+            .frame(egui::Frame::NONE.fill(theme::bg_deep()).inner_margin(Margin::same(40)))
             .show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(60.0);
@@ -1285,14 +1343,14 @@ impl App {
                     if !t.launch.username.is_empty() {
                         target = format!("{}@{target}", t.launch.username);
                     }
-                    ui.label(RichText::new(target).color(theme::TEXT_DIM));
+                    ui.label(RichText::new(target).color(theme::text_dim()));
                     ui.add_space(16.0);
-                    let c = if t.running { theme::GREEN } else { theme::AMBER };
+                    let c = if t.running { theme::green() } else { theme::amber() };
                     theme::chip(ui, &t.status, c);
                     if t.running {
                         ui.label(
                             RichText::new(format!("seit {}s", t.started.elapsed().as_secs()))
-                                .color(theme::TEXT_DIM)
+                                .color(theme::text_dim())
                                 .size(12.0),
                         );
                         ui.ctx().request_repaint_after(Duration::from_secs(1));
@@ -1312,21 +1370,13 @@ impl App {
                         RichText::new(
                             "RDP-Sitzungen laufen im nativen Client deines Systems\n(mstsc · Windows App · FreeRDP/Remmina).",
                         )
-                        .color(theme::TEXT_DIM)
+                        .color(theme::text_dim())
                         .size(12.0),
                     );
                 });
             });
         if relaunch {
-            match backend::rdp::launch(&t.launch) {
-                Ok(p) => {
-                    t.status = format!("Läuft in {}", p.client);
-                    t.running = p.child.is_some();
-                    t.process = Some(p);
-                    t.started = Instant::now();
-                }
-                Err(e) => t.status = format!("{e:#}"),
-            }
+            t.launch_external();
         }
     }
 
@@ -1343,7 +1393,7 @@ impl App {
             .show(ctx, |ui| {
                 for t in &self.toasts {
                     egui::Frame::NONE
-                        .fill(theme::BG_CARD)
+                        .fill(theme::bg_card())
                         .stroke(Stroke::new(1.0, t.color.linear_multiply(0.6)))
                         .corner_radius(CornerRadius::same(10))
                         .inner_margin(Margin::symmetric(14, 10))
@@ -1391,7 +1441,7 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        self.pump_events();
+        self.pump_events(&ctx);
 
         if self.vault.is_none() {
             crate::ui::lock::show(self, ui);
@@ -1423,7 +1473,7 @@ impl eframe::App for App {
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::NONE
-                            .fill(theme::BG_DEEP)
+                            .fill(theme::bg_deep())
                             .inner_margin(Margin::symmetric(28, 22)),
                     )
                     .show(ui, |ui| match self.view {
@@ -1465,10 +1515,10 @@ impl eframe::App for App {
 
 pub fn state_color(s: &ConnState) -> Color32 {
     match s {
-        ConnState::Connecting(_) => theme::AMBER,
-        ConnState::Connected => theme::GREEN,
-        ConnState::Closed(Some(_)) => theme::RED,
-        ConnState::Closed(None) => theme::TEXT_DIM,
+        ConnState::Connecting(_) => theme::amber(),
+        ConnState::Connected => theme::green(),
+        ConnState::Closed(Some(_)) => theme::red(),
+        ConnState::Closed(None) => theme::text_dim(),
     }
 }
 
@@ -1515,12 +1565,12 @@ fn nav_item(
             egui::Rect::from_min_size(rect.left_top() + Vec2::new(0.0, 8.0), Vec2::new(3.0, 20.0));
         p.rect_filled(bar, CornerRadius::same(2), accent);
     } else if resp.hovered() {
-        p.rect_filled(rect, CornerRadius::same(9), theme::BG_HOVER);
+        p.rect_filled(rect, CornerRadius::same(9), theme::bg_hover());
     }
     let fg = if selected {
-        theme::TEXT
+        theme::text()
     } else {
-        theme::TEXT_DIM
+        theme::text_dim()
     };
     p.text(
         rect.left_center() + Vec2::new(14.0, 0.0),
@@ -1542,7 +1592,7 @@ fn nav_item(
             egui::Align2::RIGHT_CENTER,
             count.to_string(),
             egui::FontId::proportional(11.5),
-            theme::TEXT_DIM,
+            theme::text_dim(),
         );
     }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1559,15 +1609,15 @@ fn tab_button(
     let font = egui::FontId::proportional(13.0);
     let galley = ui
         .painter()
-        .layout_no_wrap(title.to_string(), font, theme::TEXT);
+        .layout_no_wrap(title.to_string(), font, theme::text());
     let closable = status.is_some();
     let w = galley.size().x + 30.0 + if closable { 22.0 } else { 0.0 };
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w.min(240.0), 30.0), egui::Sense::click());
     let p = ui.painter_at(rect);
     let bg = if selected {
-        theme::BG_CARD
+        theme::bg_card()
     } else if resp.hovered() {
-        theme::BG_PANEL
+        theme::bg_panel()
     } else {
         Color32::TRANSPARENT
     };
@@ -1577,7 +1627,7 @@ fn tab_button(
             rect.left_bottom() - Vec2::new(-10.0, 2.0),
             Vec2::new(rect.width() - 20.0, 2.0),
         );
-        theme::gradient_rect(&p, line, color, theme::VIOLET, 0.0);
+        theme::gradient_rect(&p, line, color, theme::violet(), 0.0);
     }
     p.circle_filled(
         rect.left_center() + Vec2::new(12.0, 0.0),
@@ -1588,9 +1638,9 @@ fn tab_button(
         rect.left_center() + Vec2::new(22.0, -galley.size().y / 2.0),
         galley,
         if selected {
-            theme::TEXT
+            theme::text()
         } else {
-            theme::TEXT_DIM
+            theme::text_dim()
         },
     );
     let mut closed = false;
@@ -1602,14 +1652,14 @@ fn tab_button(
         let x_resp = ui.interact(x_rect, resp.id.with("x"), egui::Sense::click());
         if x_resp.hovered() {
             ui.painter()
-                .rect_filled(x_rect, CornerRadius::same(5), theme::BG_HOVER);
+                .rect_filled(x_rect, CornerRadius::same(5), theme::bg_hover());
         }
         ui.painter().text(
             x_rect.center(),
             egui::Align2::CENTER_CENTER,
             "×",
             egui::FontId::proportional(15.0),
-            theme::TEXT_DIM,
+            theme::text_dim(),
         );
         closed = x_resp.clicked();
     }

@@ -107,6 +107,8 @@ impl Default for SerialSettings {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(default)]
 pub struct RdpSettings {
+    /// Show the session inside Aurora (IronRDP) instead of the system client.
+    pub embedded: bool,
     pub domain: String,
     pub width: u32,
     pub height: u32,
@@ -118,6 +120,7 @@ pub struct RdpSettings {
 impl Default for RdpSettings {
     fn default() -> Self {
         Self {
+            embedded: true,
             domain: String::new(),
             width: 1600,
             height: 900,
@@ -336,7 +339,7 @@ pub struct Keychain {
 pub struct Settings {
     pub font_size: f32,
     pub scrollback: usize,
-    pub accent: [u8; 3],
+    pub theme: String,
     pub copy_on_select: bool,
 }
 
@@ -345,7 +348,7 @@ impl Default for Settings {
         Self {
             font_size: 14.0,
             scrollback: 5000,
-            accent: [45, 226, 195],
+            theme: "aurora".into(),
             copy_on_select: true,
         }
     }

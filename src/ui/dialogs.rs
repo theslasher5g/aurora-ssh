@@ -22,23 +22,23 @@ fn hostkey(app: &mut App, ctx: &egui::Context) {
     egui::Modal::new(egui::Id::new("hostkey")).show(ctx, |ui| {
         ui.set_width(500.0);
         if changed {
-            ui.label(RichText::new("⚠ Server-Key hat sich geändert!").size(20.0).strong().color(theme::RED));
+            ui.label(RichText::new("⚠ Server-Key hat sich geändert!").size(20.0).strong().color(theme::red()));
             ui.label(
                 RichText::new("Das kann eine Neuinstallation sein — oder ein Man-in-the-Middle-Angriff. Verbinde nur, wenn du den neuen Key verifiziert hast.")
-                    .color(theme::TEXT_DIM),
+                    .color(theme::text_dim()),
             );
         } else {
             ui.label(RichText::new("🛡 Unbekannter Host").size(20.0).strong());
-            ui.label(RichText::new("Prüfe den Fingerprint, bevor du dem Server vertraust.").color(theme::TEXT_DIM));
+            ui.label(RichText::new("Prüfe den Fingerprint, bevor du dem Server vertraust.").color(theme::text_dim()));
         }
         ui.add_space(8.0);
         theme::card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(RichText::new(&p.host).strong());
-            ui.label(RichText::new(&p.algorithm).color(theme::TEXT_DIM));
-            ui.label(RichText::new(&p.fingerprint).monospace().color(theme::TEAL));
+            ui.label(RichText::new(&p.algorithm).color(theme::text_dim()));
+            ui.label(RichText::new(&p.fingerprint).monospace().color(theme::teal()));
             if let Some(prev) = &p.previous {
-                ui.label(RichText::new(format!("vorher: {prev}")).monospace().size(11.5).color(theme::RED));
+                ui.label(RichText::new(format!("vorher: {prev}")).monospace().size(11.5).color(theme::red()));
             }
         });
         ui.add_space(8.0);
@@ -82,12 +82,12 @@ fn password(app: &mut App, ctx: &egui::Context) {
     egui::Modal::new(egui::Id::new("password")).show(ctx, |ui| {
         ui.set_width(400.0);
         ui.horizontal(|ui| {
-            theme::avatar(ui, 40.0, theme::TEAL, "🔒");
+            theme::avatar(ui, 40.0, theme::teal(), "🔒");
             ui.vertical(|ui| {
                 ui.label(RichText::new("Passwort").size(18.0).strong());
                 ui.label(
                     RichText::new(format!("{user}@{}:{}", pp.host.hostname, pp.host.port))
-                        .color(theme::TEXT_DIM),
+                        .color(theme::text_dim()),
                 );
             });
         });
@@ -154,7 +154,7 @@ fn snippet_vars(app: &mut App, ctx: &egui::Context) {
                 .size(18.0)
                 .strong(),
         );
-        ui.label(RichText::new("Werte für die Platzhalter eingeben").color(theme::TEXT_DIM));
+        ui.label(RichText::new("Werte für die Platzhalter eingeben").color(theme::text_dim()));
         ui.add_space(6.0);
         egui::Grid::new("vars")
             .num_columns(2)
@@ -164,7 +164,7 @@ fn snippet_vars(app: &mut App, ctx: &egui::Context) {
                     ui.label(
                         RichText::new(format!("{{{{{name}}}}}"))
                             .monospace()
-                            .color(theme::VIOLET),
+                            .color(theme::violet()),
                     );
                     let r = ui.add(egui::TextEdit::singleline(value).desired_width(260.0));
                     if i == 0 && !ui.memory(|m| m.focused().is_some()) {
@@ -179,12 +179,12 @@ fn snippet_vars(app: &mut App, ctx: &egui::Context) {
         let values = run.values.iter().cloned().collect();
         let preview = run.snippet.render(&values);
         egui::Frame::NONE
-            .fill(theme::BG_DEEP)
+            .fill(theme::bg_deep())
             .corner_radius(egui::CornerRadius::same(8))
             .inner_margin(egui::Margin::same(10))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.label(RichText::new(preview).monospace().color(theme::TEAL));
+                ui.label(RichText::new(preview).monospace().color(theme::teal()));
             });
         ui.add_space(Vec2::splat(4.0).y);
         ui.horizontal(|ui| {
@@ -228,14 +228,14 @@ fn confirm(app: &mut App, ctx: &egui::Context) {
     egui::Modal::new(egui::Id::new("confirm")).show(ctx, |ui| {
         ui.set_width(380.0);
         ui.label(RichText::new("Bist du sicher?").size(18.0).strong());
-        ui.label(RichText::new(text).color(theme::TEXT_DIM));
+        ui.label(RichText::new(text).color(theme::text_dim()));
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .add(
-                        egui::Button::new(RichText::new("Löschen").color(theme::BG_DEEP))
-                            .fill(theme::RED),
+                        egui::Button::new(RichText::new("Löschen").color(theme::bg_deep()))
+                            .fill(theme::red()),
                     )
                     .clicked()
                 {

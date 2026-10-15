@@ -30,13 +30,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
 
     // Quick connect bar
     egui::Frame::NONE
-        .fill(theme::BG_CARD)
-        .stroke(Stroke::new(1.0, theme::BORDER))
+        .fill(theme::bg_card())
+        .stroke(Stroke::new(1.0, theme::border()))
         .corner_radius(CornerRadius::same(12))
         .inner_margin(Margin::symmetric(14, 8))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("⚡").color(theme::TEAL).size(16.0));
+                ui.label(RichText::new("⚡").color(theme::teal()).size(16.0));
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut app.quick_connect)
                         .hint_text("Quick Connect — user@host:port")
@@ -117,11 +117,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     ui.label(
                         RichText::new("Noch keine Hosts")
                             .size(18.0)
-                            .color(theme::TEXT_DIM),
+                            .color(theme::text_dim()),
                     );
                     ui.label(
                         RichText::new("Lege deinen ersten Host an oder nutze Quick Connect.")
-                            .color(theme::TEXT_DIM),
+                            .color(theme::text_dim()),
                     );
                 });
             }
@@ -207,7 +207,7 @@ fn group_tree(
             let color = theme::rgb(g.color);
             let header = ui.horizontal(|ui| {
                 let chevron = if g.collapsed { "⏵" } else { "⏷" };
-                ui.label(RichText::new(chevron).size(10.0).color(theme::TEXT_DIM));
+                ui.label(RichText::new(chevron).size(10.0).color(theme::text_dim()));
                 let (dot, _) = ui.allocate_exact_size(Vec2::new(4.0, 18.0), egui::Sense::hover());
                 ui.painter().rect_filled(dot, CornerRadius::same(2), color);
                 ui.label(
@@ -239,7 +239,7 @@ fn group_tree(
                     ui.close();
                 }
                 if ui
-                    .button(RichText::new("🗑 Löschen").color(theme::RED))
+                    .button(RichText::new("🗑 Löschen").color(theme::red()))
                     .clicked()
                 {
                     actions.push(Action::Confirm(
@@ -317,16 +317,16 @@ fn host_card(app: &App, ui: &mut egui::Ui, h: &Host, width: f32, actions: &mut V
         rect,
         CornerRadius::same(12),
         if hovered {
-            theme::BG_HOVER
+            theme::bg_hover()
         } else {
-            theme::BG_CARD
+            theme::bg_card()
         },
         Stroke::new(
             1.0,
             if hovered {
                 color.linear_multiply(0.7)
             } else {
-                theme::BORDER
+                theme::border()
             },
         ),
         egui::StrokeKind::Inside,
@@ -346,13 +346,13 @@ fn host_card(app: &App, ui: &mut egui::Ui, h: &Host, width: f32, actions: &mut V
                 egui::Label::new(RichText::new(h.display_name()).strong().size(14.5)).truncate(),
             );
             if h.favorite {
-                ui.label(RichText::new("★").color(theme::AMBER).size(12.0));
+                ui.label(RichText::new("★").color(theme::amber()).size(12.0));
             }
         });
         ui.add(
             egui::Label::new(
                 RichText::new(h.subtitle())
-                    .color(theme::TEXT_DIM)
+                    .color(theme::text_dim())
                     .size(12.0),
             )
             .truncate(),
@@ -360,9 +360,9 @@ fn host_card(app: &App, ui: &mut egui::Ui, h: &Host, width: f32, actions: &mut V
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             let pc = match h.protocol {
-                Protocol::Ssh => theme::TEAL,
+                Protocol::Ssh => theme::teal(),
                 Protocol::Rdp => Color32::from_rgb(56, 189, 248),
-                Protocol::Serial => theme::AMBER,
+                Protocol::Serial => theme::amber(),
             };
             theme::chip(ui, h.protocol.label(), pc);
             for t in h.tags.iter().take(2) {
@@ -372,7 +372,7 @@ fn host_card(app: &App, ui: &mut egui::Ui, h: &Host, width: f32, actions: &mut V
                 ui.label(
                     RichText::new(relative_time(t))
                         .size(10.5)
-                        .color(theme::TEXT_DIM),
+                        .color(theme::text_dim()),
                 );
             }
         });
@@ -394,7 +394,7 @@ fn host_card(app: &App, ui: &mut egui::Ui, h: &Host, width: f32, actions: &mut V
                 if b.hovered() {
                     color.linear_multiply(0.35)
                 } else {
-                    theme::BG_DEEP
+                    theme::bg_deep()
                 },
             );
             ui.painter().text(
@@ -402,7 +402,7 @@ fn host_card(app: &App, ui: &mut egui::Ui, h: &Host, width: f32, actions: &mut V
                 egui::Align2::CENTER_CENTER,
                 glyph,
                 egui::FontId::proportional(13.0),
-                theme::TEXT,
+                theme::text(),
             );
             if b.on_hover_text(tip).clicked() {
                 actions.push(action);
@@ -462,7 +462,7 @@ fn host_card(app: &App, ui: &mut egui::Ui, h: &Host, width: f32, actions: &mut V
         });
         ui.separator();
         if ui
-            .button(RichText::new("🗑 Löschen").color(theme::RED))
+            .button(RichText::new("🗑 Löschen").color(theme::red()))
             .clicked()
         {
             actions.push(Action::Confirm(
