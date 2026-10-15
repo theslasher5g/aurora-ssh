@@ -13,8 +13,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         "Snippets",
         count,
         &mut app.snippet_search,
-        "Suchen",
-        "Neu",
+        t!("Suchen"),
+        t!("Neu"),
     ) {
         actions.push(Action::NewSnippet);
     }
@@ -44,9 +44,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         if count == 0 {
             if empty_list(
                 ui,
-                "Noch keine Snippets",
-                "Speichere Befehle, die du oft brauchst. Platzhalter wie {{dienst}} fragt Aurora beim Ausführen ab.",
-                "Snippet anlegen",
+                t!("Noch keine Snippets"),
+                t!("Speichere Befehle, die du oft brauchst. Platzhalter wie {{dienst}} fragt Aurora beim Ausführen ab."),
+                t!("Snippet anlegen"),
             ) {
                 actions.push(Action::NewSnippet);
             }
@@ -55,9 +55,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         if list.is_empty() {
             if empty_list(
                 ui,
-                "Kein Snippet gefunden",
-                "Leg eins an – oder markiere Text im Terminal und wähle „Als Snippet speichern“.",
-                "Snippet anlegen",
+                t!("Kein Snippet gefunden"),
+                t!("Leg eins an – oder markiere Text im Terminal und wähle „Als Snippet speichern“."),
+                t!("Snippet anlegen"),
             ) {
                 actions.push(Action::NewSnippet);
             }
@@ -98,13 +98,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 theme::text_dim(),
             );
             if hovered {
-                let labels = ["Ausführen", "In allen", "Bearbeiten", "Löschen"];
+                let labels = [t!("Ausführen"), t!("In allen"), t!("Bearbeiten"), t!("Löschen")];
                 match row_buttons(ui, rect, s.id, &labels) {
                     Some(0) => actions.push(Action::RunSnippet(s.id, false)),
                     Some(1) => actions.push(Action::RunSnippet(s.id, true)),
                     Some(2) => actions.push(Action::EditSnippet(s.id)),
                     Some(3) => actions.push(Action::Confirm(
-                        format!("Snippet „{}“ löschen?", s.name),
+                        t!("Snippet „{}“ löschen?", s.name),
                         Box::new(Action::DeleteSnippet(s.id)),
                     )),
                     _ => {}

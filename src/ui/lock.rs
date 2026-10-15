@@ -25,13 +25,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 ui.label(RichText::new("aurora").font(theme::mono_medium(17.0)).color(theme::text()));
             });
             ui.add_space(40.0);
-            ui.label(theme::heading(if first_run { "Tresor anlegen" } else { "Willkommen zurück" }, 30.0));
+            ui.label(theme::heading(if first_run { t!("Tresor anlegen") } else { t!("Willkommen zurück") }, 30.0));
             ui.add_space(2.0);
             ui.label(
                 RichText::new(if first_run {
-                    "Ein Master-Passwort verschlüsselt Passwörter und Schlüssel. Es lässt sich nicht wiederherstellen."
+                    t!("Ein Master-Passwort verschlüsselt Passwörter und Schlüssel. Es lässt sich nicht wiederherstellen.")
                 } else {
-                    "Master-Passwort eingeben, um den Tresor zu öffnen."
+                    t!("Master-Passwort eingeben, um den Tresor zu öffnen.")
                 })
                 .color(theme::text_dim()),
             );
@@ -46,14 +46,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         .desired_width(f32::INFINITY),
                 )
             };
-            let pw = field(ui, &mut app.lock.password, "Master-Passwort");
+            let pw = field(ui, &mut app.lock.password, t!("Master-Passwort"));
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
             let mut submit = enter && pw.lost_focus();
             if !submit && !ui.memory(|m| m.focused().is_some()) {
                 pw.request_focus();
             }
             if first_run {
-                let c = field(ui, &mut app.lock.confirm, "Wiederholen");
+                let c = field(ui, &mut app.lock.confirm, t!("Wiederholen"));
                 submit = enter && c.lost_focus();
                 if enter && pw.lost_focus() {
                     c.request_focus();
@@ -64,7 +64,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 ui.label(RichText::new(e).color(theme::red()).size(13.0));
             }
             ui.add_space(10.0);
-            let label = if first_run { "Tresor anlegen" } else { "Entsperren" };
+            let label = if first_run { t!("Tresor anlegen") } else { t!("Entsperren") };
             if theme::primary_button(ui, label).clicked() {
                 submit = true;
             }
@@ -124,11 +124,11 @@ fn unlock(app: &mut App, first_run: bool) {
     let pw = app.lock.password.clone();
     if first_run {
         if pw.chars().count() < 8 {
-            app.lock.error = Some("Mindestens 8 Zeichen.".into());
+            app.lock.error = Some(t!("Mindestens 8 Zeichen.").into());
             return;
         }
         if pw != app.lock.confirm {
-            app.lock.error = Some("Passwörter stimmen nicht überein.".into());
+            app.lock.error = Some(t!("Passwörter stimmen nicht überein.").into());
             return;
         }
         match app.store.create_vault(&pw) {

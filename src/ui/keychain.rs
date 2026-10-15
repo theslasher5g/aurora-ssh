@@ -10,11 +10,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     let count = app.keychain.identities.len();
     if page_header(
         ui,
-        "Schlüssel",
+        t!("Schlüssel"),
         count,
         &mut app.keychain_search,
-        "Suchen",
-        "Neu",
+        t!("Suchen"),
+        t!("Neu"),
     ) {
         actions.push(Action::NewIdentity);
     }
@@ -31,9 +31,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         if count == 0 {
             if empty_list(
                 ui,
-                "Noch keine Schlüssel",
-                "Speichere Passwörter und SSH-Keys einmal und verwende sie für beliebig viele Hosts.",
-                "Schlüssel anlegen",
+                t!("Noch keine Schlüssel"),
+                t!("Speichere Passwörter und SSH-Keys einmal und verwende sie für beliebig viele Hosts."),
+                t!("Schlüssel anlegen"),
             ) {
                 actions.push(Action::NewIdentity);
             }
@@ -61,7 +61,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 (true, true) => "USER",
             };
             p.text(Pos2::new(rect.left() + 12.0, cy), egui::Align2::LEFT_CENTER, kind, FontId::monospace(10.5), theme::accent());
-            let title = if ident.label.is_empty() { "(ohne Namen)" } else { &ident.label };
+            let title = if ident.label.is_empty() { t!("(ohne Namen)") } else { &ident.label };
             p.text(Pos2::new(rect.left() + 84.0, cy - 8.0), egui::Align2::LEFT_CENTER, title, theme::semibold(14.0), theme::text());
             p.text(
                 Pos2::new(rect.left() + 84.0, cy + 10.0),
@@ -70,31 +70,33 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 FontId::monospace(12.0),
                 theme::text_dim(),
             );
-            let mut labels = vec!["Bearbeiten", "Löschen"];
+            // Matched by the German key, displayed translated.
+            let mut keys = vec!["Bearbeiten", "Löschen"];
             if !ident.private_key.is_empty() {
-                labels.insert(0, "Public Key kopieren");
+                keys.insert(0, "Public Key kopieren");
             }
+            let labels: Vec<&str> = keys.iter().map(|k| crate::i18n::tr(k)).collect();
             if hovered {
-                match row_buttons(ui, rect, ident.id, &labels).map(|i| labels[i]) {
+                match row_buttons(ui, rect, ident.id, &labels).map(|i| keys[i]) {
                     Some("Public Key kopieren") => match crate::keygen::public_info(&ident.private_key, &ident.passphrase) {
                         Ok((pubkey, _)) => {
                             ui.ctx().copy_text(pubkey);
-                            app.toast("Public Key kopiert", theme::accent());
+                            app.toast(t!("Public Key kopiert"), theme::accent());
                         }
-                        Err(e) => app.toast(format!("Key ungültig: {e}"), theme::red()),
+                        Err(e) => app.toast(t!("Key ungültig: {}", e), theme::red()),
                     },
                     Some("Bearbeiten") => actions.push(Action::EditIdentity(ident.id)),
                     Some("Löschen") => actions.push(Action::Confirm(
-                        format!("Schlüssel „{}“ löschen?", ident.label),
+                        t!("Schlüssel „{}“ löschen?", ident.label),
                         Box::new(Action::DeleteIdentity(ident.id)),
                     )),
                     _ => {}
                 }
             } else {
                 let usage = match used_by {
-                    0 => "nicht verwendet".to_string(),
-                    1 => "1 Host".to_string(),
-                    n => format!("{n} Hosts"),
+                    0 => t!("nicht verwendet").to_string(),
+                    1 => t!("1 Host").to_string(),
+                    n => t!("{} Hosts", n),
                 };
                 p.text(rect.right_center() - Vec2::new(14.0, 0.0), egui::Align2::RIGHT_CENTER, usage, FontId::monospace(11.5), theme::text_dim());
             }

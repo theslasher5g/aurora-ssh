@@ -1,3 +1,110 @@
 //! English texts for the German source strings (see `super::tr`).
 
-pub const T: &[(&str, &str)] = &[];
+pub const T: &[(&str, &str)] = &[
+    // ui/sftp.rs
+    ("Verbinde…", "Connecting…"),
+    ("Lokal", "Local"),
+    ("Öffnen fehlgeschlagen: {}", "Opening failed: {}"),
+    ("Übertragung fehlgeschlagen: {}", "Transfer failed: {}"),
+    ("{} übertragen", "{} transferred"),
+    (
+        "Beide Seiten sind lokal – wähle links oder rechts einen Server.",
+        "Both sides are local – choose a server on the left or right.",
+    ),
+    (
+        "Bitte zuerst ein Laufwerk öffnen.",
+        "Please open a drive first.",
+    ),
+    (
+        "Beide Server müssen verbunden sein.",
+        "Both servers must be connected.",
+    ),
+    ("Neu verbinden", "Reconnect"),
+    ("Lokal → {}", "Local → {}"),
+    (
+        "Zum Hochladen zuerst einen Server verbinden",
+        "Connect a server first to upload",
+    ),
+    ("Unsicherer Dateiname", "Unsafe file name"),
+    (
+        "Datei ist schon im Editor offen",
+        "File is already open in the editor",
+    ),
+    ("Temp-Ordner: {}", "Temp folder: {}"),
+    ("{} (gespeichert)", "{} (saved)"),
+    ("Übertragungen", "Transfers"),
+    ("aufräumen", "clear"),
+    ("wird geladen…", "loading…"),
+    (
+        "im Editor offen – Speichern lädt automatisch hoch",
+        "open in editor – saving uploads automatically",
+    ),
+    ("{}× gespeichert und hochgeladen", "saved and uploaded {}×"),
+    ("fertig", "done"),
+    (
+        "Doppelklick auf eine Server-Datei öffnet sie im Editor (Speichern lädt hoch). Kopieren-Button überträgt auf die andere Seite, auch Server ⇄ Server.",
+        "Double-click a server file to open it in the editor (saving uploads it). The copy button transfers to the other side, server ⇄ server too.",
+    ),
+    ("Kopieren →", "Copy →"),
+    ("← Kopieren", "← Copy"),
+    ("+ Ordner", "+ Folder"),
+    ("Umbenennen", "Rename"),
+    ("Löschen", "Delete"),
+    ("Übergeordneter Ordner", "Parent folder"),
+    ("Aktualisieren", "Refresh"),
+    ("/pfad oder C:\\pfad", "/path or C:\\path"),
+    ("Pfad", "Path"),
+    ("Leerer Ordner", "Empty folder"),
+    ("Bearbeiten (eigener Editor)", "Edit (own editor)"),
+    ("Öffnen", "Open"),
+    ("Neuer Ordner", "New folder"),
+    ("„{}“ umbenennen", "Rename “{}”"),
+    ("Löschen?", "Delete?"),
+    (
+        "Ordner „{}“ inklusive Inhalt löschen?",
+        "Delete folder “{}” including its contents?",
+    ),
+    ("Datei „{}“ löschen?", "Delete file “{}”?"),
+    ("Abbrechen", "Cancel"),
+    ("Dateien", "Files"),
+    ("Neue Ansicht", "New view"),
+    (
+        "Jede Seite kann lokal oder ein Server sein. Server ⇄ Server wird über Aurora gestreamt – die Server müssen sich dafür nicht gegenseitig erreichen. Windows-Server mit OpenSSH funktionieren ebenfalls.",
+        "Each side can be local or a server. Server ⇄ server is streamed through Aurora – the servers don't need to reach each other. Windows servers with OpenSSH work too.",
+    ),
+    ("Offen", "Open"),
+    ("{} aktiv", "{} active"),
+    (
+        "Noch keine Server. Leg einen SSH-Host an – Windows-Server mit OpenSSH gehen auch.",
+        "No servers yet. Add an SSH host – Windows servers with OpenSSH work too.",
+    ),
+    ("SSH-Host anlegen", "Add SSH host"),
+    ("Lokal ⇄ öffnen", "Open local ⇄"),
+    // ui/rdp.rs
+    ("RDP · TLS-Zertifikat", "RDP · TLS certificate"),
+    (
+        "Zwischenablage vom Host übernommen",
+        "Clipboard taken from host",
+    ),
+    ("Im System-RDP-Client öffnen", "Open in system RDP client"),
+    ("Windows-Taste", "Windows key"),
+    (
+        "Zwischenablage als Tastatureingabe tippen",
+        "Type clipboard as keyboard input",
+    ),
+    (
+        "Lokale Zwischenablage an den Host senden",
+        "Send local clipboard to host",
+    ),
+    ("Zwischenablage an Host gesendet", "Clipboard sent to host"),
+    ("Lokale Zwischenablage ist leer", "Local clipboard is empty"),
+    (
+        "Zwischenablage vom Host kopieren",
+        "Copy clipboard from host",
+    ),
+    (
+        "Sicherheitsbildschirm / Anmeldung",
+        "Security screen / sign-in",
+    ),
+    ("Getrennt", "Disconnected"),
+];
