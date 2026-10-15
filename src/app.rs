@@ -765,14 +765,135 @@ impl App {
                 }
             }
             SplitOp::Clear => self.split.clear(),
+            SplitOp::Close(id) => self.close_tab(id),
         }
         if self.split.len() < 2 {
             self.split.clear();
         }
     }
 
+    /// A session tile dragged out of the rail: preview where it lands, place it on release.
+    fn drag_drop(&mut self, ctx: &egui::Context, central: egui::Rect, split_view: bool) {
+        use crate::ui::chrome;
+        let Some(dragged) = chrome::dragged_tab(ctx) else {
+            return;
+        };
+        let Some(tab) = self.tabs.iter().find(|t| t.id == dragged) else {
+            chrome::end_drag(ctx);
+            return;
+        };
+        let (pos, released, cancel) = ctx.input(|i| {
+            (
+                i.pointer.latest_pos(),
+                !i.pointer.primary_down(),
+                i.key_pressed(egui::Key::Escape),
+            )
+        });
+        let shown: Vec<u64> = if split_view {
+            self.split.clone()
+        } else {
+            self.active.into_iter().collect()
+        };
+        let order = pos.and_then(|p| chrome::drop_order(central, &shown, dragged, p));
+
+        if released || cancel {
+            chrome::end_drag(ctx);
+            if let (Some(order), false) = (order, cancel) {
+                if order.len() >= 2 {
+                    self.split = order;
+                }
+                self.active = Some(dragged);
+            }
+            return;
+        }
+
+        ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("aurora-drop-preview"),
+        ));
+        if let Some(order) = &order {
+            // Show the resulting layout: the new slot highlighted, the others outlined.
+            let rects = chrome::split_rects(central, order.len());
+            painter.rect_filled(
+                central,
+                CornerRadius::ZERO,
+                theme::bg_deep().gamma_multiply(0.55),
+            );
+            for (id, r) in order.iter().zip(&rects) {
+                let r = r.shrink(6.0);
+                if *id == dragged {
+                    painter.rect(
+                        r,
+                        CornerRadius::same(10),
+                        theme::accent().gamma_multiply(0.16),
+                        Stroke::new(2.0, theme::accent()),
+                        egui::StrokeKind::Inside,
+                    );
+                    painter.text(
+                        r.center() - egui::vec2(0.0, 10.0),
+                        egui::Align2::CENTER_CENTER,
+                        &tab.title,
+                        theme::mono_medium(15.0),
+                        theme::accent(),
+                    );
+                    painter.text(
+                        r.center() + egui::vec2(0.0, 12.0),
+                        egui::Align2::CENTER_CENTER,
+                        "hier ablegen",
+                        egui::FontId::proportional(12.5),
+                        theme::text_dim(),
+                    );
+                } else {
+                    let title = self
+                        .tabs
+                        .iter()
+                        .find(|t| t.id == *id)
+                        .map(|t| t.title.as_str())
+                        .unwrap_or_default();
+                    painter.rect_stroke(
+                        r,
+                        CornerRadius::same(10),
+                        Stroke::new(1.0, theme::border()),
+                        egui::StrokeKind::Inside,
+                    );
+                    painter.text(
+                        r.center(),
+                        egui::Align2::CENTER_CENTER,
+                        title,
+                        egui::FontId::monospace(13.0),
+                        theme::text_dim(),
+                    );
+                }
+            }
+        }
+        if let Some(p) = pos {
+            // Ghost tile under the pointer.
+            let r =
+                egui::Rect::from_center_size(p + egui::vec2(18.0, 18.0), egui::vec2(36.0, 36.0));
+            painter.rect(
+                r,
+                CornerRadius::same(8),
+                theme::bg_card(),
+                Stroke::new(1.5, theme::accent()),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                r.center(),
+                egui::Align2::CENTER_CENTER,
+                crate::ui::chrome::initials(&tab.title),
+                theme::mono_medium(12.0),
+                theme::text(),
+            );
+        }
+        ctx.request_repaint();
+    }
+
     pub fn close_tab(&mut self, id: u64) {
+        let was_split = self.split.contains(&id);
         self.split.retain(|s| *s != id);
+        // Closing a pane keeps the focus inside the split.
+        let partner = self.split.first().copied().filter(|_| was_split);
         if self.split.len() < 2 {
             self.split.clear();
         }
@@ -796,6 +917,9 @@ impl App {
                     .map(|t| t.id);
                 if self.tabs.is_empty() {
                     self.active = None;
+                }
+                if partner.is_some() {
+                    self.active = partner;
                 }
             }
         }
@@ -1583,6 +1707,7 @@ impl eframe::App for App {
         let mut actions = Vec::new();
         self.shortcuts(&ctx, &mut actions);
         crate::ui::chrome::rail(self, ui, &mut actions);
+        let central = ui.available_rect_before_wrap();
 
         ctx.data_mut(|d| {
             d.insert_temp(
@@ -1649,6 +1774,8 @@ impl eframe::App for App {
                     });
             }
         }
+
+        self.drag_drop(&ctx, central, split_view);
 
         if let Some(op) = ctx.data_mut(|d| {
             let id = crate::ui::chrome::split_op_id();

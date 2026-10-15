@@ -687,7 +687,11 @@ fn pane_ui(
                 let is_dir = pane.entries.iter().any(|e| &e.name == s && e.is_dir);
                 *action = Some(PaneAction::Delete(s.clone(), is_dir));
             }
-            let color = if sel.is_some() { accent } else { theme::text_dim() };
+            let color = if sel.is_some() {
+                accent
+            } else {
+                theme::text_dim()
+            };
             if ui
                 .add(
                     egui::Button::new(RichText::new(transfer_label).size(12.5).color(color))
@@ -703,7 +707,11 @@ fn pane_ui(
     ui.horizontal(|ui| {
         egui::ComboBox::from_id_salt(("pane-src", tab_id, idx))
             .selected_text(RichText::new(pane.label()).font(theme::semibold(13.5)))
-            .width(if narrow { ui.available_width() - 8.0 } else { 200.0 })
+            .width(if narrow {
+                ui.available_width() - 8.0
+            } else {
+                200.0
+            })
             .show_ui(ui, |ui| {
                 if ui.selectable_label(!is_remote, "Lokal").clicked() && is_remote {
                     action = Some(PaneAction::Source(None));

@@ -22,7 +22,7 @@ Unter [Releases](../../releases) liegen Windows und Linux im selben Release:
 |---|---|
 | **SSH** | Eigener Terminal-Emulator (256 Farben/Truecolor, Scrollback, Auswahl, Bracketed Paste, Resize), Key/Passwort/Keyboard-Interactive, Keepalive, Reconnect per Enter |
 | **Dateien (SFTP)** | Eigener Bereich in der Leiste. Zwei Spalten, jede Seite **lokal oder ein beliebiger Server** – auch **Server ⇄ Server** (wird über Aurora gestreamt, die Server müssen sich nicht gegenseitig erreichen). Windows-Server mit OpenSSH (`C:\pfad` wird übersetzt, Laufwerksliste lokal), RDP-Hosts bekommen ihren SFTP-Port. Rekursive Transfers mit Fortschritt, Drag & Drop |
-| **Splitscreen** | Bis zu **4 Sessions nebeneinander** (Terminal, Dateien, RDP gemischt) – über das ◫-Symbol im Session-Kopf oder Rechtsklick auf einen Port |
+| **Splitscreen** | Bis zu **4 Sessions nebeneinander** (Terminal, Dateien, RDP gemischt) – Port aus der Leiste ins Fenster ziehen (Vorschau zeigt den Platz), ◫-Symbol im Session-Kopf oder Rechtsklick; × im Kopf beendet die Session, ⊠ löst sie nur aus dem Split |
 | **RDP** | Direkt im Tab (IronRDP): passt sich der Fenstergröße an, **Zwischenablage in beide Richtungen** (automatisch + Buttons „vom Host kopieren"/„an Host senden"), **Ctrl+Alt+Del**, Windows-Taste, Zwischenablage als Tastatureingabe tippen (für Login-Masken/Konsolen). Optional im System-Client (mstsc, FreeRDP, Remmina) |
 | **Serial** | Port-Erkennung, Baudrate, Format, Flusskontrolle, Zeilenende, lokales Echo |
 | **Keychain** | Passwörter & SSH-Keys, Ed25519-Generator, verschlüsselt mit Argon2id + XChaCha20-Poly1305 |
