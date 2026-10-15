@@ -21,11 +21,11 @@ fn footer(ui: &mut egui::Ui, can_save: bool) -> (bool, bool) {
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_enabled_ui(can_save, |ui| {
-                if theme::primary_button(ui, "Speichern").clicked() {
+                if theme::primary_button(ui, t!("Speichern")).clicked() {
                     out.0 = true;
                 }
             });
-            if ui.button("Abbrechen").clicked() {
+            if ui.button(t!("Abbrechen")).clicked() {
                 out.1 = true;
             }
         });
@@ -52,7 +52,7 @@ fn color_row(ui: &mut egui::Ui, color: &mut Option<[u8; 3]>, allow_none: bool) {
                     egui::Stroke::new(2.0, theme::text()),
                 );
             }
-            if resp.on_hover_text("Gruppenfarbe verwenden").clicked() {
+            if resp.on_hover_text(t!("Gruppenfarbe verwenden")).clicked() {
                 *color = None;
             }
         }
@@ -107,12 +107,12 @@ fn group_combo(
     let selected = value
         .and_then(|v| groups.iter().find(|g| g.id == v))
         .map(|g| format!("{} {}", g.icon, g.name))
-        .unwrap_or_else(|| "— Keine —".into());
+        .unwrap_or_else(|| t!("— Keine —").to_string());
     egui::ComboBox::from_id_salt(id)
         .selected_text(selected)
         .width(260.0)
         .show_ui(ui, |ui| {
-            ui.selectable_value(value, None, "— Keine —");
+            ui.selectable_value(value, None, t!("— Keine —"));
             for g in groups {
                 if exclude.is_some_and(|ex| lib.is_descendant(g.id, ex)) {
                     continue;
@@ -172,9 +172,9 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         modal_header(
             ui,
             if ed.is_new {
-                "Neuer Host"
+                t!("Neuer Host")
             } else {
-                "Host bearbeiten"
+                t!("Host bearbeiten")
             },
         );
         let h = &mut ed.host;
@@ -203,40 +203,40 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                     .num_columns(2)
                     .spacing([16.0, 10.0])
                     .show(ui, |ui| {
-                        ui.label("Name");
-                        ui.add(egui::TextEdit::singleline(&mut h.label).hint_text("z.B. web-01"));
+                        ui.label(t!("Name"));
+                        ui.add(egui::TextEdit::singleline(&mut h.label).hint_text(t!("z.B. web-01")));
                         ui.end_row();
 
                         if h.protocol != Protocol::Serial {
-                            ui.label("Adresse");
+                            ui.label(t!("Adresse"));
                             ui.horizontal(|ui| {
                                 ui.add(
                                     egui::TextEdit::singleline(&mut h.hostname)
-                                        .hint_text("host oder IP")
+                                        .hint_text(t!("host oder IP"))
                                         .desired_width(190.0),
                                 );
                                 ui.label(":");
                                 ui.add(egui::DragValue::new(&mut h.port).range(1..=65535));
                             });
                             ui.end_row();
-                            ui.label("Benutzer");
+                            ui.label(t!("Benutzer"));
                             ui.add(
                                 egui::TextEdit::singleline(&mut h.username)
-                                    .hint_text("leer = Identität/Gruppe"),
+                                    .hint_text(t!("leer = Identität/Gruppe")),
                             );
                             ui.end_row();
-                            ui.label("Identität");
+                            ui.label(t!("Identität"));
                             ui.horizontal(|ui| {
                                 identity_combo(
                                     ui,
                                     "host-ident",
                                     &mut h.identity_id,
                                     &idents,
-                                    "— Passwort abfragen —",
+                                    t!("— Passwort abfragen —"),
                                 );
                                 if ui
                                     .small_button("➕")
-                                    .on_hover_text("Neue Identität")
+                                    .on_hover_text(t!("Neue Identität"))
                                     .clicked()
                                 {
                                     new_identity = true;
@@ -245,10 +245,10 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                             ui.end_row();
                         }
 
-                        ui.label("Gruppe");
+                        ui.label(t!("Gruppe"));
                         group_combo(ui, "host-group", &mut h.group_id, &groups, None, &app.lib);
                         ui.end_row();
-                        ui.label("Farbe");
+                        ui.label(t!("Farbe"));
                         color_row(ui, &mut h.color, true);
                         ui.end_row();
                         ui.label("Tags");
@@ -257,23 +257,23 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                 .hint_text("prod, nginx, …"),
                         );
                         ui.end_row();
-                        ui.label("Umgebung");
-                        env_picker(ui, &mut h.env, "von der Gruppe");
+                        ui.label(t!("Umgebung"));
+                        env_picker(ui, &mut h.env, t!("von der Gruppe"));
                         ui.end_row();
-                        ui.label("Favorit");
-                        ui.checkbox(&mut h.favorite, "★ in Favoriten anzeigen");
+                        ui.label(t!("Favorit"));
+                        ui.checkbox(&mut h.favorite, t!("★ in Favoriten anzeigen"));
                         ui.end_row();
                     });
 
                 match h.protocol {
                     Protocol::Ssh => {
                         ui.add_space(8.0);
-                        theme::section_title(ui, "Beim Verbinden");
+                        theme::section_title(ui, t!("Beim Verbinden"));
                         let sel = h
                             .startup_snippet
                             .and_then(|id| snippets.iter().find(|(i, _)| *i == id))
                             .map(|(_, n)| n.clone())
-                            .unwrap_or_else(|| "— kein Startup-Snippet —".into());
+                            .unwrap_or_else(|| t!("— kein Startup-Snippet —").to_string());
                         egui::ComboBox::from_id_salt("startup")
                             .selected_text(sel)
                             .width(300.0)
@@ -281,7 +281,7 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                 ui.selectable_value(
                                     &mut h.startup_snippet,
                                     None,
-                                    "— kein Startup-Snippet —",
+                                    t!("— kein Startup-Snippet —"),
                                 );
                                 for (id, n) in &snippets {
                                     ui.selectable_value(&mut h.startup_snippet, Some(*id), n);
@@ -289,32 +289,32 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                             });
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
-                            ui.label("Verbinden über");
+                            ui.label(t!("Verbinden über"));
                             let me = h.id;
                             let sel = h
                                 .jump_host
                                 .and_then(|id| ssh_hosts.iter().find(|(i, _)| *i == id))
                                 .map(|(_, n)| n.clone())
-                                .unwrap_or_else(|| "— direkt —".into());
+                                .unwrap_or_else(|| t!("— direkt —").to_string());
                             egui::ComboBox::from_id_salt("jump")
                                 .selected_text(sel)
                                 .width(220.0)
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut h.jump_host, None, "— direkt —");
+                                    ui.selectable_value(&mut h.jump_host, None, t!("— direkt —"));
                                     for (id, n) in ssh_hosts.iter().filter(|(i, _)| *i != me) {
                                         ui.selectable_value(&mut h.jump_host, Some(*id), n);
                                     }
                                 });
                         })
                         .response
-                        .on_hover_text(
+                        .on_hover_text(t!(
                             "Jump-Host: Aurora verbindet sich zuerst mit diesem Server und von dort weiter. \
-                             Der Jump-Host braucht gespeicherte Zugangsdaten (Identität).",
-                        );
+                             Der Jump-Host braucht gespeicherte Zugangsdaten (Identität)."
+                        ));
                         ui.add_space(8.0);
-                        theme::section_title(ui, "Tunnel (Port-Weiterleitung)");
+                        theme::section_title(ui, t!("Tunnel (Port-Weiterleitung)"));
                         ui.label(
-                            RichText::new("localhost:<lokal> → über den Server → Ziel:Port. Ein-/ausschalten in der Hostliste.")
+                            RichText::new(t!("localhost:<lokal> → über den Server → Ziel:Port. Ein-/ausschalten in der Hostliste."))
                                 .size(12.0)
                                 .color(theme::text_dim()),
                         );
@@ -323,10 +323,10 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                             ui.horizontal(|ui| {
                                 ui.add(
                                     egui::TextEdit::singleline(&mut t.name)
-                                        .hint_text("Name")
+                                        .hint_text(t!("Name"))
                                         .desired_width(110.0),
                                 );
-                                ui.label("lokal");
+                                ui.label(t!("lokal"));
                                 ui.add(egui::DragValue::new(&mut t.local_port).range(1..=65535));
                                 ui.label("→");
                                 ui.add(
@@ -337,8 +337,8 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                 ui.label(":");
                                 ui.add(egui::DragValue::new(&mut t.remote_port).range(1..=65535));
                                 ui.checkbox(&mut t.open_browser, "")
-                                    .on_hover_text("Browser öffnen, sobald der Tunnel steht");
-                                if ui.small_button("×").on_hover_text("Entfernen").clicked() {
+                                    .on_hover_text(t!("Browser öffnen, sobald der Tunnel steht"));
+                                if ui.small_button("×").on_hover_text(t!("Entfernen")).clicked() {
                                     remove = Some(i);
                                 }
                             });
@@ -357,10 +357,10 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                             .num_columns(2)
                             .spacing([16.0, 10.0])
                             .show(ui, |ui| {
-                                ui.label("Domäne");
+                                ui.label(t!("Domäne"));
                                 ui.text_edit_singleline(&mut h.rdp.domain);
                                 ui.end_row();
-                                ui.label("Auflösung");
+                                ui.label(t!("Auflösung"));
                                 ui.horizontal(|ui| {
                                     ui.add(
                                         egui::DragValue::new(&mut h.rdp.width).range(640..=7680),
@@ -371,25 +371,25 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                     );
                                 });
                                 ui.end_row();
-                                ui.label("Anzeige");
-                                ui.checkbox(&mut h.rdp.embedded, "In Aurora anzeigen");
+                                ui.label(t!("Anzeige"));
+                                ui.checkbox(&mut h.rdp.embedded, t!("In Aurora anzeigen"));
                                 ui.end_row();
-                                ui.label("Dateien (SFTP)");
+                                ui.label(t!("Dateien (SFTP)"));
                                 ui.horizontal(|ui| {
                                     ui.add(
                                         egui::DragValue::new(&mut h.rdp.sftp_port).range(1..=65535),
                                     );
                                     ui.label(
-                                        egui::RichText::new("OpenSSH-Port des Windows-Hosts")
+                                        egui::RichText::new(t!("OpenSSH-Port des Windows-Hosts"))
                                             .size(12.0)
                                             .color(theme::text_dim()),
                                     );
                                 });
                                 ui.end_row();
-                                ui.label("Optionen");
+                                ui.label(t!("Optionen"));
                                 ui.horizontal(|ui| {
-                                    ui.checkbox(&mut h.rdp.fullscreen, "Vollbild");
-                                    ui.checkbox(&mut h.rdp.clipboard, "Zwischenablage");
+                                    ui.checkbox(&mut h.rdp.fullscreen, t!("Vollbild"));
+                                    ui.checkbox(&mut h.rdp.clipboard, t!("Zwischenablage"));
                                     ui.checkbox(&mut h.rdp.multimon, "Multi-Monitor");
                                 });
                                 ui.end_row();
@@ -397,7 +397,7 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                     }
                     Protocol::Serial => {
                         ui.add_space(8.0);
-                        theme::section_title(ui, "Serielle Schnittstelle");
+                        theme::section_title(ui, t!("Serielle Schnittstelle"));
                         let s = &mut h.serial;
                         egui::Grid::new("serial-grid")
                             .num_columns(2)
@@ -411,11 +411,11 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                             .desired_width(180.0),
                                     );
                                     egui::ComboBox::from_id_salt("ports")
-                                        .selected_text("Erkannt")
+                                        .selected_text(t!("Erkannt"))
                                         .width(90.0)
                                         .show_ui(ui, |ui| {
                                             if ports.is_empty() {
-                                                ui.label("keine gefunden");
+                                                ui.label(t!("keine gefunden"));
                                             }
                                             for p in &ports {
                                                 if ui
@@ -428,7 +428,7 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                         });
                                 });
                                 ui.end_row();
-                                ui.label("Baudrate");
+                                ui.label(t!("Baudrate"));
                                 egui::ComboBox::from_id_salt("baud")
                                     .selected_text(s.baud_rate.to_string())
                                     .show_ui(ui, |ui| {
@@ -443,7 +443,7 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                 ui.label("Format");
                                 ui.horizontal(|ui| {
                                     egui::ComboBox::from_id_salt("bits")
-                                        .selected_text(format!("{} Datenbits", s.data_bits))
+                                        .selected_text(t!("{} Datenbits", s.data_bits))
                                         .show_ui(ui, |ui| {
                                             for b in [5u8, 6, 7, 8] {
                                                 ui.selectable_value(
@@ -469,14 +469,14 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                             );
                                         });
                                     egui::ComboBox::from_id_salt("stop")
-                                        .selected_text(format!("{} Stopbit", s.stop_bits))
+                                        .selected_text(t!("{} Stopbit", s.stop_bits))
                                         .show_ui(ui, |ui| {
                                             ui.selectable_value(&mut s.stop_bits, 1, "1");
                                             ui.selectable_value(&mut s.stop_bits, 2, "2");
                                         });
                                 });
                                 ui.end_row();
-                                ui.label("Flusskontrolle");
+                                ui.label(t!("Flusskontrolle"));
                                 egui::ComboBox::from_id_salt("flow")
                                     .selected_text(format!("{:?}", s.flow_control))
                                     .show_ui(ui, |ui| {
@@ -497,7 +497,7 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                         );
                                     });
                                 ui.end_row();
-                                ui.label("Enter sendet");
+                                ui.label(t!("Enter sendet"));
                                 ui.horizontal(|ui| {
                                     ui.selectable_value(&mut s.line_ending, LineEnding::Cr, "CR");
                                     ui.selectable_value(&mut s.line_ending, LineEnding::Lf, "LF");
@@ -506,14 +506,14 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                         LineEnding::CrLf,
                                         "CR+LF",
                                     );
-                                    ui.checkbox(&mut s.local_echo, "Lokales Echo");
+                                    ui.checkbox(&mut s.local_echo, t!("Lokales Echo"));
                                 });
                                 ui.end_row();
                             });
                     }
                 }
                 ui.add_space(8.0);
-                theme::section_title(ui, "Notizen");
+                theme::section_title(ui, t!("Notizen"));
                 ui.add(
                     egui::TextEdit::multiline(&mut h.notes)
                         .desired_rows(2)
@@ -570,9 +570,9 @@ fn env_picker(ui: &mut egui::Ui, env: &mut crate::model::Env, none: &str) {
         }
     })
     .response
-    .on_hover_text(
-        "PROD-Sessions bekommen einen roten Rahmen und fragen bei gefährlichen Befehlen nach",
-    );
+    .on_hover_text(t!(
+        "PROD-Sessions bekommen einen roten Rahmen und fragen bei gefährlichen Befehlen nach"
+    ));
 }
 
 fn group_editor(app: &mut App, ctx: &egui::Context) {
@@ -592,16 +592,16 @@ fn group_editor(app: &mut App, ctx: &egui::Context) {
         modal_header(
             ui,
             if *is_new {
-                "Neue Gruppe"
+                t!("Neue Gruppe")
             } else {
-                "Gruppe bearbeiten"
+                t!("Gruppe bearbeiten")
             },
         );
         egui::Grid::new("group-grid")
             .num_columns(2)
             .spacing([16.0, 10.0])
             .show(ui, |ui| {
-                ui.label("Name");
+                ui.label(t!("Name"));
                 ui.text_edit_singleline(&mut g.name);
                 ui.end_row();
                 ui.label("Icon");
@@ -614,14 +614,14 @@ fn group_editor(app: &mut App, ctx: &egui::Context) {
                     }
                 });
                 ui.end_row();
-                ui.label("Farbe");
+                ui.label(t!("Farbe"));
                 let mut c = Some(g.color);
                 color_row(ui, &mut c, false);
                 if let Some(c) = c {
                     g.color = c;
                 }
                 ui.end_row();
-                ui.label("Übergeordnet");
+                ui.label(t!("Übergeordnet"));
                 group_combo(
                     ui,
                     "parent",
@@ -631,23 +631,23 @@ fn group_editor(app: &mut App, ctx: &egui::Context) {
                     &app.lib,
                 );
                 ui.end_row();
-                ui.label("Standard-Benutzer");
+                ui.label(t!("Standard-Benutzer"));
                 ui.add(
                     egui::TextEdit::singleline(&mut g.default_username)
-                        .hint_text("für Hosts ohne Benutzer"),
+                        .hint_text(t!("für Hosts ohne Benutzer")),
                 );
                 ui.end_row();
-                ui.label("Standard-Identität");
+                ui.label(t!("Standard-Identität"));
                 identity_combo(
                     ui,
                     "group-ident",
                     &mut g.default_identity,
                     &idents,
-                    "— keine —",
+                    t!("— keine —"),
                 );
                 ui.end_row();
-                ui.label("Umgebung");
-                env_picker(ui, &mut g.env, "keine");
+                ui.label(t!("Umgebung"));
+                env_picker(ui, &mut g.env, t!("keine"));
                 ui.end_row();
             });
         (save, cancel) = footer(ui, !g.name.trim().is_empty());
@@ -674,22 +674,24 @@ fn identity_editor(app: &mut App, ctx: &egui::Context) {
         modal_header(
             ui,
             if *is_new {
-                "Neue Identität"
+                t!("Neue Identität")
             } else {
-                "Identität bearbeiten"
+                t!("Identität bearbeiten")
             },
         );
         egui::Grid::new("ident-grid")
             .num_columns(2)
             .spacing([16.0, 10.0])
             .show(ui, |ui| {
-                ui.label("Bezeichnung");
-                ui.add(egui::TextEdit::singleline(&mut ident.label).hint_text("z.B. Deploy-Key"));
+                ui.label(t!("Bezeichnung"));
+                ui.add(
+                    egui::TextEdit::singleline(&mut ident.label).hint_text(t!("z.B. Deploy-Key")),
+                );
                 ui.end_row();
-                ui.label("Benutzer");
+                ui.label(t!("Benutzer"));
                 ui.text_edit_singleline(&mut ident.username);
                 ui.end_row();
-                ui.label("Passwort");
+                ui.label(t!("Passwort"));
                 ui.add(egui::TextEdit::singleline(&mut ident.password).password(true));
                 ui.end_row();
             });
@@ -701,7 +703,7 @@ fn identity_editor(app: &mut App, ctx: &egui::Context) {
                     .hint_text("~/.ssh/id_ed25519")
                     .desired_width(300.0),
             );
-            if ui.button("🗁 Laden").clicked() {
+            if ui.button(t!("🗁 Laden")).clicked() {
                 let path = if let Some(rest) = key_path.strip_prefix("~/") {
                     directories::UserDirs::new()
                         .map(|d| d.home_dir().join(rest))
@@ -714,7 +716,7 @@ fn identity_editor(app: &mut App, ctx: &egui::Context) {
                     Err(e) => toast = Some((format!("{}: {e}", path.display()), theme::red())),
                 }
             }
-            if ui.button("✨ Ed25519 erzeugen").clicked() {
+            if ui.button(t!("✨ Ed25519 erzeugen")).clicked() {
                 let comment = if ident.label.is_empty() {
                     "aurora".to_string()
                 } else {
@@ -726,7 +728,8 @@ fn identity_editor(app: &mut App, ctx: &egui::Context) {
                         ident.passphrase.clear();
                         ui.ctx().copy_text(public);
                         toast = Some((
-                            "Key erzeugt — Public Key in die Zwischenablage kopiert".into(),
+                            t!("Key erzeugt — Public Key in die Zwischenablage kopiert")
+                                .to_string(),
                             theme::accent(),
                         ));
                     }
@@ -817,19 +820,19 @@ fn snippet_editor(app: &mut App, ctx: &egui::Context) {
         modal_header(
             ui,
             if *is_new {
-                "Neues Snippet"
+                t!("Neues Snippet")
             } else {
-                "Snippet bearbeiten"
+                t!("Snippet bearbeiten")
             },
         );
         egui::Grid::new("snip-grid")
             .num_columns(2)
             .spacing([16.0, 10.0])
             .show(ui, |ui| {
-                ui.label("Name");
+                ui.label(t!("Name"));
                 ui.text_edit_singleline(&mut s.name);
                 ui.end_row();
-                ui.label("Beschreibung");
+                ui.label(t!("Beschreibung"));
                 ui.text_edit_singleline(&mut s.description);
                 ui.end_row();
                 ui.label("Tags");
@@ -848,13 +851,13 @@ fn snippet_editor(app: &mut App, ctx: &egui::Context) {
         let vars = s.variables();
         if !vars.is_empty() {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Variablen:").color(theme::text_dim()));
+                ui.label(RichText::new(t!("Variablen:")).color(theme::text_dim()));
                 for v in vars {
                     theme::chip(ui, &v, theme::accent2());
                 }
             });
         }
-        ui.checkbox(&mut s.auto_run, "Nach dem Einfügen Enter drücken");
+        ui.checkbox(&mut s.auto_run, t!("Nach dem Einfügen Enter drücken"));
         (save, cancel) = footer(ui, !s.name.trim().is_empty() && !s.script.trim().is_empty());
     });
     if cancel {
