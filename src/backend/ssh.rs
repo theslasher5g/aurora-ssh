@@ -1,0 +1,208 @@
+//! SSH connection setup (auth + host key verification) and the interactive shell.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::{Result, anyhow, bail};
+use russh::client::{self, KeyboardInteractiveAuthResponse};
+use russh::keys::PublicKeyOrCertificate;
+use russh::keys::{HashAlg, PrivateKeyWithHashAlg, decode_secret_key};
+use russh::{ChannelMsg, Disconnect};
+use tokio::sync::{mpsc, oneshot};
+
+use super::{HostKeyPrompt, Sink, TermCmd, TermEvent};
+
+/// Everything needed to (re)open an SSH connection.
+#[derive(Clone)]
+pub struct SshParams {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: Option<String>,
+    pub private_key: Option<String>,
+    pub passphrase: Option<String>,
+    /// Previously accepted fingerprint for this `host:port`.
+    pub known_fingerprint: Option<String>,
+}
+
+impl SshParams {
+    pub fn host_id(&self) -> String {
+        format!("{}:{}", self.host, self.port)
+    }
+}
+
+pub struct Client {
+    host_id: String,
+    known: Option<String>,
+    prompts: Sink<HostKeyPrompt>,
+}
+
+impl client::Handler for Client {
+    type Error = anyhow::Error;
+
+    async fn check_server_key(
+        &mut self,
+        key: &PublicKeyOrCertificate,
+    ) -> Result<bool, Self::Error> {
+        let (algorithm, fingerprint) = match key {
+            PublicKeyOrCertificate::PublicKey { key, .. } => (
+                key.algorithm().as_str().to_string(),
+                key.fingerprint(HashAlg::Sha256).to_string(),
+            ),
+            PublicKeyOrCertificate::Certificate(cert) => (
+                format!("{} (cert)", cert.algorithm().as_str()),
+                cert.public_key().fingerprint(HashAlg::Sha256).to_string(),
+            ),
+        };
+        if self.known.as_deref() == Some(fingerprint.as_str()) {
+            return Ok(true);
+        }
+        let (tx, rx) = oneshot::channel();
+        self.prompts.send(HostKeyPrompt {
+            host: self.host_id.clone(),
+            algorithm,
+            fingerprint,
+            previous: self.known.clone(),
+            reply: tx,
+        });
+        Ok(rx.await.unwrap_or(false))
+    }
+}
+
+pub type SshHandle = client::Handle<Client>;
+
+/// Connects and authenticates. Tries public key, then password, then keyboard-interactive.
+pub async fn connect(p: &SshParams, prompts: Sink<HostKeyPrompt>) -> Result<SshHandle> {
+    let config = Arc::new(client::Config {
+        inactivity_timeout: None,
+        keepalive_interval: Some(Duration::from_secs(30)),
+        keepalive_max: 4,
+        ..Default::default()
+    });
+    let handler = Client {
+        host_id: p.host_id(),
+        known: p.known_fingerprint.clone(),
+        prompts,
+    };
+    let addr = (p.host.as_str(), p.port);
+    let mut session = tokio::time::timeout(
+        Duration::from_secs(20),
+        client::connect(config, addr, handler),
+    )
+    .await
+    .map_err(|_| anyhow!("Zeitüberschreitung beim Verbinden"))?
+    .map_err(|e| {
+        if e.to_string().contains("UnknownKey") {
+            anyhow!("Server-Key wurde abgelehnt")
+        } else {
+            e
+        }
+    })?;
+
+    if let Some(key_text) = p.private_key.as_deref().filter(|k| !k.trim().is_empty()) {
+        let key = decode_secret_key(key_text, p.passphrase.as_deref().filter(|s| !s.is_empty()))
+            .map_err(|e| anyhow!("SSH-Key konnte nicht gelesen werden: {e}"))?;
+        let hash = session.best_supported_rsa_hash().await?.flatten();
+        let res = session
+            .authenticate_publickey(&p.username, PrivateKeyWithHashAlg::new(Arc::new(key), hash))
+            .await?;
+        if res.success() {
+            return Ok(session);
+        }
+    }
+
+    if let Some(pw) = p.password.as_deref() {
+        if session
+            .authenticate_password(&p.username, pw)
+            .await?
+            .success()
+        {
+            return Ok(session);
+        }
+        // Many servers only offer keyboard-interactive for passwords.
+        let mut resp = session
+            .authenticate_keyboard_interactive_start(&p.username, None)
+            .await?;
+        for _ in 0..5 {
+            match resp {
+                KeyboardInteractiveAuthResponse::Success => return Ok(session),
+                KeyboardInteractiveAuthResponse::Failure { .. } => break,
+                KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                    let answers = prompts.iter().map(|_| pw.to_string()).collect();
+                    resp = session
+                        .authenticate_keyboard_interactive_respond(answers)
+                        .await?;
+                }
+            }
+        }
+    }
+
+    bail!(
+        "Authentifizierung fehlgeschlagen für {}@{}",
+        p.username,
+        p.host
+    )
+}
+
+/// Starts an interactive shell session; returns the command sender.
+pub fn spawn_shell(
+    rt: &tokio::runtime::Runtime,
+    params: SshParams,
+    cols: u16,
+    rows: u16,
+    events: Sink<TermEvent>,
+    prompts: Sink<HostKeyPrompt>,
+) -> mpsc::UnboundedSender<TermCmd> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    rt.spawn(async move {
+        let result = run_shell(&params, cols, rows, rx, &events, prompts).await;
+        events.send(TermEvent::Closed(result.err().map(|e| format!("{e:#}"))));
+    });
+    tx
+}
+
+async fn run_shell(
+    p: &SshParams,
+    cols: u16,
+    rows: u16,
+    mut cmds: mpsc::UnboundedReceiver<TermCmd>,
+    events: &Sink<TermEvent>,
+    prompts: Sink<HostKeyPrompt>,
+) -> Result<()> {
+    events.send(TermEvent::Status(format!("Verbinde mit {}…", p.host_id())));
+    let handle = connect(p, prompts).await?;
+    events.send(TermEvent::Status("Öffne Shell…".into()));
+    let channel = handle.channel_open_session().await?;
+    channel
+        .request_pty(false, "xterm-256color", cols as u32, rows as u32, 0, 0, &[])
+        .await?;
+    channel.request_shell(false).await?;
+    events.send(TermEvent::Connected);
+
+    let (mut reader, writer) = channel.split();
+    loop {
+        tokio::select! {
+            cmd = cmds.recv() => match cmd {
+                Some(TermCmd::Input(bytes)) => writer.data_bytes(bytes).await?,
+                Some(TermCmd::Resize { cols, rows }) => {
+                    writer.window_change(cols as u32, rows as u32, 0, 0).await?
+                }
+                Some(TermCmd::Close) | None => {
+                    let _ = writer.close().await;
+                    break;
+                }
+            },
+            msg = reader.wait() => match msg {
+                Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
+                    events.send(TermEvent::Output(data.to_vec()));
+                }
+                Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+                _ => {}
+            },
+        }
+    }
+    let _ = handle
+        .disconnect(Disconnect::ByApplication, "bye", "en")
+        .await;
+    Ok(())
+}

@@ -1,0 +1,30 @@
+[package]
+name = "aurora-term"
+version = "0.1.0"
+edition = "2024"
+description = "Aurora – moderner SSH/SFTP/RDP/Serial-Client mit Keychain, Snippets und Host-Gruppen"
+
+[dependencies]
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "persistence", "wayland", "x11"] }
+egui = "0.36"
+russh = "0.64"
+russh-sftp = "3.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "net"] }
+vt100 = "0.16"
+serialport = { version = "4.10", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+directories = "6"
+anyhow = "1"
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+rand = "0.8"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+env_logger = "0.11"
+
+[profile.release]
+lto = "thin"
+strip = true
