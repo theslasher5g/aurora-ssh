@@ -20,10 +20,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             );
         });
     });
-    ui.label(
-        RichText::new("Passwörter und SSH-Keys, verschlüsselt mit deinem Master-Passwort. Hosts und Gruppen verweisen auf Identitäten.")
-            .color(theme::text_dim()),
-    );
     ui.add_space(12.0);
 
     egui::ScrollArea::vertical()

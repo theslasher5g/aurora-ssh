@@ -22,7 +22,6 @@ pub enum View {
     Hosts,
     Keychain,
     Snippets,
-    KnownHosts,
     Settings,
 }
 
@@ -270,6 +269,7 @@ pub enum Action {
     Navigate(View),
     OpenPalette,
     Lock,
+    SetTheme(String),
     /// Ask before running the inner (destructive) action.
     Confirm(String, Box<Action>),
 }
@@ -892,6 +892,11 @@ impl App {
                 self.palette.query.clear();
                 self.palette.selected = 0;
             }
+            Action::SetTheme(id) => {
+                theme::apply(ctx, &id);
+                self.lib.settings.theme = id;
+                self.save_library();
+            }
             Action::Confirm(text, inner) => self.confirm_delete = Some((text, *inner)),
             Action::Lock => {
                 self.vault = None;
@@ -1023,12 +1028,6 @@ impl App {
                         self.keychain.identities.len(),
                     ),
                     (View::Snippets, "⚡", "Snippets", self.lib.snippets.len()),
-                    (
-                        View::KnownHosts,
-                        "🛡",
-                        "Known Hosts",
-                        self.lib.known_hosts.len(),
-                    ),
                     (View::Settings, "⚙", "Einstellungen", 0),
                 ];
                 for (view, icon, label, count) in items {
@@ -1132,7 +1131,7 @@ impl App {
                         );
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(small(format!("🔐 Vault · {}", self.data_dir.display())));
+                        ui.label(small("🔐 Vault entsperrt".into()));
                     });
                 });
             });
@@ -1178,13 +1177,6 @@ impl App {
                     ui.add(
                         egui::Label::new(RichText::new(label).color(theme::text_dim()).size(12.5))
                             .truncate(),
-                    );
-                    let (cols, rows) = t.term.size();
-                    ui.label(
-                        RichText::new(format!("{cols}×{rows}"))
-                            .color(theme::text_dim())
-                            .size(11.0)
-                            .monospace(),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
@@ -1332,7 +1324,11 @@ impl App {
         }
         let mut relaunch = false;
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(theme::bg_deep()).inner_margin(Margin::same(40)))
+            .frame(
+                egui::Frame::NONE
+                    .fill(theme::bg_deep())
+                    .inner_margin(Margin::same(40)),
+            )
             .show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(60.0);
@@ -1345,7 +1341,11 @@ impl App {
                     }
                     ui.label(RichText::new(target).color(theme::text_dim()));
                     ui.add_space(16.0);
-                    let c = if t.running { theme::green() } else { theme::amber() };
+                    let c = if t.running {
+                        theme::green()
+                    } else {
+                        theme::amber()
+                    };
                     theme::chip(ui, &t.status, c);
                     if t.running {
                         ui.label(
@@ -1365,14 +1365,6 @@ impl App {
                     } else if theme::primary_button(ui, "⟳ Erneut starten").clicked() {
                         relaunch = true;
                     }
-                    ui.add_space(24.0);
-                    ui.label(
-                        RichText::new(
-                            "RDP-Sitzungen laufen im nativen Client deines Systems\n(mstsc · Windows App · FreeRDP/Remmina).",
-                        )
-                        .color(theme::text_dim())
-                        .size(12.0),
-                    );
                 });
             });
         if relaunch {
@@ -1480,10 +1472,7 @@ impl eframe::App for App {
                         View::Hosts => crate::ui::hosts::show(self, ui, &mut actions),
                         View::Keychain => crate::ui::keychain::show(self, ui, &mut actions),
                         View::Snippets => crate::ui::snippets::show(self, ui, &mut actions),
-                        View::KnownHosts => {
-                            crate::ui::settings::known_hosts(self, ui, &mut actions)
-                        }
-                        View::Settings => crate::ui::settings::show(self, ui),
+                        View::Settings => crate::ui::settings::show(self, ui, &mut actions),
                     });
             }
         }

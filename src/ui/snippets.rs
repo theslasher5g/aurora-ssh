@@ -2,7 +2,7 @@
 
 use egui::{CornerRadius, Margin, RichText};
 
-use crate::app::{Action, App, TabKind};
+use crate::app::{Action, App};
 use crate::theme;
 use crate::ui::fuzzy;
 
@@ -20,17 +20,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             );
         });
     });
-    let terms = app
-        .tabs
-        .iter()
-        .filter(|t| matches!(t.kind, TabKind::Term(_)))
-        .count();
-    ui.label(
-        RichText::new(format!(
-            "Wiederverwendbare Befehle. Platzhalter wie {{{{service}}}} werden beim Ausführen abgefragt. {terms} Terminal(s) offen."
-        ))
-        .color(theme::text_dim()),
-    );
     ui.add_space(12.0);
 
     let q = app.snippet_search.clone();

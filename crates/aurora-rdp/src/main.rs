@@ -484,11 +484,7 @@ fn run(out: Out) -> anyhow::Result<()> {
                 if let Some(rect) = dirty_rect(&prev, &buffer, w as usize) {
                     send(&out, tag::FRAME, encode_frame(&buffer, w, h, rect));
                 }
-                prev = if std::env::var_os("AURORA_RDP_FULLFRAMES").is_some() {
-                    Vec::new()
-                } else {
-                    buffer
-                };
+                prev = buffer;
             }
             RdpOutputEvent::ConnectionFailure(e) => {
                 result = Err(anyhow::anyhow!("{e}"));

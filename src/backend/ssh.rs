@@ -90,14 +90,8 @@ pub async fn connect(p: &SshParams, prompts: Sink<HostKeyPrompt>) -> Result<SshH
         client::connect(config, addr, handler),
     )
     .await
-    .map_err(|_| anyhow!("Zeitüberschreitung beim Verbinden"))?
-    .map_err(|e| {
-        if e.to_string().contains("UnknownKey") {
-            anyhow!("Server-Key wurde abgelehnt")
-        } else {
-            e
-        }
-    })?;
+    .map_err(|_| anyhow!("Zeitüberschreitung – Host nicht erreichbar"))?
+    .map_err(friendly_error)?;
 
     if let Some(key_text) = p.private_key.as_deref().filter(|k| !k.trim().is_empty()) {
         let key = decode_secret_key(key_text, p.passphrase.as_deref().filter(|s| !s.is_empty()))
@@ -142,6 +136,29 @@ pub async fn connect(p: &SshParams, prompts: Sink<HostKeyPrompt>) -> Result<SshH
         p.username,
         p.host
     )
+}
+
+/// Turns low-level connection errors into short, actionable messages.
+fn friendly_error(e: anyhow::Error) -> anyhow::Error {
+    let raw = format!("{e:#}");
+    let msg = if raw.contains("UnknownKey") {
+        "Server-Key wurde abgelehnt"
+    } else if raw.contains("Connection refused")
+        || raw.contains("os error 111")
+        || raw.contains("os error 10061")
+    {
+        "Verbindung abgelehnt – läuft der SSH-Dienst auf diesem Port?"
+    } else if raw.contains("failed to lookup")
+        || raw.contains("Name or service not known")
+        || raw.contains("No such host")
+    {
+        "Hostname nicht gefunden"
+    } else if raw.contains("Network is unreachable") || raw.contains("No route to host") {
+        "Netzwerk nicht erreichbar"
+    } else {
+        return e;
+    };
+    anyhow!(msg)
 }
 
 /// Starts an interactive shell session; returns the command sender.

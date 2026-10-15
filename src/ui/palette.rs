@@ -66,6 +66,18 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         ("⚙", "Einstellungen", Action::Navigate(View::Settings)),
         ("🔒", "Vault sperren", Action::Lock),
     ];
+    for t in crate::theme::THEMES {
+        let title = format!("Theme: {}", t.name);
+        if let Some(score) = fuzzy(&q, &title) {
+            items.push(Item {
+                icon: "🎨".into(),
+                title,
+                subtitle: "Design wechseln".into(),
+                action: Action::SetTheme(t.id.to_string()),
+                score: score - 20,
+            });
+        }
+    }
     for (icon, title, action) in commands {
         if let Some(score) = fuzzy(&q, title) {
             items.push(Item {

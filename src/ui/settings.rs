@@ -5,7 +5,7 @@ use egui::{CornerRadius, RichText, Vec2};
 use crate::app::{Action, App};
 use crate::theme;
 
-pub fn show(app: &mut App, ui: &mut egui::Ui) {
+pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     ui.label(RichText::new("Einstellungen").size(26.0).strong());
     ui.add_space(10.0);
     egui::ScrollArea::vertical()
@@ -96,6 +96,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             });
             ui.add_space(18.0);
 
+            known_hosts(app, ui, actions);
+            ui.add_space(18.0);
+
             theme::section_title(ui, "Daten");
             theme::card_frame().show(ui, |ui| {
                 ui.set_width(ui.available_width().min(560.0));
@@ -184,13 +187,9 @@ fn theme_card(ui: &mut egui::Ui, t: &theme::Palette, selected: bool) -> egui::Re
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-pub fn known_hosts(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-    ui.label(RichText::new("Known Hosts").size(26.0).strong());
-    ui.label(
-        RichText::new("Server-Keys, denen du vertraust. Ändert sich ein Key, warnt Aurora vor einem möglichen Man-in-the-Middle.")
-            .color(theme::text_dim()),
-    );
-    ui.add_space(12.0);
+/// Trusted server keys (TOFU); a changed key triggers a MITM warning on connect.
+fn known_hosts(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+    theme::section_title(ui, "Vertrauenswürdige Server");
     let mut entries: Vec<_> = app
         .lib
         .known_hosts
@@ -198,37 +197,32 @@ pub fn known_hosts(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) 
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
     entries.sort();
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            if entries.is_empty() {
-                ui.label(
-                    RichText::new("Noch keine Einträge — sie entstehen beim ersten Verbinden.")
-                        .color(theme::text_dim()),
-                );
-            }
-            for (host, fp) in entries {
-                theme::card_frame().show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("🛡").color(theme::green()).size(18.0));
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new(&host).strong());
-                            ui.label(
-                                RichText::new(&fp)
-                                    .monospace()
-                                    .size(11.5)
-                                    .color(theme::text_dim()),
-                            );
-                        });
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("Entfernen").clicked() {
-                                actions.push(Action::ForgetKnownHost(host.clone()));
-                            }
-                        });
-                    });
+    theme::card_frame().show(ui, |ui| {
+        ui.set_width(ui.available_width().min(560.0));
+        if entries.is_empty() {
+            ui.label(RichText::new("Noch keine").color(theme::text_dim()));
+        }
+        for (host, fp) in entries {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    ui.label(RichText::new(&host).strong());
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(&fp)
+                                .monospace()
+                                .size(11.0)
+                                .color(theme::text_dim()),
+                        )
+                        .truncate(),
+                    );
                 });
-                ui.add_space(6.0);
-            }
-        });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if theme::icon_button(ui, "🗑", "Entfernen").clicked() {
+                        actions.push(Action::ForgetKnownHost(host.clone()));
+                    }
+                });
+            });
+        }
+    });
 }

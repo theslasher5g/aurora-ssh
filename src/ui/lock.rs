@@ -20,10 +20,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 theme::logo(ui, 72.0);
                 ui.add_space(14.0);
                 ui.label(RichText::new("aurora").size(34.0).strong());
-                ui.label(
-                    RichText::new("SSH · SFTP · RDP · Serial — dein Terminal-Cockpit")
-                        .color(theme::text_dim()),
-                );
+                ui.label(RichText::new("SSH · SFTP · RDP · Serial").color(theme::text_dim()));
                 ui.add_space(28.0);
 
                 theme::card_frame()
@@ -32,19 +29,23 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         ui.set_width(340.0);
                         ui.vertical(|ui| {
                             ui.label(
-                                RichText::new(if first_run { "Vault anlegen" } else { "Vault entsperren" })
-                                    .size(18.0)
-                                    .strong(),
-                            );
-                            ui.label(
                                 RichText::new(if first_run {
-                                    "Wähle ein Master-Passwort. Es verschlüsselt deine Keychain (Argon2id + XChaCha20-Poly1305) und kann nicht wiederhergestellt werden."
+                                    "Vault anlegen"
                                 } else {
-                                    "Gib dein Master-Passwort ein."
+                                    "Vault entsperren"
                                 })
-                                .color(theme::text_dim())
-                                .size(12.5),
+                                .size(18.0)
+                                .strong(),
                             );
+                            if first_run {
+                                ui.label(
+                                    RichText::new(
+                                        "Schützt deine Keychain. Nicht wiederherstellbar.",
+                                    )
+                                    .color(theme::text_dim())
+                                    .size(12.5),
+                                );
+                            }
                             ui.add_space(10.0);
                             let pw = ui.add(
                                 egui::TextEdit::singleline(&mut app.lock.password)
@@ -74,7 +75,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                                 ui.label(RichText::new(e).color(theme::red()).size(12.5));
                             }
                             ui.add_space(6.0);
-                            let label = if first_run { "Vault erstellen" } else { "Entsperren" };
+                            let label = if first_run {
+                                "Vault erstellen"
+                            } else {
+                                "Entsperren"
+                            };
                             if theme::primary_button(ui, label).clicked() {
                                 submit = true;
                             }
