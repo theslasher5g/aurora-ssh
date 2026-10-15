@@ -98,7 +98,8 @@ mod tests {
                 if p.extension().is_none_or(|x| x != "rs") {
                     continue;
                 }
-                let src = std::fs::read_to_string(&p).unwrap();
+                // Windows checkouts have CRLF line endings; rustc normalises them too.
+                let src = std::fs::read_to_string(&p).unwrap().replace("\r\n", "\n");
                 for lit in literals(&src) {
                     if !table().contains_key(lit.as_str()) {
                         missing.push(format!("{}: {lit}", p.display()));
