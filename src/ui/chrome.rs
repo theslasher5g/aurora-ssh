@@ -204,7 +204,7 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     (View::Files, "🗀", "Dateien (SFTP)"),
                     (View::Snippets, "⚡", "Snippets"),
                 ] {
-                    if rail_button(ui, glyph, tip, home && app.view == view, None).clicked() {
+                    if rail_button(ui, glyph, crate::i18n::tr(tip), home && app.view == view, None).clicked() {
                         actions.push(Action::Navigate(view));
                     }
                 }
@@ -238,15 +238,15 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                             t.status_color(),
                             t.is_live(),
                             if t.is_live() {
-                                "verbunden".into()
+                                t!("verbunden").into()
                             } else {
-                                "getrennt".into()
+                                t!("getrennt").into()
                             },
                         ),
                     };
                     let kind = match &tab.kind {
                         TabKind::Term(_) => "Terminal",
-                        TabKind::Sftp(_) => "Dateien",
+                        TabKind::Sftp(_) => t!("Dateien"),
                         TabKind::Rdp(_) => "Desktop",
                     };
                     let dead = matches!(&tab.kind, TabKind::Term(t) if matches!(t.state, ConnState::Closed(_)));
@@ -281,20 +281,20 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                             );
                             if dead {
                                 ui.label(
-                                    RichText::new("Getrennt – Klick verbindet neu")
+                                    RichText::new(t!("Getrennt – Klick verbindet neu"))
                                         .size(12.0)
                                         .color(theme::amber()),
                                 );
                             }
                             if tab.attention {
                                 ui.label(
-                                    RichText::new("Neue Ausgabe / Befehl fertig")
+                                    RichText::new(t!("Neue Ausgabe / Befehl fertig"))
                                         .size(12.0)
                                         .color(theme::accent()),
                                 );
                             }
                             ui.label(
-                                RichText::new("Ziehen, um sie neben eine Session zu legen")
+                                RichText::new(t!("Ziehen, um sie neben eine Session zu legen"))
                                     .size(11.5)
                                     .color(theme::text_dim()),
                             );
@@ -305,7 +305,7 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         let xr = Rect::from_min_size(tile.left_top(), Vec2::splat(15.0));
                         let x = ui.interact(xr, ui.id().with(("port-x", tab.id)), Sense::click());
                         close_glyph(ui.painter(), xr.center(), x.hovered(), true);
-                        if x.on_hover_text("Session beenden").clicked() {
+                        if x.on_hover_text(t!("Session beenden")).clicked() {
                             close = Some(tab.id);
                         }
                     }
@@ -322,16 +322,16 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         if let Some(a) = app.active.filter(|a| *a != tab.id)
                             && !app.split.contains(&tab.id)
                             && app.split.len() < MAX_SPLIT
-                            && ui.button("Neben aktuelle Session legen").clicked()
+                            && ui.button(t!("Neben aktuelle Session legen")).clicked()
                         {
                             push_split_op(ui.ctx(), SplitOp::Add(a, tab.id));
                             ui.close();
                         }
-                        if ui.button("Neu verbinden").clicked() {
+                        if ui.button(t!("Neu verbinden")).clicked() {
                             reconnect = Some(tab.id);
                             ui.close();
                         }
-                        if ui.button("Schließen").clicked() {
+                        if ui.button(t!("Schließen")).clicked() {
                             close = Some(tab.id);
                             ui.close();
                         }
@@ -349,7 +349,7 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
 
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.y = 6.0;
-                    if rail_button(ui, "🔒", "Sperren", false, None).clicked() {
+                    if rail_button(ui, "🔒", t!("Sperren"), false, None).clicked() {
                         actions.push(Action::Lock);
                     }
                     if !app.tunnels.is_empty() {
@@ -361,7 +361,7 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         let resp = rail_button(
                             ui,
                             "⇄",
-                            &format!("{up} Tunnel offen"),
+                            &t!("{} Tunnel offen", up),
                             false,
                             Some(theme::green()),
                         );
@@ -381,18 +381,18 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                                         ))
                                         .size(12.5),
                                     );
-                                    if ui.small_button("Schließen").clicked() {
+                                    if ui.small_button(t!("Schließen")).clicked() {
                                         actions.push(Action::ToggleTunnel(run.host, *tid));
                                     }
                                 });
                             }
                         });
                     }
-                    if rail_button(ui, "?", "Tastenkürzel (F1)", app.show_shortcuts, None).clicked() {
+                    if rail_button(ui, "?", t!("Tastenkürzel (F1)"), app.show_shortcuts, None).clicked() {
                         app.show_shortcuts = true;
                     }
                     if let Some(rel) = &app.update.latest {
-                        let tip = format!("Update auf {} verfügbar", rel.version_text());
+                        let tip = t!("Update auf {} verfügbar", rel.version_text());
                         if rail_button(ui, "⬆", &tip, false, Some(theme::accent())).clicked() {
                             actions.push(Action::Navigate(View::Settings));
                         }
@@ -400,7 +400,7 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     if rail_button(
                         ui,
                         "⚙",
-                        "Einstellungen",
+                        t!("Einstellungen"),
                         home && app.view == View::Settings,
                         None,
                     )
@@ -409,9 +409,9 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         actions.push(Action::Navigate(View::Settings));
                     }
                     let tip = if app.broadcast {
-                        "Broadcast an: Eingaben gehen an alle Terminals"
+                        t!("Broadcast an: Eingaben gehen an alle Terminals")
                     } else {
-                        "Broadcast: Eingaben an alle Terminals senden"
+                        t!("Broadcast: Eingaben an alle Terminals senden")
                     };
                     if rail_button(
                         ui,
@@ -431,10 +431,10 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
 
 pub fn state_text(s: &ConnState) -> String {
     match s {
-        ConnState::Connecting(_) => "verbindet".into(),
-        ConnState::Connected => "verbunden".into(),
-        ConnState::Closed(Some(_)) => "Fehler".into(),
-        ConnState::Closed(None) => "getrennt".into(),
+        ConnState::Connecting(_) => t!("verbindet").into(),
+        ConnState::Connected => t!("verbunden").into(),
+        ConnState::Closed(Some(_)) => t!("Fehler").into(),
+        ConnState::Closed(None) => t!("getrennt").into(),
     }
 }
 
@@ -442,9 +442,9 @@ pub fn state_text(s: &ConnState) -> String {
 pub fn state_pair(s: &ConnState) -> (String, Color32) {
     match s {
         ConnState::Connecting(m) => (m.clone(), theme::amber()),
-        ConnState::Connected => ("verbunden".into(), theme::green()),
+        ConnState::Connected => (t!("verbunden").into(), theme::green()),
         ConnState::Closed(Some(e)) => (e.clone(), theme::red()),
-        ConnState::Closed(None) => ("getrennt".into(), theme::text_dim()),
+        ConnState::Closed(None) => (t!("getrennt").into(), theme::text_dim()),
     }
 }
 
@@ -599,7 +599,7 @@ fn split_menu(ui: &mut egui::Ui, index: usize) {
         return;
     };
     let in_split = info.split.len() >= 2 && info.split.contains(&me);
-    let resp = split_button(ui, in_split).on_hover_text("Nebeneinander anzeigen");
+    let resp = split_button(ui, in_split).on_hover_text(t!("Nebeneinander anzeigen"));
     egui::Popup::menu(&resp).show(|ui| {
         ui.set_min_width(220.0);
         let shown: Vec<u64> = if in_split {
@@ -615,20 +615,22 @@ fn split_menu(ui: &mut egui::Ui, index: usize) {
         if shown.len() < MAX_SPLIT {
             if others.is_empty() && !in_split {
                 ui.label(
-                    RichText::new("Öffne eine weitere Session, um sie hier daneben zu legen.")
-                        .size(12.5)
-                        .color(theme::text_dim()),
+                    RichText::new(t!(
+                        "Öffne eine weitere Session, um sie hier daneben zu legen."
+                    ))
+                    .size(12.5)
+                    .color(theme::text_dim()),
                 );
             }
             for (id, title) in others {
-                if ui.button(format!("Daneben: {title}")).clicked() {
+                if ui.button(t!("Daneben: {}", title)).clicked() {
                     push_split_op(ui.ctx(), SplitOp::Add(me, *id));
                     ui.close();
                 }
             }
         } else {
             ui.label(
-                RichText::new("Maximal vier Sessions nebeneinander.")
+                RichText::new(t!("Maximal vier Sessions nebeneinander."))
                     .size(12.5)
                     .color(theme::text_dim()),
             );
@@ -637,8 +639,10 @@ fn split_menu(ui: &mut egui::Ui, index: usize) {
             ui.separator();
             let mark = if info.split_broadcast { "✔ " } else { "" };
             if ui
-                .button(format!("{mark}Eingaben an alle Panes senden"))
-                .on_hover_text("Was du in einem Terminal tippst, geht an alle Terminals im Split")
+                .button(t!("{}Eingaben an alle Panes senden", mark))
+                .on_hover_text(t!(
+                    "Was du in einem Terminal tippst, geht an alle Terminals im Split"
+                ))
                 .clicked()
             {
                 push_split_op(ui.ctx(), SplitOp::Broadcast);
@@ -647,20 +651,20 @@ fn split_menu(ui: &mut egui::Ui, index: usize) {
             let maxed = info.maximized == Some(me);
             if ui
                 .button(if maxed {
-                    "Zurück zum Split"
+                    t!("Zurück zum Split")
                 } else {
-                    "Maximieren"
+                    t!("Maximieren")
                 })
                 .clicked()
             {
                 push_split_op(ui.ctx(), SplitOp::Maximize(me));
                 ui.close();
             }
-            if ui.button("Diese Session lösen").clicked() {
+            if ui.button(t!("Diese Session lösen")).clicked() {
                 push_split_op(ui.ctx(), SplitOp::Remove(me));
                 ui.close();
             }
-            if ui.button("Split beenden").clicked() {
+            if ui.button(t!("Split beenden")).clicked() {
                 push_split_op(ui.ctx(), SplitOp::Clear);
                 ui.close();
             }
@@ -753,7 +757,7 @@ pub fn session_header(
                         p.line_segment([tip, tip + Vec2::new(-4.5, 0.0)], s);
                         p.line_segment([tip, tip + Vec2::new(0.0, 4.5)], s);
                     })
-                    .on_hover_text("Aus dem Splitscreen lösen – Session bleibt offen");
+                    .on_hover_text(t!("Aus dem Splitscreen lösen – Session bleibt offen"));
                     if resp.clicked() {
                         push_split_op(ui.ctx(), SplitOp::Remove(me));
                     }
@@ -787,9 +791,9 @@ pub fn session_header(
                         }
                     })
                     .on_hover_text(if maxed {
-                        "Zurück zum Splitscreen (Doppelklick auf den Kopf)"
+                        t!("Zurück zum Splitscreen (Doppelklick auf den Kopf)")
                     } else {
-                        "Maximieren (Doppelklick auf den Kopf)"
+                        t!("Maximieren (Doppelklick auf den Kopf)")
                     });
                     if resp.clicked() {
                         push_split_op(ui.ctx(), SplitOp::Maximize(me));
@@ -815,7 +819,7 @@ pub fn session_header(
                         ui.add_space(-10.0);
                         let resp =
                             header_icon(ui, |p, r, hot| close_glyph(p, r.center(), hot, false))
-                                .on_hover_text("Session beenden");
+                                .on_hover_text(t!("Session beenden"));
                         if resp.clicked() {
                             push_split_op(ui.ctx(), SplitOp::Close(me));
                         }

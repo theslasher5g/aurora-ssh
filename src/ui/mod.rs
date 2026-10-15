@@ -59,11 +59,11 @@ pub fn short_duration(d: std::time::Duration) -> String {
 pub fn relative_time(t: chrono::DateTime<chrono::Utc>) -> String {
     let secs = (chrono::Utc::now() - t).num_seconds().max(0);
     match secs {
-        0..=59 => "gerade eben".into(),
-        60..=3599 => format!("vor {} min", secs / 60),
-        3600..=86399 => format!("vor {} h", secs / 3600),
-        86400..=172799 => "gestern".into(),
-        _ => format!("vor {} Tagen", secs / 86400),
+        0..=59 => t!("gerade eben").into(),
+        60..=3599 => t!("vor {} min", secs / 60),
+        3600..=86399 => t!("vor {} h", secs / 3600),
+        86400..=172799 => t!("gestern").into(),
+        _ => t!("vor {} Tagen", secs / 86400),
     }
 }
 
@@ -110,7 +110,7 @@ pub fn row_buttons(
     let mut x = rect.right() - 8.0;
     let cy = rect.center().y;
     for (i, label) in labels.iter().enumerate().rev() {
-        let danger = label.starts_with("Löschen");
+        let danger = label.starts_with("Löschen") || label.starts_with(t!("Löschen"));
         let g = ui.painter().layout_no_wrap(
             label.to_string(),
             egui::FontId::proportional(12.5),

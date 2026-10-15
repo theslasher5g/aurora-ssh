@@ -33,12 +33,12 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             });
         }
         if matches!(h.protocol, Protocol::Ssh | Protocol::Rdp)
-            && let Some(score) = fuzzy(&q, &format!("sftp dateien {hay}"))
+            && let Some(score) = fuzzy(&q, &format!("sftp dateien {} {hay}", t!("Dateien")))
         {
             items.push(Item {
                 icon: "SFTP".into(),
                 title: format!("SFTP: {}", h.display_name()),
-                subtitle: "Dateien".into(),
+                subtitle: t!("Dateien").into(),
                 action: Action::OpenSftp(h.id),
                 score,
             });
@@ -48,12 +48,11 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                 let on = app.tunnels.contains_key(&t.id);
                 items.push(Item {
                     icon: "TUN".into(),
-                    title: format!(
-                        "Tunnel {}: {} ({})",
-                        if on { "schließen" } else { "öffnen" },
-                        t.label(),
-                        h.display_name()
-                    ),
+                    title: if on {
+                        t!("Tunnel schließen: {} ({})", t.label(), h.display_name())
+                    } else {
+                        t!("Tunnel öffnen: {} ({})", t.label(), h.display_name())
+                    },
                     subtitle: format!("localhost:{}", t.local_port),
                     action: Action::ToggleTunnel(h.id, t.id),
                     score: score - 5,
@@ -104,6 +103,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         }
     }
     for (icon, title, action) in commands {
+        let title = crate::i18n::tr(title);
         if let Some(score) = fuzzy(&q, title) {
             items.push(Item {
                 icon: icon.into(),
@@ -121,7 +121,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
     if crate::app::parse_quick(&q).is_some() && (explicit || hostish) {
         items.push(Item {
             icon: "SSH".into(),
-            title: format!("Direkt verbinden: {}", q.trim()),
+            title: t!("Direkt verbinden: {}", q.trim()),
             subtitle: "Enter".into(),
             action: Action::QuickConnect(q.clone()),
             score: if explicit { i32::MAX } else { 5 },
@@ -165,7 +165,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             ui.set_width(560.0);
             let r = ui.add(
                 egui::TextEdit::singleline(&mut app.palette.query)
-                    .hint_text("Host, Snippet, Befehl oder user@host")
+                    .hint_text(t!("Host, Snippet, Befehl oder user@host"))
                     .frame(egui::Frame::NONE)
                     .font(theme::semibold(18.0))
                     .margin(egui::Margin::symmetric(6, 8))
@@ -178,7 +178,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             theme::hairline(ui);
             ui.add_space(4.0);
             if items.is_empty() {
-                ui.label(RichText::new("Keine Treffer").color(theme::text_dim()));
+                ui.label(RichText::new(t!("Keine Treffer")).color(theme::text_dim()));
             }
             for (i, item) in items.iter().enumerate() {
                 let selected = i == app.palette.selected;
@@ -229,7 +229,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             }
             ui.add_space(4.0);
             ui.label(
-                RichText::new("↑↓ auswählen   Enter ausführen   Esc schließen")
+                RichText::new(t!("↑↓ auswählen   Enter ausführen   Esc schließen"))
                     .font(egui::FontId::monospace(10.5))
                     .size(11.0)
                     .color(theme::text_dim()),
