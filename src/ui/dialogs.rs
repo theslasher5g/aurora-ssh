@@ -37,11 +37,13 @@ fn danger(app: &mut App, ctx: &egui::Context) {
                 env_badge(ui, host.1);
             }
             ui.label(theme::heading(
-                format!("Wirklich auf {} ausführen?", host.0),
+                t!("Wirklich auf {} ausführen?", host.0),
                 19.0,
             ));
         });
-        ui.label(RichText::new(format!("Dieser Befehl {why}.")).color(theme::text_dim()));
+        ui.label(
+            RichText::new(t!("Dieser Befehl {}.", crate::i18n::tr(why))).color(theme::text_dim()),
+        );
         ui.add_space(8.0);
         theme::card_frame().show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -52,14 +54,14 @@ fn danger(app: &mut App, ctx: &egui::Context) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .add(
-                        egui::Button::new(RichText::new("Ausführen").color(theme::bg_deep()))
+                        egui::Button::new(RichText::new(t!("Ausführen")).color(theme::bg_deep()))
                             .fill(theme::red()),
                     )
                     .clicked()
                 {
                     answer = Some(true);
                 }
-                if theme::primary_button(ui, "Abbrechen").clicked() {
+                if theme::primary_button(ui, t!("Abbrechen")).clicked() {
                     answer = Some(false);
                 }
             });
@@ -115,21 +117,21 @@ fn shortcuts(app: &mut App, ctx: &egui::Context) {
     }
     let modal = egui::Modal::new(egui::Id::new("shortcuts")).show(ctx, |ui| {
         ui.set_width(460.0);
-        ui.label(theme::heading("Tastenkürzel", 20.0));
+        ui.label(theme::heading(t!("Tastenkürzel"), 20.0));
         ui.add_space(8.0);
         egui::Grid::new("shortcut-grid")
             .num_columns(2)
             .spacing([18.0, 8.0])
             .show(ui, |ui| {
                 for (keys, what) in SHORTCUTS {
-                    ui.label(theme::mono(*keys, 12.5).color(theme::accent()));
-                    ui.label(RichText::new(*what).size(13.0));
+                    ui.label(theme::mono(crate::i18n::tr(keys), 12.5).color(theme::accent()));
+                    ui.label(RichText::new(crate::i18n::tr(what)).size(13.0));
                     ui.end_row();
                 }
             });
         ui.add_space(10.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("Schließen").clicked() {
+            if ui.button(t!("Schließen")).clicked() {
                 app.show_shortcuts = false;
             }
         });
@@ -170,6 +172,7 @@ fn tour(app: &mut App, ctx: &egui::Context) {
     }
     let step = app.tour_step.min(TOUR.len() - 1);
     let (title, body, _) = TOUR[step];
+    let (title, body) = (crate::i18n::tr(title), crate::i18n::tr(body));
     let mut done = false;
     let mut next = false;
     let mut action = None;
@@ -200,7 +203,7 @@ fn tour(app: &mut App, ctx: &egui::Context) {
         ui.add_space(14.0);
         if step == 0 {
             ui.horizontal(|ui| {
-                if ui.button("SSH-Host anlegen").clicked() {
+                if ui.button(t!("SSH-Host anlegen")).clicked() {
                     action = Some(crate::app::Action::NewHostOf(
                         crate::model::Protocol::Ssh,
                         None,
@@ -208,7 +211,7 @@ fn tour(app: &mut App, ctx: &egui::Context) {
                     next = true;
                 }
                 if !crate::app::ssh_config_hosts().is_empty()
-                    && ui.button("Aus ~/.ssh/config importieren").clicked()
+                    && ui.button(t!("Aus ~/.ssh/config importieren")).clicked()
                 {
                     action = Some(crate::app::Action::ImportSshConfig);
                     next = true;
@@ -217,13 +220,14 @@ fn tour(app: &mut App, ctx: &egui::Context) {
             ui.add_space(8.0);
         }
         ui.horizontal(|ui| {
-            if ui.button("Überspringen").clicked() {
+            if ui.button(t!("Überspringen")).clicked() {
                 done = true;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let last = step + 1 == TOUR.len();
                 let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-                if theme::primary_button(ui, if last { "Los geht's" } else { "Weiter" }).clicked()
+                if theme::primary_button(ui, if last { t!("Los geht's") } else { t!("Weiter") })
+                    .clicked()
                     || enter
                 {
                     if last {
@@ -256,14 +260,14 @@ fn hostkey(app: &mut App, ctx: &egui::Context) {
     egui::Modal::new(egui::Id::new("hostkey")).show(ctx, |ui| {
         ui.set_width(500.0);
         if changed {
-            ui.label(theme::heading("Server-Schlüssel geändert", 20.0).color(theme::red()));
+            ui.label(theme::heading(t!("Server-Schlüssel geändert"), 20.0).color(theme::red()));
             ui.label(
-                RichText::new("Das passiert nach einer Neuinstallation, kann aber auch ein Angriff sein. Verbinde nur, wenn du den neuen Fingerprint geprüft hast.")
+                RichText::new(t!("Das passiert nach einer Neuinstallation, kann aber auch ein Angriff sein. Verbinde nur, wenn du den neuen Fingerprint geprüft hast."))
                     .color(theme::text_dim()),
             );
         } else {
-            ui.label(theme::heading("Neuer Server", 20.0));
-            ui.label(RichText::new("Vergleiche den Fingerprint mit dem Server, bevor du ihm vertraust.").color(theme::text_dim()));
+            ui.label(theme::heading(t!("Neuer Server"), 20.0));
+            ui.label(RichText::new(t!("Vergleiche den Fingerprint mit dem Server, bevor du ihm vertraust.")).color(theme::text_dim()));
         }
         ui.add_space(8.0);
         theme::card_frame().show(ui, |ui| {
@@ -273,19 +277,19 @@ fn hostkey(app: &mut App, ctx: &egui::Context) {
             ui.add_space(4.0);
             ui.label(theme::mono(&p.fingerprint, 13.0).color(theme::accent()));
             if let Some(prev) = &p.previous {
-                ui.label(RichText::new(format!("vorher: {prev}")).monospace().size(11.5).color(theme::red()));
+                ui.label(RichText::new(t!("vorher: {}", prev)).monospace().size(11.5).color(theme::red()));
             }
         });
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if theme::primary_button(ui, "Vertrauen").clicked() {
+                if theme::primary_button(ui, t!("Vertrauen")).clicked() {
                     answer = Some((true, true));
                 }
-                if ui.button("Nur dieses Mal").clicked() {
+                if ui.button(t!("Nur dieses Mal")).clicked() {
                     answer = Some((true, false));
                 }
-                if ui.button("Abbrechen").clicked() {
+                if ui.button(t!("Abbrechen")).clicked() {
                     answer = Some((false, false));
                 }
             });
@@ -316,7 +320,7 @@ fn password(app: &mut App, ctx: &egui::Context) {
     };
     egui::Modal::new(egui::Id::new("password")).show(ctx, |ui| {
         ui.set_width(400.0);
-        ui.label(theme::heading("Passwort", 20.0));
+        ui.label(theme::heading(t!("Passwort"), 20.0));
         ui.label(
             theme::mono(
                 format!("{user}@{}:{}", pp.host.hostname, pp.host.port),
@@ -328,7 +332,7 @@ fn password(app: &mut App, ctx: &egui::Context) {
         let r = ui.add(
             egui::TextEdit::singleline(&mut pp.password)
                 .password(true)
-                .hint_text("Passwort")
+                .hint_text(t!("Passwort"))
                 .font(egui::FontId::monospace(14.0))
                 .margin(egui::Margin::symmetric(10, 8))
                 .desired_width(f32::INFINITY),
@@ -339,15 +343,15 @@ fn password(app: &mut App, ctx: &egui::Context) {
             r.request_focus();
         }
         if in_library {
-            ui.checkbox(&mut pp.save, "Im Keychain speichern");
+            ui.checkbox(&mut pp.save, t!("Im Keychain speichern"));
         }
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if theme::primary_button(ui, "Verbinden").clicked() {
+                if theme::primary_button(ui, t!("Verbinden")).clicked() {
                     submit = true;
                 }
-                if ui.button("Abbrechen").clicked() {
+                if ui.button(t!("Abbrechen")).clicked() {
                     cancel = true;
                 }
             });
@@ -388,7 +392,7 @@ fn snippet_vars(app: &mut App, ctx: &egui::Context) {
     egui::Modal::new(egui::Id::new("snippet-vars")).show(ctx, |ui| {
         ui.set_width(440.0);
         ui.label(theme::heading(run.snippet.name.clone(), 20.0));
-        ui.label(RichText::new("Werte für die Platzhalter eingeben").color(theme::text_dim()));
+        ui.label(RichText::new(t!("Werte für die Platzhalter eingeben")).color(theme::text_dim()));
         ui.add_space(6.0);
         egui::Grid::new("vars")
             .num_columns(2)
@@ -426,16 +430,16 @@ fn snippet_vars(app: &mut App, ctx: &egui::Context) {
                 if theme::primary_button(
                     ui,
                     if run.all {
-                        "▶ In allen ausführen"
+                        t!("▶ In allen ausführen")
                     } else {
-                        "▶ Ausführen"
+                        t!("▶ Ausführen")
                     },
                 )
                 .clicked()
                 {
                     submit = true;
                 }
-                if ui.button("Abbrechen").clicked() {
+                if ui.button(t!("Abbrechen")).clicked() {
                     cancel = true;
                 }
             });
@@ -461,21 +465,21 @@ fn confirm(app: &mut App, ctx: &egui::Context) {
     let mut answer = None;
     egui::Modal::new(egui::Id::new("confirm")).show(ctx, |ui| {
         ui.set_width(380.0);
-        ui.label(theme::heading("Wirklich löschen?", 20.0));
+        ui.label(theme::heading(t!("Wirklich löschen?"), 20.0));
         ui.label(RichText::new(text).color(theme::text_dim()));
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .add(
-                        egui::Button::new(RichText::new("Löschen").color(theme::bg_deep()))
+                        egui::Button::new(RichText::new(t!("Löschen")).color(theme::bg_deep()))
                             .fill(theme::red()),
                     )
                     .clicked()
                 {
                     answer = Some(true);
                 }
-                if ui.button("Abbrechen").clicked() {
+                if ui.button(t!("Abbrechen")).clicked() {
                     answer = Some(false);
                 }
             });
@@ -514,12 +518,12 @@ fn key_setup(app: &mut App, ctx: &egui::Context) {
     let ks = app.key_setup.as_mut().expect("checked above");
     egui::Modal::new(egui::Id::new("key-setup")).show(ctx, |ui| {
         ui.set_width(460.0);
-        ui.label(theme::heading(format!("SSH-Key für {host}"), 20.0));
+        ui.label(theme::heading(t!("SSH-Key für {}", host), 20.0));
         ui.label(
-            RichText::new(
+            RichText::new(t!(
                 "Aurora meldet sich einmal mit Passwort an, legt den öffentlichen Schlüssel in \
-                 ~/.ssh/authorized_keys ab und prüft danach die Anmeldung per Key.",
-            )
+                 ~/.ssh/authorized_keys ab und prüft danach die Anmeldung per Key."
+            ))
             .color(theme::text_dim()),
         );
         ui.add_space(10.0);
@@ -527,22 +531,22 @@ fn key_setup(app: &mut App, ctx: &egui::Context) {
             ui.radio_value(
                 &mut ks.identity,
                 None,
-                "Neuen Ed25519-Schlüssel erzeugen (empfohlen)",
+                t!("Neuen Ed25519-Schlüssel erzeugen (empfohlen)"),
             );
             for (id, label) in &keys {
                 let label = if label.is_empty() {
-                    "(ohne Namen)"
+                    t!("(ohne Namen)")
                 } else {
                     label
                 };
                 ui.radio_value(
                     &mut ks.identity,
                     Some(*id),
-                    format!("Vorhandenen Schlüssel: {label}"),
+                    t!("Vorhandenen Schlüssel: {}", label),
                 );
             }
             ui.add_space(8.0);
-            ui.label(RichText::new("Passwort für diese eine Anmeldung").size(12.5));
+            ui.label(RichText::new(t!("Passwort für diese eine Anmeldung")).size(12.5));
             let r = ui.add(
                 egui::TextEdit::singleline(&mut ks.password)
                     .password(true)
@@ -560,19 +564,19 @@ fn key_setup(app: &mut App, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             if ks.running {
                 ui.spinner();
-                ui.label(RichText::new("Richte ein…").color(theme::text_dim()));
+                ui.label(RichText::new(t!("Richte ein…")).color(theme::text_dim()));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .add_enabled(
                         !ks.running,
-                        egui::Button::new(RichText::new("Einrichten").strong()),
+                        egui::Button::new(RichText::new(t!("Einrichten")).strong()),
                     )
                     .clicked()
                 {
                     start = true;
                 }
-                if ui.button("Abbrechen").clicked() {
+                if ui.button(t!("Abbrechen")).clicked() {
                     close = true;
                 }
             });
@@ -602,14 +606,14 @@ fn scan(app: &mut App, ctx: &egui::Context) {
     let sc = app.scan.as_mut().expect("checked above");
     let modal = egui::Modal::new(egui::Id::new("scan")).show(ctx, |ui| {
         ui.set_width(560.0);
-        ui.label(theme::heading("Netz durchsuchen", 20.0));
+        ui.label(theme::heading(t!("Netz durchsuchen"), 20.0));
         ui.label(
-            RichText::new("Findet Geräte mit offenem SSH- oder RDP-Port. Es wird nur eine Verbindung aufgebaut, nichts angemeldet.")
+            RichText::new(t!("Findet Geräte mit offenem SSH- oder RDP-Port. Es wird nur eine Verbindung aufgebaut, nichts angemeldet."))
                 .color(theme::text_dim()),
         );
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            ui.label("Bereich");
+            ui.label(t!("Bereich"));
             ui.add_enabled(
                 !sc.running,
                 egui::TextEdit::singleline(&mut sc.range)
@@ -624,7 +628,7 @@ fn scan(app: &mut App, ctx: &egui::Context) {
                     .font(egui::FontId::monospace(13.0)),
             );
             if ui
-                .add_enabled(!sc.running, egui::Button::new(RichText::new("Scannen").strong()))
+                .add_enabled(!sc.running, egui::Button::new(RichText::new(t!("Scannen")).strong()))
                 .clicked()
             {
                 start = true;
@@ -644,9 +648,9 @@ fn scan(app: &mut App, ctx: &egui::Context) {
             );
             ui.label(
                 RichText::new(if sc.running {
-                    format!("{done} / {total} Adressen geprüft · {} gefunden", sc.results.len())
+                    t!("{} / {} Adressen geprüft · {} gefunden", done, total, sc.results.len())
                 } else {
-                    format!("Fertig · {} Geräte gefunden", sc.results.len())
+                    t!("Fertig · {} Geräte gefunden", sc.results.len())
                 })
                 .size(12.0)
                 .color(theme::text_dim()),
@@ -680,7 +684,7 @@ fn scan(app: &mut App, ctx: &egui::Context) {
                     }
                     if is_known {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(RichText::new("schon angelegt").size(12.0).color(theme::text_dim()));
+                            ui.label(RichText::new(t!("schon angelegt")).size(12.0).color(theme::text_dim()));
                         });
                     }
                 });
@@ -689,20 +693,20 @@ fn scan(app: &mut App, ctx: &egui::Context) {
         let picked = sc.results.iter().filter(|(_, t)| *t).count();
         ui.add_space(8.0);
         if !sc.results.is_empty() {
-            ui.checkbox(&mut sc.new_group, "In eine eigene Gruppe „LAN …“ legen");
+            ui.checkbox(&mut sc.new_group, t!("In eine eigene Gruppe „LAN …“ legen"));
         }
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .add_enabled(
                         picked > 0 && !sc.running,
-                        egui::Button::new(RichText::new(format!("{picked} hinzufügen")).strong()),
+                        egui::Button::new(RichText::new(t!("{} hinzufügen", picked)).strong()),
                     )
                     .clicked()
                 {
                     import = true;
                 }
-                if ui.button("Schließen").clicked() {
+                if ui.button(t!("Schließen")).clicked() {
                     close = true;
                 }
             });

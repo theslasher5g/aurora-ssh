@@ -6,7 +6,7 @@ use crate::app::{Action, App};
 use crate::theme;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-    ui.label(theme::heading("Einstellungen", 24.0));
+    ui.label(theme::heading(t!("Einstellungen"), 24.0));
     ui.add_space(14.0);
     theme::hairline(ui);
     ui.add_space(14.0);
@@ -15,7 +15,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         .show(ui, |ui| {
             let mut changed = false;
 
-            theme::section_title(ui, "Design");
+            theme::section_title(ui, t!("Design"));
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(12.0, 12.0);
@@ -36,7 +36,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     .num_columns(2)
                     .spacing([24.0, 12.0])
                     .show(ui, |ui| {
-                        ui.label("Schriftgröße");
+                        ui.label(t!("Schriftgröße"));
                         changed |= ui
                             .add(
                                 egui::Slider::new(&mut app.lib.settings.font_size, 9.0..=28.0)
@@ -50,19 +50,19 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                                 egui::DragValue::new(&mut app.lib.settings.scrollback)
                                     .range(100..=100_000)
                                     .speed(100)
-                                    .suffix(" Zeilen"),
+                                    .suffix(t!(" Zeilen")),
                             )
                             .changed();
                         ui.end_row();
-                        ui.label("Erreichbarkeit");
+                        ui.label(t!("Erreichbarkeit"));
                         changed |= ui
                             .checkbox(
                                 &mut app.lib.settings.reachability,
-                                "Hosts in der Liste regelmäßig anpingen (TCP)",
+                                t!("Hosts in der Liste regelmäßig anpingen (TCP)"),
                             )
                             .changed();
                         ui.end_row();
-                        ui.label("Kopieren bei Auswahl");
+                        ui.label(t!("Kopieren bei Auswahl"));
                         changed |= ui
                             .checkbox(&mut app.lib.settings.copy_on_select, "")
                             .changed();
@@ -71,20 +71,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             });
             ui.add_space(18.0);
 
-            theme::section_title(ui, "Sicherheit & Hilfe");
+            theme::section_title(ui, t!("Sicherheit & Hilfe"));
             theme::card_frame().show(ui, |ui| {
                 ui.set_width(ui.available_width().min(560.0));
                 egui::Grid::new("safety-grid")
                     .num_columns(2)
                     .spacing([16.0, 10.0])
                     .show(ui, |ui| {
-                        ui.label("Automatisch sperren");
+                        ui.label(t!("Automatisch sperren"));
                         let m = app.lib.settings.auto_lock_minutes;
                         let text = |m: u32| {
                             if m == 0 {
-                                "nie".to_string()
+                                t!("nie").to_string()
                             } else {
-                                format!("nach {m} min")
+                                t!("nach {} min", m)
                             }
                         };
                         egui::ComboBox::from_id_salt("autolock")
@@ -103,7 +103,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         ui.end_row();
                         ui.label("");
                         ui.label(
-                            RichText::new("ohne Eingabe – offene Sessions laufen weiter")
+                            RichText::new(t!("ohne Eingabe – offene Sessions laufen weiter"))
                                 .size(12.0)
                                 .color(theme::text_dim()),
                         );
@@ -126,7 +126,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         changed |= ui
                             .checkbox(
                                 &mut app.lib.settings.restore_sessions,
-                                "beim Start wieder öffnen",
+                                t!("beim Start wieder öffnen"),
                             )
                             .changed();
                         ui.end_row();
@@ -134,31 +134,31 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         changed |= ui
                             .add(
                                 egui::TextEdit::singleline(&mut app.lib.settings.editor)
-                                    .hint_text("Standard-App (z.B. code, notepad++)")
+                                    .hint_text(t!("Standard-App (z.B. code, notepad++)"))
                                     .desired_width(240.0),
                             )
-                            .on_hover_text("Programm zum Bearbeiten von Server-Dateien; leer = Standard-App des Systems")
+                            .on_hover_text(t!("Programm zum Bearbeiten von Server-Dateien; leer = Standard-App des Systems"))
                             .changed();
                         ui.end_row();
-                        ui.label("Gefährliche Befehle");
+                        ui.label(t!("Gefährliche Befehle"));
                         changed |= ui
                             .checkbox(
                                 &mut app.lib.settings.warn_everywhere,
-                                "auf allen Hosts nachfragen (sonst nur bei PROD)",
+                                t!("auf allen Hosts nachfragen (sonst nur bei PROD)"),
                             )
                             .changed();
                         ui.end_row();
-                        ui.label("Hilfe");
+                        ui.label(t!("Hilfe"));
                         ui.horizontal(|ui| {
-                            if ui.button("Einführung zeigen").clicked() {
+                            if ui.button(t!("Einführung zeigen")).clicked() {
                                 app.lib.settings.onboarded = false;
                                 app.tour_step = 0;
                                 changed = true;
                             }
-                            if ui.button("Tastenkürzel").clicked() {
+                            if ui.button(t!("Tastenkürzel")).clicked() {
                                 app.show_shortcuts = true;
                             }
-                            if ui.button("Aus ~/.ssh/config importieren").clicked() {
+                            if ui.button(t!("Aus ~/.ssh/config importieren")).clicked() {
                                 actions.push(crate::app::Action::ImportSshConfig);
                             }
                         });
@@ -171,10 +171,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             theme::card_frame().show(ui, |ui| {
                 ui.set_width(ui.available_width().min(560.0));
                 ui.label(
-                    RichText::new(
+                    RichText::new(t!(
                         "Hosts, Gruppen, Snippets und Schlüssel in eine verschlüsselte Datei – \
-                         zum Umziehen auf einen anderen PC oder als Backup.",
-                    )
+                         zum Umziehen auf einen anderen PC oder als Backup."
+                    ))
                     .size(12.5)
                     .color(theme::text_dim()),
                 );
@@ -188,45 +188,45 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     ui.add(
                         egui::TextEdit::singleline(&mut app.export_pw)
                             .password(true)
-                            .hint_text("Passwort für die Datei")
+                            .hint_text(t!("Passwort für die Datei"))
                             .desired_width(220.0),
                     );
-                    if ui.button("Exportieren").clicked() {
+                    if ui.button(t!("Exportieren")).clicked() {
                         app.export_data();
                     }
-                    if ui.button("Importieren").clicked() {
+                    if ui.button(t!("Importieren")).clicked() {
                         app.import_data();
                     }
                 });
             });
             ui.add_space(18.0);
 
-            theme::section_title(ui, "Master-Passwort");
+            theme::section_title(ui, t!("Master-Passwort"));
             theme::card_frame().show(ui, |ui| {
                 ui.set_width(ui.available_width().min(560.0));
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut app.pw_change.new)
                             .password(true)
-                            .hint_text("Neu")
+                            .hint_text(t!("Neu"))
                             .desired_width(170.0),
                     );
                     ui.add(
                         egui::TextEdit::singleline(&mut app.pw_change.confirm)
                             .password(true)
-                            .hint_text("Wiederholen")
+                            .hint_text(t!("Wiederholen"))
                             .desired_width(170.0),
                     );
-                    if ui.button("Ändern").clicked() {
+                    if ui.button(t!("Ändern")).clicked() {
                         if app.pw_change.new.chars().count() < 8 {
-                            app.toast("Mindestens 8 Zeichen", theme::amber());
+                            app.toast(t!("Mindestens 8 Zeichen"), theme::amber());
                         } else if app.pw_change.new != app.pw_change.confirm {
-                            app.toast("Passwörter stimmen nicht überein", theme::amber());
+                            app.toast(t!("Passwörter stimmen nicht überein"), theme::amber());
                         } else if let Some(v) = app.vault.as_mut() {
                             match v.change_password(&app.pw_change.new, &app.keychain) {
                                 Ok(()) => {
                                     app.pw_change = Default::default();
-                                    app.toast("Master-Passwort geändert", theme::green());
+                                    app.toast(t!("Master-Passwort geändert"), theme::green());
                                 }
                                 Err(e) => app.toast(format!("{e:#}"), theme::red()),
                             }
@@ -242,7 +242,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             known_hosts(app, ui, actions);
             ui.add_space(18.0);
 
-            theme::section_title(ui, "Daten");
+            theme::section_title(ui, t!("Daten"));
             theme::card_frame().show(ui, |ui| {
                 ui.set_width(ui.available_width().min(560.0));
                 ui.horizontal(|ui| {
@@ -252,10 +252,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                             .size(12.0),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if theme::icon_button(ui, "⟳", "Serielle Ports neu scannen").clicked() {
+                        if theme::icon_button(ui, "⟳", t!("Serielle Ports neu scannen")).clicked() {
                             app.serial_ports = crate::backend::serial::available_ports();
                             app.toast(
-                                format!("{} serielle Ports", app.serial_ports.len()),
+                                t!("{} serielle Ports", app.serial_ports.len()),
                                 theme::accent(),
                             );
                         }
@@ -280,7 +280,7 @@ fn updates(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
             ));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if app.update.installed {
-                    if theme::primary_button(ui, "Neu starten").clicked() {
+                    if theme::primary_button(ui, t!("Neu starten")).clicked() {
                         crate::update::restart();
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -295,21 +295,21 @@ fn updates(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
                     } else if kind.can_self_update() {
                         if theme::primary_button(
                             ui,
-                            &format!("Auf {} aktualisieren", rel.version_text()),
+                            &t!("Auf {} aktualisieren", rel.version_text()),
                         )
                         .clicked()
                         {
                             app.install_update();
                         }
-                    } else if theme::primary_button(ui, "Download-Seite öffnen").clicked() {
+                    } else if theme::primary_button(ui, t!("Download-Seite öffnen")).clicked() {
                         crate::update::open_url(&rel.page);
                     }
-                    if ui.button("Änderungen").clicked() {
+                    if ui.button(t!("Änderungen")).clicked() {
                         crate::update::open_url(&rel.page);
                     }
                 } else if app.update.checking {
                     ui.spinner();
-                } else if ui.button("Jetzt prüfen").clicked() {
+                } else if ui.button(t!("Jetzt prüfen")).clicked() {
                     app.check_updates();
                 }
             });
@@ -318,7 +318,7 @@ fn updates(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
             && !app.update.installed
         {
             ui.label(
-                RichText::new(format!("Neue Version {} verfügbar.", rel.version_text()))
+                RichText::new(t!("Neue Version {} verfügbar.", rel.version_text()))
                     .color(theme::accent()),
             );
         }
@@ -328,7 +328,7 @@ fn updates(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
         *changed |= ui
             .checkbox(
                 &mut app.lib.settings.check_updates,
-                "Beim Start automatisch nach Updates suchen",
+                t!("Beim Start automatisch nach Updates suchen"),
             )
             .changed();
     });
@@ -390,7 +390,7 @@ fn theme_card(ui: &mut egui::Ui, t: &theme::Palette, selected: bool) -> egui::Re
 
 /// Trusted server keys (TOFU); a changed key triggers a MITM warning on connect.
 fn known_hosts(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-    theme::section_title(ui, "Vertrauenswürdige Server");
+    theme::section_title(ui, t!("Vertrauenswürdige Server"));
     let mut entries: Vec<_> = app
         .lib
         .known_hosts
@@ -401,7 +401,7 @@ fn known_hosts(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     theme::card_frame().show(ui, |ui| {
         ui.set_width(ui.available_width().min(560.0));
         if entries.is_empty() {
-            ui.label(RichText::new("Noch keine").color(theme::text_dim()));
+            ui.label(RichText::new(t!("Noch keine")).color(theme::text_dim()));
         }
         for (host, fp) in entries {
             ui.horizontal(|ui| {
@@ -419,7 +419,7 @@ fn known_hosts(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     );
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if theme::icon_button(ui, "×", "Entfernen").clicked() {
+                    if theme::icon_button(ui, "×", t!("Entfernen")).clicked() {
                         actions.push(Action::ForgetKnownHost(host.clone()));
                     }
                 });
