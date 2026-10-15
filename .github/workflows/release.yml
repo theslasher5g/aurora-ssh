@@ -1,5 +1,5 @@
-# Builds Windows and Linux packages and publishes them together in ONE release.
-#   tag v0.5.0 -> Windows installer + portable zip, .deb + portable tar.gz, SHA256SUMS.txt
+# Builds Windows, Linux and macOS packages and publishes them together in ONE release.
+#   tag v0.5.1 -> Windows installer + portable zip, .deb + portable tar.gz, SHA256SUMS.txt
 # Either push the tag, or run the workflow manually (it then creates the tag itself).
 name: Release
 
@@ -10,8 +10,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version (ohne v)
-        default: "0.5.0"
+        description: Version (without v)
+        default: "0.5.1"
 
 permissions:
   contents: write
@@ -138,8 +138,46 @@ jobs:
             dist/*.deb
             dist/*.tar.gz
 
+  macos:
+    needs: version
+    runs-on: macos-14
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            crates/aurora-rdp -> target
+
+      - name: Test
+        run: cargo test --release --locked
+
+      - name: Build (Apple Silicon + Intel)
+        run: |
+          for t in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --locked --target $t
+            cargo build --release --locked --target $t --manifest-path crates/aurora-rdp/Cargo.toml
+          done
+
+      - name: Package
+        run: packaging/macos/build.sh "$VERSION" dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.dmg
+
   publish:
-    needs: [version, windows, linux]
+    # macOS is a bonus: a failing Mac build must not block Windows/Linux.
+    needs: [version, windows, linux, macos]
+    if: ${{ !cancelled() && needs.windows.result == 'success' && needs.linux.result == 'success' }}
     runs-on: ubuntu-22.04
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -153,7 +191,7 @@ jobs:
       - name: Checksums
         run: |
           cd dist
-          sha256sum *.exe *.zip *.deb *.tar.gz > SHA256SUMS.txt
+          sha256sum *.exe *.zip *.deb *.tar.gz $(ls *.dmg 2>/dev/null) > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Publish release
@@ -164,21 +202,25 @@ jobs:
           name: Aurora ${{ env.VERSION }}
           make_latest: true
           body: |
-            **Aurora ${{ env.VERSION }}** – Windows und Linux
+            **Aurora ${{ env.VERSION }}** – Windows, Linux and macOS
 
-            | System | Datei | Installation |
+            | System | File | Install |
             |---|---|---|
-            | Windows (x64) | `Aurora-${{ env.VERSION }}-windows-x64-setup.exe` | Installer ausführen |
-            | | `Aurora-${{ env.VERSION }}-windows-x64-portable.zip` | entpacken, `Aurora.exe` starten |
+            | Windows (x64) | `Aurora-${{ env.VERSION }}-windows-x64-setup.exe` | run the installer |
+            | | `Aurora-${{ env.VERSION }}-windows-x64-portable.zip` | unzip, start `Aurora.exe` |
             | Linux (x86_64) | `aurora_${{ env.VERSION }}_amd64.deb` | `sudo apt install ./aurora_${{ env.VERSION }}_amd64.deb` |
-            | | `aurora-${{ env.VERSION }}-linux-x86_64.tar.gz` | entpacken, `./install.sh` (nach `~/.local`) oder `./aurora` |
+            | | `aurora-${{ env.VERSION }}-linux-x86_64.tar.gz` | unpack, `./install.sh` (to `~/.local`) or `./aurora` |
+            | macOS 11+ (Apple Silicon & Intel) | `Aurora-${{ env.VERSION }}-macos-universal.dmg` | open, drag Aurora to Applications |
 
-            Ab dieser Version prüft Aurora beim Start auf neue Versionen und aktualisiert sich auf Wunsch selbst
-            (Einstellungen → Updates; Download wird gegen `SHA256SUMS.txt` geprüft).
+            Aurora checks for new versions on start and can update itself (Settings → Updates; downloads are verified against `SHA256SUMS.txt`).
 
-            Windows: Ist kein Code-Signing-Zertifikat hinterlegt, fragt SmartScreen beim ersten Start evtl. nach („Weitere Informationen" → „Trotzdem ausführen").
-            Linux: benötigt glibc ≥ 2.35 sowie X11 oder Wayland mit OpenGL.
+            **Windows:** without a code-signing certificate SmartScreen may ask on first start ("More info" → "Run anyway").
+            **macOS:** the app is not notarized – on first start right-click Aurora → Open, or run `xattr -cr /Applications/Aurora.app`.
+            **Linux:** needs glibc ≥ 2.35 and X11 or Wayland with OpenGL.
+
+            The UI is available in English and German (Settings → Language).
           files: |
+            dist/*.dmg
             dist/*.exe
             dist/*.zip
             dist/*.deb

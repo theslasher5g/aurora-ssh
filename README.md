@@ -1,110 +1,119 @@
 # Aurora
 
-Moderner Client für **SSH, SFTP, RDP und serielle Konsolen** – in Rust, schlicht, schnell, mit
-verschlüsselter Keychain, Snippets, Host-Gruppen und umschaltbaren Themes
+A modern client for **SSH, SFTP, RDP and serial consoles**, written in Rust: clean, fast, with an
+encrypted keychain, snippets, host groups, tunnels and switchable themes. UI in English and German.
 
 ![Hosts](docs/screenshots/hosts.png)
 
 ## Download
 
-Unter [Releases](../../releases) liegen Windows und Linux im selben Release:
+Every [release](../../releases) contains Windows, Linux and macOS:
 
-| System | Datei | Installation |
+| System | File | Install |
 |---|---|---|
-| **Windows** (x64) | `Aurora-<version>-windows-x64-setup.exe` | Installer ausführen |
-| | `Aurora-<version>-windows-x64-portable.zip` | entpacken, `Aurora.exe` starten |
+| **Windows** (x64) | `Aurora-<version>-windows-x64-setup.exe` | run the installer |
+| | `Aurora-<version>-windows-x64-portable.zip` | unzip, start `Aurora.exe` |
 | **Linux** (x86_64) | `aurora_<version>_amd64.deb` | `sudo apt install ./aurora_<version>_amd64.deb` |
-| | `aurora-<version>-linux-x86_64.tar.gz` | entpacken, `./install.sh` oder `./aurora` |
+| | `aurora-<version>-linux-x86_64.tar.gz` | unpack, `./install.sh` or `./aurora` |
+| **macOS** 11+ (Apple Silicon & Intel) | `Aurora-<version>-macos-universal.dmg` | open, drag Aurora to Applications |
+
+The macOS app is not notarized: on first start right-click Aurora → *Open*
+(or `xattr -cr /Applications/Aurora.app`). Language: *Settings → Sprache / Language*.
 
 ## Features
 
-| Bereich | |
+| Area | |
 |---|---|
-| **SSH** | Eigener Terminal-Emulator (256 Farben/Truecolor, Scrollback, Auswahl, Bracketed Paste, Resize), Key/Passwort/Keyboard-Interactive, Keepalive, Reconnect per Enter |
-| **Dateien (SFTP)** | Eigener Bereich in der Leiste. Zwei Spalten, jede Seite **lokal oder ein beliebiger Server** – auch **Server ⇄ Server** (wird über Aurora gestreamt, die Server müssen sich nicht gegenseitig erreichen). Windows-Server mit OpenSSH (`C:\pfad` wird übersetzt, Laufwerksliste lokal), RDP-Hosts bekommen ihren SFTP-Port. Rekursive Transfers mit Fortschritt, Drag & Drop |
-| **Splitscreen** | Bis zu **4 Sessions nebeneinander** (Terminal, Dateien, RDP gemischt) – Port aus der Leiste ins Fenster ziehen (Vorschau zeigt den Platz), ◫-Menü oder Rechtsklick. Pane maximieren per Doppelklick auf den Kopf, „Eingaben an alle Panes“ für den Split, × beendet die Session, ↗ löst sie nur aus dem Split |
-| **RDP** | Direkt im Tab (IronRDP): passt sich der Fenstergröße an, **Zwischenablage in beide Richtungen** (automatisch + Buttons „vom Host kopieren"/„an Host senden"), **Ctrl+Alt+Del**, Windows-Taste, Zwischenablage als Tastatureingabe tippen (für Login-Masken/Konsolen). Optional im System-Client (mstsc, FreeRDP, Remmina) |
-| **Serial** | Port-Erkennung, Baudrate, Format, Flusskontrolle, Zeilenende, lokales Echo |
-| **Keychain** | Passwörter & SSH-Keys, Ed25519-Generator, verschlüsselt mit Argon2id + XChaCha20-Poly1305 |
-| **Snippets** | Platzhalter `{{variable}}` mit Live-Vorschau, Snippet-Leiste im Terminal, in allen Sessions ausführen, Startup-Snippet pro Host |
-| **Gruppen** | Verschachtelt, Farbe & Icon, vererbte Standard-User/-Identität, Favoriten, Zuletzt verbunden, Tags |
-| **Design** | Eigenes „Patchbay“-Design: Sessions als nummerierte Ports mit Status-LED in der Leiste, IBM Plex Sans/Mono. 12 Themes (Phosphor, Glacier, Nord, Dracula, Paper, Tokyo Night, Gruvbox, Catppuccin, Rosé Pine, Solarized Dark/Light, GitHub Light) – das Terminal übernimmt jeweils die passenden Farben. Befehlspalette `Ctrl/⌘+K`, Broadcast-Modus |
-| **Hostliste** | Zeigt nach dem ersten Login **Betriebssystem, Laufzeit, Plattenbelegung und offene Updates** (ein Klick: „Updates installieren“), Latenz und Status (grün = erreichbar, Ring = keine Antwort, rot = letzte Verbindung fehlgeschlagen). Hosts ohne Namen übernehmen den Hostnamen des Servers, Umbenennen per `F2`. Gruppen mit „x/y online“, Vorschlag zum Gruppieren von Hosts im selben Netz. **Netz scannen** findet SSH-/RDP-Geräte im lokalen Netz (mit OS-Hinweis aus dem SSH-Banner). **SSH-Key einrichten**: Key erzeugen, auf dem Server hinterlegen, Anmeldung prüfen – danach ohne Passwort |
-| **Tunnel & Jump-Host** | Port-Weiterleitungen pro Host als Schalter in der Liste (Status-LED, optional Browser öffnen); „Verbinden über“ einen anderen SSH-Host (ProxyJump) – gilt für Terminal, Dateien, Tunnel |
-| **Dateien bearbeiten** | Doppelklick auf eine Server-Datei öffnet sie im eigenen Editor, jedes Speichern lädt sie automatisch hoch (ausführbare Dateitypen werden nie mit der Standard-App geöffnet) |
-| **Hostliste** (2) | Mehrfachauswahl (Ctrl/Shift+Klick) mit Sammelaktionen, Hosts per Drag & Drop in Gruppen, kompakte Ansicht, Sortierung (Name / zuletzt / online) |
-| **Sitzungen** | Offene Sessions samt Splitscreen werden beim nächsten Start wiederhergestellt |
-| **Export / Import** | Hosts, Gruppen, Snippets und Schlüssel als passwortgeschützte, verschlüsselte Datei (Argon2id + XChaCha20-Poly1305) |
-| **Sprache** | Deutsch und Englisch (Einstellungen → Sprache / Language) |
-| **Produktiv** | **Schnellverbindung**: `user@host`, `host:port` oder `ssh -p 2222 user@host` in `Ctrl+K` – danach „Als Host speichern“ · **Ganze Gruppe öffnen** (bis zu 4 Hosts direkt im Splitscreen) · **Suche im Terminal** (`Ctrl+Shift+F`, inkl. Scrollback) · **Schriftgröße per `Ctrl`+Mausrad** pro Pane · markierten Text **als Snippet speichern** · Import aus `~/.ssh/config` |
-| **Sicherheit** | **Umgebungs-Etikett** PROD / STAGING / TEST / DEV pro Host oder Gruppe – PROD-Sessions mit rotem Rahmen und **Nachfrage bei gefährlichen Befehlen** (`rm -rf`, `reboot`, `DROP TABLE` …) · **Notizen pro Host** als Banner beim Verbinden · **automatisches Sperren** nach Inaktivität (Sessions laufen weiter) |
-| **Einstieg** | Kurze Einführung beim ersten Start, Tastenkürzel-Übersicht mit `F1` / `?`, Leerzustände mit direkter Aktion |
-| **Komfort** | Erreichbarkeits-LED je Host (TCP-Check mit Latenz), **Update-Check** beim Start mit Ein-Klick-Update (SHA256-geprüft) · Dateien aufs Terminal ziehen lädt sie per SFTP ins aktuelle Verzeichnis · Kachel blinkt, wenn ein langer Befehl im Hintergrund fertig ist · getrennte Sessions mit ⟳ markiert, Klick verbindet neu |
+| **SSH** | Own terminal emulator (256 colours/truecolor, scrollback, selection, bracketed paste, resize), key/password/keyboard-interactive auth, keepalive, reconnect with Enter |
+| **Files (SFTP)** | Own section in the rail. Two columns, each side **local or any server** – including **server ⇄ server** (streamed through Aurora, the servers don't need to reach each other). Windows servers with OpenSSH (`C:\path` is translated, local drive list), RDP hosts get their SFTP port. Recursive transfers with progress, drag & drop |
+| **Edit remote files** | Double-click a server file to open it in your editor; every save is uploaded automatically (executable file types are never opened with the default app) |
+| **Split screen** | Up to **4 sessions side by side** (terminal, files, RDP mixed) – drag a port from the rail into the window (a preview shows where it lands), ◫ menu or right-click. Double-click a header to maximize, "type into all panes", × ends a session, ↗ only detaches it |
+| **Tunnels & jump host** | Port forwardings per host as switches in the list (status LED, optionally open the browser); "connect via" another SSH host (ProxyJump) – used for terminal, files and tunnels |
+| **RDP** | Inside the tab (IronRDP): follows the window size, **clipboard in both directions** (automatic + "copy from host"/"send to host" buttons), **Ctrl+Alt+Del**, Windows key, type the clipboard as keystrokes (for login screens/consoles). Optionally in the system client (mstsc, FreeRDP, Remmina) |
+| **Serial** | Port detection, baud rate, format, flow control, line ending, local echo |
+| **Host list** | After the first login it shows **OS, uptime, disk usage and pending updates** (one click: "install updates"), latency and status (green = reachable, ring = no answer, red = last connection failed). Hosts without a name take the server's hostname, rename with `F2`. Multi-select (Ctrl/Shift+click) with bulk actions, drag hosts into groups, compact view, sorting. Groups show "x/y online"; hosts in the same subnet can be grouped with one click |
+| **Network scan** | Finds SSH/RDP devices in the local network (with an OS hint from the SSH banner) and adds them |
+| **SSH key setup** | Generates a key, installs it on the server, verifies the login – no more passwords |
+| **Keychain** | Passwords & SSH keys, Ed25519 generator, encrypted with Argon2id + XChaCha20-Poly1305 |
+| **Snippets** | `{{variable}}` placeholders with live preview, snippet panel in the terminal, run in all sessions, startup snippet per host, save selected terminal text as a snippet |
+| **Groups** | Nested, colour & icon, inherited default user/identity, favourites, recently used, tags |
+| **Productivity** | **Quick connect**: `user@host`, `host:port` or `ssh -p 2222 user@host` in `Ctrl+K`, then "save as host" · **open a whole group** side by side · **search in the terminal** (`Ctrl+Shift+F`, incl. scrollback) · **font size with `Ctrl` + mouse wheel** per pane · import from `~/.ssh/config` · sessions and split layout are **restored on the next start** |
+| **Safety** | **Environment labels** PROD / STAGING / TEST / DEV per host or group – PROD sessions get a red frame and **ask before dangerous commands** (`rm -rf`, `reboot`, `DROP TABLE` …) · **notes per host** shown when connecting · **auto-lock** after inactivity (sessions keep running) · clear error messages with the next step |
+| **Comfort** | Reachability LED per host (TCP check with latency), **update check** on start with one-click update (SHA256-verified) · drop files onto a terminal to upload them to the current directory · a port blinks when a long command finishes in the background · disconnected sessions marked with ⟳, click to reconnect · encrypted **export/import** of hosts, groups, snippets and keys |
+| **Design** | Own "Patchbay" design: sessions as numbered ports with status LEDs, IBM Plex Sans/Mono. 12 themes (Phosphor, Glacier, Nord, Dracula, Paper, Tokyo Night, Gruvbox, Catppuccin, Rosé Pine, Solarized Dark/Light, GitHub Light) – the terminal follows the theme. Command palette `Ctrl/⌘+K`, broadcast mode, first-start tour, shortcut overview with `F1` / `?` |
 
 | | |
 |---|---|
-| ![PROD-Warnung](docs/screenshots/prod.png) | ![Session per Drag & Drop neben eine andere legen](docs/screenshots/drag-split.png) |
-| ![Splitscreen](docs/screenshots/split.png) | ![Server ⇄ Server](docs/screenshots/sftp.png) |
-| ![Dateien](docs/screenshots/files.png) | ![Tokyo Night](docs/screenshots/tokyo.png) |
+| ![PROD warning](docs/screenshots/prod.png) | ![Drag a session next to another](docs/screenshots/drag-split.png) |
+| ![Split screen](docs/screenshots/split.png) | ![Server ⇄ server](docs/screenshots/sftp.png) |
+| ![Files](docs/screenshots/files.png) | ![Tokyo Night](docs/screenshots/tokyo.png) |
 | ![Terminal](docs/screenshots/terminal.png) | ![GitHub Light](docs/screenshots/light.png) |
-| ![RDP](docs/screenshots/rdp.png) | ![Paper-Theme](docs/screenshots/paper.png) |
-| ![Befehlspalette](docs/screenshots/palette.png) | ![Snippets](docs/screenshots/snippets.png) |
-| ![Einstellungen & Themes](docs/screenshots/themes.png) | ![Tresor](docs/screenshots/lock.png) |
+| ![RDP](docs/screenshots/rdp.png) | ![Paper theme](docs/screenshots/paper.png) |
+| ![Command palette](docs/screenshots/palette.png) | ![Snippets](docs/screenshots/snippets.png) |
+| ![Settings & themes](docs/screenshots/themes.png) | ![Vault](docs/screenshots/lock.png) |
 
-## Tastenkürzel
+(Screenshots show the German UI.)
 
-| Kürzel | Aktion |
+## Keyboard shortcuts
+
+| Shortcut | Action |
 |---|---|
-| `Ctrl/⌘ + K` | Befehlspalette (Hosts, Snippets, Themes, `user@host`) |
-| `Ctrl + 1…9` | Zu Port/Session 1…9 springen, `Ctrl + 0` zurück zur Übersicht |
-| `Ctrl + Tab` | Nächste Session |
-| `Ctrl/⌘ + Shift + W` | Session schließen |
-| `Ctrl + Shift + F` | Im Terminal suchen (Enter = älterer, Shift+Enter = neuerer Treffer) |
-| `Ctrl` + Mausrad | Schriftgröße des Terminals |
-| `F1` / `?` | Alle Tastenkürzel |
-| `Ctrl + Shift + C` / Auswahl | Kopieren im Terminal |
-| `Enter` in getrennter Session | Neu verbinden |
+| `Ctrl/⌘ + K` | Command palette (hosts, snippets, tunnels, themes, `user@host`) |
+| `Ctrl + 1…9` | Jump to port/session 1…9, `Ctrl + 0` back to the overview |
+| `Ctrl + Tab` | Next session |
+| `Ctrl/⌘ + Shift + W` | Close session |
+| `Ctrl + Shift + F` | Search in the terminal (Enter = older, Shift+Enter = newer match) |
+| `Ctrl` + mouse wheel | Terminal font size |
+| `F1` / `?` | All shortcuts |
+| `Ctrl + Shift + C` / selection | Copy in the terminal |
+| `Enter` in a disconnected session | Reconnect |
 
-## Selbst bauen
+## Building
 
 Rust ≥ 1.88:
 
 ```bash
-cargo build --release                                              # App
-cargo build --release --manifest-path crates/aurora-rdp/Cargo.toml # RDP-Komponente
+cargo build --release                                              # app
+cargo build --release --manifest-path crates/aurora-rdp/Cargo.toml # RDP component
 cargo test
 ```
 
-Die RDP-Komponente ist ein eigenes Crate (`crates/aurora-rdp`), weil IronRDP Krypto-Vorabversionen
-pinnt, die mit russh kollidieren. Sie läuft als Hilfsprozess neben `aurora` und streamt nur
-geänderte Bildbereiche. Zwei kleine Fixes an IronRDP liegen unter `crates/aurora-rdp/vendor`
-(markiert mit `AURORA PATCH`).
+The RDP component is a separate crate (`crates/aurora-rdp`) because IronRDP pins crypto
+pre-releases that clash with russh. It runs as a helper process next to `aurora` and streams only
+changed screen regions. Two small fixes to IronRDP live in `crates/aurora-rdp/vendor`
+(marked `AURORA PATCH`).
 
-Releases: Workflow „Release“ unter *Actions* manuell starten (Version) oder Tag `v<version>` pushen –
-GitHub Actions baut Windows und Linux und veröffentlicht beides in einem Release inkl. `SHA256SUMS.txt`
-(die prüft das In-App-Update).
+Releases: start the "Release" workflow under *Actions* (version input) or push a tag `v<version>` –
+GitHub Actions builds Windows, Linux and macOS and publishes everything in one release including
+`SHA256SUMS.txt` (used by the in-app updater). Windows builds are code-signed when the repository
+secrets `WINDOWS_CERT_PFX` (base64 .pfx) and `WINDOWS_CERT_PASSWORD` are set.
 
-## Daten & Sicherheit
+Translations: German is the source language; English texts live in `src/i18n/*.rs`
+(`t!("…")` in the code). A test fails if a text has no translation.
 
-* `library.json` – Hosts, Gruppen, Snippets, Einstellungen, vertrauenswürdige Server (keine Geheimnisse)
-* `vault.json` – Keychain, verschlüsselt
-* Ort: `~/.local/share/AuroraTerm`, `%APPDATA%\Aurora\AuroraTerm\data` oder `AURORA_DATA_DIR`
+## Data & security
 
-Server-Keys (SSH) und TLS-Zertifikate (RDP) werden beim ersten Verbinden bestätigt und gepinnt.
-Details und Review-Ergebnisse: [SECURITY.md](SECURITY.md).
+* `library.json` – hosts, groups, snippets, settings, trusted servers (no secrets)
+* `vault.json` – keychain, encrypted
+* Location: `~/.local/share/AuroraTerm`, `%APPDATA%\Aurora\AuroraTerm\data`,
+  `~/Library/Application Support/dev.Aurora.AuroraTerm` or `AURORA_DATA_DIR`
 
-## Architektur
+Server keys (SSH) and TLS certificates (RDP) are confirmed and pinned on first connect.
+Details and review results: [SECURITY.md](SECURITY.md).
+
+## Architecture
 
 ```
 src/
-├── app.rs             Zustand, Tabs, Session-Lifecycle, Layout
-├── terminal.rs        vt100 + Renderer + Tastatur→Escape-Sequenzen
-├── theme.rs           Design-System „Patchbay“: Paletten, Fonts, Widgets
-├── update.rs          Update-Check (GitHub Releases) und Selbst-Update
-├── model.rs / store.rs  Daten, Persistenz, Vault
-├── backend/           ssh, sftp (inkl. Server⇄Server), serial, rdp, rdp_embed, reach
-└── ui/                Port-Leiste (chrome), Hosts, Keychain, Snippets, SFTP, RDP, Einstellungen, Dialoge, Palette
+├── app.rs             state, tabs, session lifecycle, layout
+├── terminal.rs        vt100 + renderer + keyboard → escape sequences, search, zoom
+├── theme.rs           "Patchbay" design system: palettes, fonts, widgets
+├── update.rs          update check (GitHub releases) and self-update
+├── i18n/              English texts for the German source strings
+├── model.rs / store.rs  data, persistence, vault, export
+├── backend/           ssh (incl. jump host), sftp (incl. server⇄server), tunnel, scan, serial, rdp, reach
+└── ui/                rail (chrome), hosts, keychain, snippets, files, RDP, settings, dialogs, palette
 assets/fonts/          IBM Plex Sans/Mono (SIL OFL)
-crates/aurora-rdp/     IronRDP-Hilfsprozess (stdio-Protokoll)
-packaging/             .deb/.tar.gz-Skript, Inno-Setup-Installer
+crates/aurora-rdp/     IronRDP helper process (stdio protocol)
+packaging/             .deb/.tar.gz script, Inno Setup installer, macOS .app/.dmg script
 ```

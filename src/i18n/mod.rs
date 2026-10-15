@@ -24,9 +24,14 @@ const TABLES: &[&[(&str, &str)]] = &[
     ui_hosts::T,
 ];
 
-/// "de" (default) or "en".
+/// "de", "en" or "" (follow the system: German for German locales, English otherwise).
 pub fn set_language(code: &str) {
-    ENGLISH.store(code == "en", Ordering::Relaxed);
+    let english = match code {
+        "en" => true,
+        "de" => false,
+        _ => !sys_locale::get_locale().is_some_and(|l| l.to_lowercase().starts_with("de")),
+    };
+    ENGLISH.store(english, Ordering::Relaxed);
 }
 
 pub fn is_english() -> bool {
@@ -163,6 +168,7 @@ mod tests {
     #[test]
     fn templates() {
         set_language("de");
+        assert!(!is_english());
         assert_eq!(trf("{} von {}", &[&1, &"x"]), "1 von x");
         assert_eq!(tr("unbekannt"), "unbekannt");
     }

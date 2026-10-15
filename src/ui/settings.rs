@@ -110,7 +110,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         ui.end_row();
                         ui.label("Sprache / Language");
                         ui.horizontal(|ui| {
-                            for (code, label) in [("", "Deutsch"), ("en", "English")] {
+                            for (code, label) in
+                                [("", "System"), ("de", "Deutsch"), ("en", "English")]
+                            {
                                 if ui
                                     .selectable_label(app.lib.settings.language == code, label)
                                     .clicked()

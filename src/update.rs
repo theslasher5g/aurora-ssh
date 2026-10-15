@@ -51,13 +51,17 @@ pub enum InstallKind {
     WindowsPortable,
     LinuxDeb,
     LinuxPortable(PathBuf),
+    /// Aurora.app from the .dmg: updates open the release page.
+    MacApp,
 }
 
 impl InstallKind {
     pub fn detect() -> InstallKind {
         let exe = std::env::current_exe().unwrap_or_default();
         let dir = exe.parent().map(Path::to_path_buf).unwrap_or_default();
-        if cfg!(windows) {
+        if cfg!(target_os = "macos") {
+            InstallKind::MacApp
+        } else if cfg!(windows) {
             if dir.join("unins000.exe").exists() {
                 InstallKind::WindowsInstaller
             } else {
@@ -74,7 +78,7 @@ impl InstallKind {
     fn asset_suffix(&self) -> Option<&'static str> {
         match self {
             InstallKind::WindowsInstaller => Some("-windows-x64-setup.exe"),
-            InstallKind::WindowsPortable => None,
+            InstallKind::WindowsPortable | InstallKind::MacApp => None,
             InstallKind::LinuxDeb => Some("_amd64.deb"),
             InstallKind::LinuxPortable(_) => Some("-linux-x86_64.tar.gz"),
         }
@@ -157,9 +161,15 @@ fn pick(list: &[serde_json::Value], kind: &InstallKind) -> Option<Release> {
                     .unwrap_or(false)
         })
         .filter_map(parse_release)
-        .filter(|r| match kind.asset_suffix() {
-            Some(sfx) => r.assets.iter().any(|a| a.name.ends_with(sfx)),
-            None => true,
+        .filter(|r| {
+            match kind.asset_suffix().or(match kind {
+                // Only announce versions that actually have a Mac build.
+                InstallKind::MacApp => Some("-macos-universal.dmg"),
+                _ => None,
+            }) {
+                Some(sfx) => r.assets.iter().any(|a| a.name.ends_with(sfx)),
+                None => true,
+            }
         })
         .max_by_key(|r| r.version)
 }
@@ -274,7 +284,7 @@ fn install_blocking(release: &Release, sink: &Sink<UpdateEvent>) -> Result<bool>
             }
             Ok(false)
         }
-        InstallKind::WindowsPortable => unreachable!(),
+        InstallKind::WindowsPortable | InstallKind::MacApp => unreachable!(),
     }
 }
 
@@ -367,7 +377,9 @@ pub fn open_url(url: &str) {
     let r = std::process::Command::new("cmd")
         .args(["/C", "start", "", url])
         .spawn();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    let r = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
     let r = std::process::Command::new("xdg-open").arg(url).spawn();
     if let Err(e) = r {
         log::warn!("Browser konnte nicht geöffnet werden: {e}");

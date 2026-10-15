@@ -10,7 +10,7 @@ ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
 MAIN="$ROOT/target/release/aurora-term"
 HELPER="$ROOT/crates/aurora-rdp/target/release/aurora-rdp"
 
-[[ -x "$MAIN" && -x "$HELPER" ]] || { echo "Erst bauen: cargo build --release (+ crates/aurora-rdp)"; exit 1; }
+[[ -x "$MAIN" && -x "$HELPER" ]] || { echo "Build first: cargo build --release (+ crates/aurora-rdp)"; exit 1; }
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 
@@ -35,9 +35,9 @@ Installed-Size: $SIZE
 Depends: libc6 (>= 2.35), libxkbcommon-x11-0, libgl1 | libegl1
 Suggests: freerdp3-x11 | freerdp2-x11
 Maintainer: Aurora <noreply@users.noreply.github.com>
-Description: Moderner SSH-, SFTP-, RDP- und Serial-Client
- Aurora vereint SSH-Terminal, SFTP-Dateibrowser, eingebettetes RDP und serielle
- Konsolen mit verschlüsselter Keychain, Snippets und Host-Gruppen.
+Description: Modern SSH, SFTP, RDP and serial client
+ Aurora combines an SSH terminal, SFTP file browser, embedded RDP and serial
+ consoles with an encrypted keychain, snippets, tunnels and host groups.
 CONTROL
 dpkg-deb --root-owner-group --build "$PKG" "$OUT/aurora_${VERSION}_${ARCH}.deb" >/dev/null
 rm -rf "$PKG"
@@ -59,7 +59,7 @@ install -Dm755 "$DIR/aurora-rdp" "$HOME/.local/bin/aurora-rdp"
 install -Dm644 "$DIR/icon.png" "$HOME/.local/share/icons/hicolor/256x256/apps/aurora.png"
 mkdir -p "$HOME/.local/share/applications"
 sed "s|^Exec=.*|Exec=$HOME/.local/bin/aurora|" "$DIR/aurora.desktop" > "$HOME/.local/share/applications/aurora.desktop"
-echo "Aurora installiert: $HOME/.local/bin/aurora"
+echo "Aurora installed: $HOME/.local/bin/aurora"
 INSTALL
 chmod 755 "$TAR/install.sh"
 tar -C "$(dirname "$TAR")" -czf "$OUT/$NAME.tar.gz" "$NAME"

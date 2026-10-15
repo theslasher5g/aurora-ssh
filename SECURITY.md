@@ -1,42 +1,48 @@
-# Sicherheit
+# Security
 
-## Modell
+## Model
 
-| Bereich | Schutz |
+| Area | Protection |
 |---|---|
-| Keychain | `vault.json`, Argon2id (64 MiB, t=3) → XChaCha20-Poly1305, frische Nonce pro Speichern, Dateirechte `0600` |
-| SSH / SFTP | Server-Keys per Trust-on-First-Use (SHA256), deutliche Warnung bei geändertem Key |
-| RDP | TLS-Server-Key wird ebenfalls gepinnt (TOFU), **bevor** Zugangsdaten gesendet werden |
-| Prozesse | Passwörter gehen über stdin-Pipes an `aurora-rdp` / FreeRDP, nie über argv oder Umgebungsvariablen |
+| Keychain | `vault.json`, Argon2id (64 MiB, t=3) → XChaCha20-Poly1305, fresh nonce on every save, file mode `0600` |
+| SSH / SFTP | Server keys trust-on-first-use (SHA256), clear warning when a key changes |
+| RDP | The TLS server key is pinned as well (TOFU), **before** any credentials are sent |
+| Processes | Passwords reach `aurora-rdp` / FreeRDP via stdin pipes, never via argv or environment variables |
+| Updates | HTTPS only (system certificate store); the download is verified against the release's `SHA256SUMS.txt` or discarded. Redirects only to `https://`. Downloaded into a private, randomly named directory (0700) so nobody can swap the verified file before it is installed |
+| Server ⇄ server | Data flows through Aurora (no credentials on the servers); file names with `..`/separators are skipped |
+| Reachability | Plain TCP connect to the host port, no data is sent; can be turned off in Settings |
+| Auto-lock | The vault locks after a configurable idle time (default 15 min); keys are dropped from memory, open sessions keep running |
+| PROD guard | Dangerous commands (`rm -r`, `reboot`, `mkfs`, `DROP TABLE` …) must be confirmed on PROD hosts – a safety net, not a security boundary |
+| Server facts | After login only read-only commands run on a separate channel (`/etc/os-release`, `hostname`, `/proc/uptime`, `df`, `apt-get -s upgrade`); output is truncated and stripped of control characters |
+| Network scan | Only TCP connects (+ reading the SSH banner), at most a /22, nothing logs in |
+| SSH key setup | The public key is checked against an allow-list of characters before it goes into the shell command; afterwards a key-only login is verified |
+| Tunnels | Listen on `127.0.0.1` only, never on all interfaces |
+| Jump host | The target's server key is verified exactly like a direct connection (own fingerprint per `host:port`) |
+| Editing remote files | Downloaded into a private, randomly named temp directory (0700); executable types (`.exe`, `.cmd`, `.hta`, `.js`, `.desktop` …) are not opened without an explicitly configured editor; on Windows always Notepad instead of the default app |
+| Export | Own passphrase, Argon2id + XChaCha20-Poly1305, file mode `0600` |
 
-| Updates | Nur HTTPS (System-Zertifikatsspeicher); Download wird gegen `SHA256SUMS.txt` des Releases geprüft, sonst verworfen. Weiterleitungen nur auf `https://` |
-| Server ⇄ Server | Daten laufen durch Aurora (keine Zugangsdaten auf den Servern nötig); Dateinamen mit `..`/Trennern werden übersprungen |
-| Erreichbarkeit | Reiner TCP-Verbindungsaufbau zum Host-Port, es werden keine Daten gesendet; abschaltbar in den Einstellungen |
-| Sperren | Tresor sperrt nach einstellbarer Inaktivität (Standard 15 min); Schlüssel werden aus dem Speicher genommen, offene Sessions laufen weiter |
-| PROD-Schutz | Gefährliche Befehle (`rm -r`, `reboot`, `mkfs`, `DROP TABLE` …) werden auf PROD-Hosts vor dem Absenden bestätigt – eine Komfort-Bremse, keine Sicherheitsgrenze |
-| Server-Infos | Nach dem Login laufen nur lesende Befehle (`/etc/os-release`, `hostname`, `/proc/uptime`, `df`, `apt-get -s upgrade`) auf einem eigenen Kanal; Ausgabe wird gekürzt und von Steuerzeichen bereinigt |
-| Netz-Scan | Nur TCP-Verbindungsaufbau (+ SSH-Banner lesen), höchstens /22, nichts wird angemeldet |
-| SSH-Key einrichten | Öffentlicher Schlüssel wird vor dem Einfügen in den Shell-Befehl auf erlaubte Zeichen geprüft; danach wird die Anmeldung nur mit dem Key verifiziert |
-| Tunnel | Lauschen nur auf `127.0.0.1`, nie auf allen Interfaces |
-| Jump-Host | Der Server-Key des Ziels wird wie bei einer direkten Verbindung geprüft (eigener Fingerprint pro `host:port`) |
-| Dateien bearbeiten | Download in einen privaten, zufällig benannten Temp-Ordner (0700); ausführbare Typen (`.exe`, `.cmd`, `.hta`, `.js`, `.desktop` …) werden ohne festgelegten Editor nicht geöffnet, unter Windows immer Notepad statt Standard-App |
-| Updates (Temp) | Download in einen privaten, zufällig benannten Ordner (0700), damit niemand die geprüfte Datei vor der Installation austauschen kann |
-| Export | Eigene Passphrase, Argon2id + XChaCha20-Poly1305, Dateirechte `0600` |
+## Security review 0.1 (fixed)
 
-## Security-Review 0.1 (behobene Funde)
-
-| # | Schwere | Fund | Fix |
+| # | Severity | Finding | Fix |
 |---|---|---|---|
-| 1 | Hoch | **SFTP-Path-Traversal**: Dateinamen vom Server (z. B. `../../.bashrc`) wurden beim (rekursiven) Download ungeprüft an den lokalen Zielpfad gehängt. | `safe_local_name` lehnt `..`, Trenner, Laufwerks-Präfixe und Steuerzeichen ab; betroffene Einträge werden übersprungen und gemeldet. |
-| 2 | Hoch | **RDP ohne Zertifikatsprüfung**: `ironrdp-tls` akzeptiert jedes Zertifikat; bei Servern ohne NLA ginge das Passwort an einen MITM. | Hook in `vendor/ironrdp-client`: Fingerprint des Server-Keys wird vor CredSSP/ClientInfo geprüft, unbekannt/geändert → Dialog in der App. |
-| 3 | Mittel | **Paste-Jacking**: eingefügter Text konnte `ESC[201~` enthalten, den Bracketed-Paste-Modus beenden und Befehle direkt ausführen. | Start/Ende-Marker werden aus eingefügtem Text entfernt. |
-| 4 | Mittel | **Windows `cmdkey`**: Das RDP-Passwort wurde dauerhaft im Credential Manager abgelegt und stand kurz in der Kommandozeile. | Entfernt; `mstsc` fragt selbst (Standard ist ohnehin der eingebettete Viewer). |
-| 5 | Mittel | **Binary Planting**: Release-Builds suchten `aurora-rdp` auch relativ zum Arbeitsverzeichnis – ein fremdes Binary hätte das RDP-Passwort erhalten. | Relative Suchpfade nur noch in Debug-Builds; Release sucht nur neben der eigenen EXE. |
-| 6 | Niedrig | **Clipboard-Sync** lief immer automatisch, auch wenn „Zwischenablage“ am Host deaktiviert war. | Auto-Sync folgt der Host-Einstellung; die Buttons funktionieren weiterhin manuell. |
+| 1 | High | **SFTP path traversal**: file names from the server (e.g. `../../.bashrc`) were appended to the local target path unchecked during (recursive) downloads. | `safe_local_name` rejects `..`, separators, drive prefixes and control characters; such entries are skipped and reported. |
+| 2 | High | **RDP without certificate check**: `ironrdp-tls` accepts any certificate; on servers without NLA the password would go to a MITM. | Hook in `vendor/ironrdp-client`: the server key fingerprint is checked before CredSSP/ClientInfo; unknown/changed → dialog in the app. |
+| 3 | Medium | **Paste-jacking**: pasted text could contain `ESC[201~`, end bracketed-paste mode and run commands directly. | Start/end markers are stripped from pasted text. |
+| 4 | Medium | **Windows `cmdkey`**: the RDP password was stored permanently in the Credential Manager and briefly appeared on a command line. | Removed; `mstsc` asks itself (the embedded viewer is the default anyway). |
+| 5 | Medium | **Binary planting**: release builds also looked for `aurora-rdp` relative to the working directory – a foreign binary would have received the RDP password. | Relative search paths only in debug builds; release builds only look next to their own executable. |
+| 6 | Low | **Clipboard sync** always ran automatically, even when "clipboard" was disabled for the host. | Auto-sync follows the host setting; the buttons still work manually. |
 
-## Bekannte Grenzen
+## Security review 0.5 (fixed)
 
-* Der entsperrte Vault liegt im Speicher (kein Zeroize); offene Sessions halten ihre Zugangsdaten bis zum Schließen.
-* Die Prüfsummen stammen aus demselben GitHub-Release wie die Pakete (schützt vor defekten/abgebrochenen Downloads und fremden Weiterleitungen, nicht vor einem kompromittierten GitHub-Konto). Pakete sind nicht signiert.
-* Terminal-OSC-52 (Clipboard-Schreiben durch den Server) wird bewusst ignoriert.
-* Keyboard-Interactive-Auth beantwortet alle Prompts mit dem gespeicherten Passwort (OTP-Prompts schlagen dann fehl).
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| 1 | Medium | **Opening remote files**: "edit" handed a downloaded file to the OS default handler – on Windows a server-named `.cmd`/`.hta`/`.js` would have been executed. | Windows always uses Notepad; executable types are refused without a configured editor. |
+| 2 | Medium | **Predictable temp directories** (Linux, multi-user): another local user could pre-create `/tmp/aurora-update-<version>` and swap the verified `.deb` before `pkexec apt-get` read it. | Private, randomly named directories created with mode 0700 (`store::private_temp_dir`) for updates and edited files. |
+
+## Known limitations
+
+* The unlocked vault lives in memory (no zeroize); open sessions keep their credentials until closed.
+* The checksums come from the same GitHub release as the packages (protects against broken/truncated downloads and foreign redirects, not against a compromised GitHub account). Windows builds are only signed when a certificate is configured; the macOS app is ad-hoc signed, not notarized.
+* Terminal OSC 52 (clipboard writes by the server) is deliberately ignored.
+* Keyboard-interactive auth answers every prompt with the stored password (OTP prompts fail).
+* Jump hosts need stored credentials (identity); chains of several jump hosts are not supported.
