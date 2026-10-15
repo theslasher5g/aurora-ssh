@@ -47,6 +47,11 @@ pub struct TermTab {
     pub startup: Option<String>,
     pub show_snippets: bool,
     pub snippet_filter: String,
+    /// Enter was pressed at this time; cleared once the prompt is back.
+    pub cmd_started: Option<Instant>,
+    pub last_output: Instant,
+    /// File upload from a drop onto the terminal: (file, done, total).
+    pub upload: Option<(String, u64, u64)>,
 }
 
 pub struct Transfer {
@@ -174,6 +179,8 @@ pub struct Tab {
     pub subtitle: String,
     pub color: Color32,
     pub kind: TabKind,
+    /// Something happened while the session was out of sight (command done, bell).
+    pub attention: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -268,6 +275,10 @@ pub struct App {
     pub snippet_search: String,
     pub keychain_search: String,
     pub broadcast: bool,
+    /// Typing goes to every terminal shown in the split.
+    pub split_broadcast: bool,
+    /// Split pane temporarily shown alone.
+    pub maximized: Option<u64>,
     pub palette: Palette,
     pub pw_change: PwChange,
 
@@ -375,6 +386,8 @@ impl App {
             snippet_search: String::new(),
             keychain_search: String::new(),
             broadcast: false,
+            split_broadcast: false,
+            maximized: None,
             palette: Palette::default(),
             pw_change: PwChange::default(),
             host_editor: None,
@@ -591,6 +604,7 @@ impl App {
             subtitle,
             color,
             kind,
+            attention: false,
         });
         self.active = Some(id);
     }
@@ -632,6 +646,7 @@ impl App {
             title: "Lokal".into(),
             subtitle: "sftp".into(),
             color: theme::accent(),
+            attention: false,
             kind: TabKind::Sftp(Box::new(SftpTab {
                 panes: [
                     crate::ui::sftp::local_pane(home.clone()),
@@ -712,6 +727,9 @@ impl App {
             startup,
             show_snippets: false,
             snippet_filter: String::new(),
+            cmd_started: None,
+            last_output: Instant::now(),
+            upload: None,
         }
     }
 
@@ -766,7 +784,21 @@ impl App {
             }
             SplitOp::Clear => self.split.clear(),
             SplitOp::Close(id) => self.close_tab(id),
+            SplitOp::Maximize(id) => {
+                self.maximized = if self.maximized == Some(id) {
+                    None
+                } else {
+                    Some(id)
+                };
+                self.active = Some(id);
+                return;
+            }
+            SplitOp::Broadcast => {
+                self.split_broadcast = !self.split_broadcast;
+                return;
+            }
         }
+        self.maximized = None;
         if self.split.len() < 2 {
             self.split.clear();
         }
@@ -801,6 +833,7 @@ impl App {
             if let (Some(order), false) = (order, cancel) {
                 if order.len() >= 2 {
                     self.split = order;
+                    self.maximized = None;
                 }
                 self.active = Some(dragged);
             }
@@ -927,14 +960,45 @@ impl App {
 
     /// Bytes typed into a terminal; mirrored to all terminals in broadcast mode.
     fn send_input(&mut self, from: u64, bytes: Vec<u8>) {
+        let split = self.split_broadcast_targets();
+        let enter = bytes.contains(&b'\r');
         for tab in &mut self.tabs {
             if let TabKind::Term(t) = &mut tab.kind {
-                let target =
-                    tab.id == from || (self.broadcast && matches!(t.state, ConnState::Connected));
+                let live = matches!(t.state, ConnState::Connected);
+                let target = tab.id == from
+                    || (live && self.broadcast)
+                    || (live && split.contains(&from) && split.contains(&tab.id));
                 if target {
                     let _ = t.tx.send(TermCmd::Input(bytes.clone()));
+                    if enter {
+                        t.cmd_started = Some(Instant::now());
+                    }
                 }
             }
+        }
+    }
+
+    /// Panes on screen side by side right now (not counting a maximized pane).
+    pub fn split_view(&self) -> bool {
+        self.split.len() >= 2
+            && self.active.is_some_and(|a| self.split.contains(&a))
+            && self.maximized != self.active
+    }
+
+    /// Tabs currently visible on screen.
+    pub fn visible_tabs(&self) -> Vec<u64> {
+        if self.split_view() {
+            self.split.clone()
+        } else {
+            self.active.into_iter().collect()
+        }
+    }
+
+    fn split_broadcast_targets(&self) -> Vec<u64> {
+        if self.split_broadcast && self.split_view() {
+            self.split.clone()
+        } else {
+            Vec::new()
         }
     }
 
@@ -946,10 +1010,11 @@ impl App {
         let mut sent = 0;
         let active = self.active;
         let everywhere = all || self.broadcast;
+        let split = self.split_broadcast_targets();
         for tab in &mut self.tabs {
             if let TabKind::Term(t) = &mut tab.kind
                 && matches!(t.state, ConnState::Connected)
-                && (everywhere || Some(tab.id) == active)
+                && (everywhere || Some(tab.id) == active || split.contains(&tab.id))
             {
                 let _ = t.tx.send(TermCmd::Input(payload.clone().into_bytes()));
                 sent += 1;
@@ -1035,7 +1100,11 @@ impl App {
         }
         let mut toasts = Vec::new();
         let mut prompts = Vec::new();
+        let visible = self.visible_tabs();
+        let focused = ctx.input(|i| i.focused);
+        let mut notify = false;
         for tab in &mut self.tabs {
+            let seen = focused && visible.contains(&tab.id);
             match &mut tab.kind {
                 TabKind::Term(t) => {
                     while let Ok(ev) = t.rx.try_recv() {
@@ -1063,7 +1132,20 @@ impl App {
                                     let _ = t.tx.send(TermCmd::Input(s.into_bytes()));
                                 }
                             }
-                            TermEvent::Output(b) => t.term.feed(&b),
+                            TermEvent::Output(b) => {
+                                t.term.feed(&b);
+                                t.last_output = Instant::now();
+                            }
+                            TermEvent::UploadProgress { name, done, total } => {
+                                t.upload = Some((name, done, total));
+                            }
+                            TermEvent::UploadDone(r) => {
+                                t.upload = None;
+                                toasts.push(match r {
+                                    Ok(dir) => (format!("Hochgeladen nach {dir}"), theme::green()),
+                                    Err(e) => (format!("Upload fehlgeschlagen: {e}"), theme::red()),
+                                });
+                            }
                             TermEvent::Closed(err) => {
                                 let msg = match &err {
                                     Some(e) => format!("\r\n\x1b[31m✖ {e}\x1b[0m\r\n"),
@@ -1072,9 +1154,48 @@ impl App {
                                 t.term.feed(msg.as_bytes());
                                 if let Some(e) = &err {
                                     toasts.push((format!("{}: {e}", tab.title), theme::red()));
+                                } else if !seen {
+                                    toasts.push((
+                                        format!(
+                                            "{} getrennt – Klick auf die Kachel verbindet neu",
+                                            tab.title
+                                        ),
+                                        theme::amber(),
+                                    ));
                                 }
                                 t.state = ConnState::Closed(err);
+                                t.cmd_started = None;
+                                t.upload = None;
                             }
+                        }
+                    }
+                    // Background notifications: a long command finished, or the bell rang.
+                    if t.term.take_bell() && !seen {
+                        tab.attention = true;
+                        notify = true;
+                    }
+                    if let Some(start) = t.cmd_started {
+                        let quiet = t.last_output.elapsed();
+                        if t.last_output > start
+                            && quiet >= Duration::from_millis(1200)
+                            && t.term.at_prompt()
+                        {
+                            t.cmd_started = None;
+                            let took = t.last_output - start;
+                            if took >= Duration::from_secs(5) && !seen {
+                                tab.attention = true;
+                                notify = true;
+                                toasts.push((
+                                    format!(
+                                        "{}: Befehl fertig nach {}",
+                                        tab.title,
+                                        crate::ui::short_duration(took)
+                                    ),
+                                    theme::accent(),
+                                ));
+                            }
+                        } else {
+                            ctx.request_repaint_after(Duration::from_millis(400));
                         }
                     }
                 }
@@ -1109,6 +1230,14 @@ impl App {
             }
         }
         self.hostkey_queue.extend(prompts);
+        if notify && !focused {
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                egui::UserAttentionType::Informational,
+            ));
+        }
+        for tab in self.tabs.iter_mut().filter(|t| visible.contains(&t.id)) {
+            tab.attention = false;
+        }
         for (text, color) in toasts {
             self.toast(text, color);
         }
@@ -1321,7 +1450,16 @@ impl App {
 
     fn terminal_tab(&mut self, ui: &mut egui::Ui, tab_id: u64, actions: &mut Vec<Action>) {
         let ctx = ui.ctx().clone();
-        let broadcast = self.broadcast;
+        let band = if self.broadcast {
+            Some(theme::pink())
+        } else if self.split_broadcast_targets().contains(&tab_id) {
+            Some(theme::accent())
+        } else {
+            None
+        };
+        // Files dragged in from the OS land in the active pane (the OS doesn't tell us
+        // where the pointer is while dragging).
+        let drop_target = self.active == Some(tab_id);
         let settings = self.lib.settings.clone();
         let accent = self.accent();
         let snippets: Vec<(Uuid, String, String)> = self
@@ -1437,19 +1575,52 @@ impl App {
                     .inner_margin(Margin::symmetric(10, 6)),
             )
             .show(ui, |ui| {
-                if broadcast {
+                if let Some(color) = band {
                     crate::ui::chrome::band(
                         ui.painter(),
                         ui.max_rect().expand2(Vec2::new(10.0, 6.0)),
-                        theme::pink(),
+                        color,
                     );
                 }
-                let overlay = match &t.state {
-                    ConnState::Connecting(_) if t.term.contents().trim().is_empty() => {
-                        Some("Verbinde…")
+                let ssh = matches!(t.spec, ConnectSpec::Ssh(_));
+                let live = matches!(t.state, ConnState::Connected);
+                let (hovering, dropped) = ctx.input(|i| {
+                    (
+                        !i.raw.hovered_files.is_empty(),
+                        i.raw
+                            .dropped_files
+                            .iter()
+                            .map(|f| f.path().to_path_buf())
+                            .collect::<Vec<_>>(),
+                    )
+                });
+                let dir = t.term.cwd();
+                let shown_dir = dir.clone().unwrap_or_else(|| "~".into());
+                let drop_text;
+                let overlay = if hovering && drop_target {
+                    drop_text = if !ssh {
+                        "Hochladen geht nur bei SSH-Sessions".to_string()
+                    } else if !live {
+                        "Nicht verbunden".to_string()
+                    } else {
+                        format!("Loslassen zum Hochladen nach {shown_dir}")
+                    };
+                    Some(drop_text.as_str())
+                } else {
+                    match &t.state {
+                        ConnState::Connecting(_) if t.term.contents().trim().is_empty() => {
+                            Some("Verbinde…")
+                        }
+                        _ => None,
                     }
-                    _ => None,
                 };
+                if !dropped.is_empty() && drop_target && ssh && live {
+                    let _ = t.tx.send(TermCmd::Upload {
+                        files: dropped,
+                        dir,
+                    });
+                    t.upload = Some((String::new(), 0, 0));
+                }
                 let out = t.term.show(
                     ui,
                     egui::Id::new(("term", tab_id)),
@@ -1463,6 +1634,12 @@ impl App {
                 );
                 if let Some((cols, rows)) = out.resize {
                     let _ = t.tx.send(TermCmd::Resize { cols, rows });
+                }
+                if let Some((name, done, total)) = &t.upload {
+                    upload_badge(ui, name, *done, *total);
+                }
+                if matches!(t.state, ConnState::Closed(_)) {
+                    closed_badge(ui);
                 }
                 if !out.input.is_empty() {
                     if matches!(t.state, ConnState::Closed(_)) {
@@ -1714,12 +1891,16 @@ impl eframe::App for App {
                 crate::ui::chrome::split_info_id(),
                 crate::ui::chrome::SplitInfo {
                     split: self.split.clone(),
+                    maximized: self.maximized,
+                    split_broadcast: self.split_broadcast,
                     tabs: self.tabs.iter().map(|t| (t.id, t.title.clone())).collect(),
                 },
             )
         });
-        let split_view =
-            self.split.len() >= 2 && self.active.is_some_and(|a| self.split.contains(&a));
+        if self.maximized.is_some() && self.maximized != self.active {
+            self.maximized = None;
+        }
+        let split_view = self.split_view();
         match self.active {
             Some(_) if split_view => {
                 let ids = self.split.clone();
@@ -1817,6 +1998,70 @@ impl eframe::App for App {
             }
         }
     }
+}
+
+/// Small pill at the bottom of a terminal while dropped files upload.
+fn upload_badge(ui: &egui::Ui, name: &str, done: u64, total: u64) {
+    let r = ui.max_rect();
+    let text = if name.is_empty() {
+        "Upload startet…".to_string()
+    } else {
+        format!(
+            "↑ {name}  {} / {}",
+            crate::ui::human_size(done),
+            crate::ui::human_size(total)
+        )
+    };
+    let painter = ui.painter();
+    let g = painter.layout_no_wrap(text, egui::FontId::proportional(12.0), theme::text());
+    let size = g.size() + Vec2::new(24.0, 14.0);
+    let pill = egui::Rect::from_min_size(
+        egui::pos2(r.right() - size.x - 12.0, r.bottom() - size.y - 10.0),
+        size,
+    );
+    painter.rect(
+        pill,
+        CornerRadius::same(255),
+        theme::bg_card(),
+        Stroke::new(1.0, theme::accent()),
+        egui::StrokeKind::Inside,
+    );
+    let frac = if total > 0 {
+        done as f32 / total as f32
+    } else {
+        0.0
+    };
+    let bar = egui::Rect::from_min_size(
+        pill.left_bottom() + Vec2::new(12.0, -4.0),
+        Vec2::new((pill.width() - 24.0) * frac, 2.0),
+    );
+    painter.rect_filled(bar, CornerRadius::same(1), theme::accent());
+    painter.galley(pill.min + Vec2::new(12.0, 6.0), g, theme::text());
+    ui.ctx().request_repaint();
+}
+
+/// Hint on a dead session.
+fn closed_badge(ui: &egui::Ui) {
+    let r = ui.max_rect();
+    let painter = ui.painter();
+    let g = painter.layout_no_wrap(
+        "Getrennt · Enter verbindet neu".into(),
+        egui::FontId::proportional(12.5),
+        theme::text(),
+    );
+    let size = g.size() + Vec2::new(28.0, 14.0);
+    let pill = egui::Rect::from_min_size(
+        egui::pos2(r.center().x - size.x / 2.0, r.bottom() - size.y - 14.0),
+        size,
+    );
+    painter.rect(
+        pill,
+        CornerRadius::same(255),
+        theme::bg_card(),
+        Stroke::new(1.0, theme::amber()),
+        egui::StrokeKind::Inside,
+    );
+    painter.galley(pill.min + Vec2::new(14.0, 7.0), g, theme::text());
 }
 
 pub fn state_color(s: &ConnState) -> Color32 {

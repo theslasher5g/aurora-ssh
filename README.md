@@ -22,14 +22,14 @@ Unter [Releases](../../releases) liegen Windows und Linux im selben Release:
 |---|---|
 | **SSH** | Eigener Terminal-Emulator (256 Farben/Truecolor, Scrollback, Auswahl, Bracketed Paste, Resize), Key/Passwort/Keyboard-Interactive, Keepalive, Reconnect per Enter |
 | **Dateien (SFTP)** | Eigener Bereich in der Leiste. Zwei Spalten, jede Seite **lokal oder ein beliebiger Server** – auch **Server ⇄ Server** (wird über Aurora gestreamt, die Server müssen sich nicht gegenseitig erreichen). Windows-Server mit OpenSSH (`C:\pfad` wird übersetzt, Laufwerksliste lokal), RDP-Hosts bekommen ihren SFTP-Port. Rekursive Transfers mit Fortschritt, Drag & Drop |
-| **Splitscreen** | Bis zu **4 Sessions nebeneinander** (Terminal, Dateien, RDP gemischt) – Port aus der Leiste ins Fenster ziehen (Vorschau zeigt den Platz), ◫-Symbol im Session-Kopf oder Rechtsklick; × im Kopf beendet die Session, ⊠ löst sie nur aus dem Split |
+| **Splitscreen** | Bis zu **4 Sessions nebeneinander** (Terminal, Dateien, RDP gemischt) – Port aus der Leiste ins Fenster ziehen (Vorschau zeigt den Platz), ◫-Menü oder Rechtsklick. Pane maximieren per Doppelklick auf den Kopf, „Eingaben an alle Panes“ für den Split, × beendet die Session, ↗ löst sie nur aus dem Split |
 | **RDP** | Direkt im Tab (IronRDP): passt sich der Fenstergröße an, **Zwischenablage in beide Richtungen** (automatisch + Buttons „vom Host kopieren"/„an Host senden"), **Ctrl+Alt+Del**, Windows-Taste, Zwischenablage als Tastatureingabe tippen (für Login-Masken/Konsolen). Optional im System-Client (mstsc, FreeRDP, Remmina) |
 | **Serial** | Port-Erkennung, Baudrate, Format, Flusskontrolle, Zeilenende, lokales Echo |
 | **Keychain** | Passwörter & SSH-Keys, Ed25519-Generator, verschlüsselt mit Argon2id + XChaCha20-Poly1305 |
 | **Snippets** | Platzhalter `{{variable}}` mit Live-Vorschau, Snippet-Leiste im Terminal, in allen Sessions ausführen, Startup-Snippet pro Host |
 | **Gruppen** | Verschachtelt, Farbe & Icon, vererbte Standard-User/-Identität, Favoriten, Zuletzt verbunden, Tags |
 | **Design** | Eigenes „Patchbay“-Design: Sessions als nummerierte Ports mit Status-LED in der Leiste, IBM Plex Sans/Mono. 12 Themes (Phosphor, Glacier, Nord, Dracula, Paper, Tokyo Night, Gruvbox, Catppuccin, Rosé Pine, Solarized Dark/Light, GitHub Light) – das Terminal übernimmt jeweils die passenden Farben. Befehlspalette `Ctrl/⌘+K`, Broadcast-Modus |
-| **Komfort** | Erreichbarkeits-LED je Host (TCP-Check mit Latenz), **Update-Check** beim Start mit Ein-Klick-Update (SHA256-geprüft) |
+| **Komfort** | Erreichbarkeits-LED je Host (TCP-Check mit Latenz), **Update-Check** beim Start mit Ein-Klick-Update (SHA256-geprüft) · Dateien aufs Terminal ziehen lädt sie per SFTP ins aktuelle Verzeichnis · Kachel blinkt, wenn ein langer Befehl im Hintergrund fertig ist · getrennte Sessions mit ⟳ markiert, Klick verbindet neu |
 
 | | |
 |---|---|

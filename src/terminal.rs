@@ -34,8 +34,63 @@ struct CellPos {
     col: u16,
 }
 
+/// Side channel of the escape stream: window title, OSC 7 working directory, bell.
+#[derive(Default)]
+pub struct Hooks {
+    title: String,
+    cwd: Option<String>,
+    bell: bool,
+}
+
+impl vt100::Callbacks for Hooks {
+    fn audible_bell(&mut self, _: &mut vt100::Screen) {
+        self.bell = true;
+    }
+
+    fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
+        self.title = String::from_utf8_lossy(title).into_owned();
+    }
+
+    fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
+        // OSC 7 ; file://host/path
+        if let [b"7", url, ..] = params {
+            let url = String::from_utf8_lossy(url);
+            if let Some(rest) = url.strip_prefix("file://") {
+                let path = rest.find('/').map(|i| &rest[i..]).unwrap_or("/");
+                self.cwd = Some(percent_decode(path));
+            }
+        }
+    }
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%'
+            && i + 2 < b.len()
+            && let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16)
+        {
+            out.push(v);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Working directory from a title like `user@host: ~/src` (the Debian/Ubuntu default).
+fn dir_from_title(title: &str) -> Option<String> {
+    let (_, dir) = title.rsplit_once(": ")?;
+    let dir = dir.trim();
+    (dir.starts_with('/') || dir.starts_with('~')).then(|| dir.to_string())
+}
+
 pub struct Terminal {
-    parser: vt100::Parser,
+    parser: vt100::Parser<Hooks>,
     cols: u16,
     rows: u16,
     scrollback_rows: usize,
@@ -62,7 +117,7 @@ pub struct TermView<'a> {
 impl Terminal {
     pub fn new(scrollback: usize) -> Self {
         Self {
-            parser: vt100::Parser::new(24, 80, scrollback),
+            parser: vt100::Parser::new_with_callbacks(24, 80, scrollback, Hooks::default()),
             cols: 80,
             rows: 24,
             scrollback_rows: 0,
@@ -77,6 +132,32 @@ impl Terminal {
 
     pub fn feed(&mut self, bytes: &[u8]) {
         self.parser.process(bytes);
+    }
+
+    /// Remote working directory, if the shell reports it (OSC 7 or the window title).
+    /// May start with `~`.
+    pub fn cwd(&self) -> Option<String> {
+        let h = self.parser.callbacks();
+        h.cwd.clone().or_else(|| dir_from_title(&h.title))
+    }
+
+    /// True once after the remote rang the bell.
+    pub fn take_bell(&mut self) -> bool {
+        std::mem::take(&mut self.parser.callbacks_mut().bell)
+    }
+
+    /// The cursor sits after something that looks like a shell prompt (`$ `, `# `, `> `…).
+    pub fn at_prompt(&self) -> bool {
+        let screen = self.parser.screen();
+        if screen.alternate_screen() {
+            return false;
+        }
+        let (row, col) = screen.cursor_position();
+        let line = screen.contents_between(row, 0, row, col);
+        line.trim_end()
+            .chars()
+            .last()
+            .is_some_and(|c| matches!(c, '$' | '#' | '>' | '%' | '❯' | '➜' | 'λ' | ':'))
     }
 
     pub fn contents(&self) -> String {
@@ -418,6 +499,26 @@ impl Terminal {
         }
 
         out
+    }
+}
+
+#[cfg(test)]
+mod hook_tests {
+    use super::Terminal;
+
+    #[test]
+    fn cwd_and_prompt() {
+        let mut t = Terminal::new(100);
+        t.feed(b"\x1b]0;aurora@vm: ~/src/app\x07aurora@vm:~/src/app$ ");
+        assert_eq!(t.cwd().as_deref(), Some("~/src/app"));
+        assert!(t.at_prompt());
+        t.feed(b"\x1b]7;file://vm/home/a%20b\x07");
+        assert_eq!(t.cwd().as_deref(), Some("/home/a b"));
+        t.feed(b"make\r\nbuilding...");
+        assert!(!t.at_prompt());
+        t.feed(b"\x07");
+        assert!(t.take_bell());
+        assert!(!t.take_bell());
     }
 }
 

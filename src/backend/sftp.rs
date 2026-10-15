@@ -357,7 +357,7 @@ async fn download_file(
     Ok(())
 }
 
-async fn upload(
+pub(crate) async fn upload(
     sftp: &SftpSession,
     local: &Path,
     remote_dir: &str,

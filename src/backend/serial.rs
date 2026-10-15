@@ -92,6 +92,9 @@ pub fn spawn(cfg: SerialSettings, events: Sink<TermEvent>) -> mpsc::UnboundedSen
                     }
                 }
                 TermCmd::Resize { .. } => {}
+                TermCmd::Upload { .. } => events.send(TermEvent::UploadDone(Err(
+                    "Dateien hochladen geht nur bei SSH-Sessions".into(),
+                ))),
                 TermCmd::Close => break,
             }
             if read_thread.is_finished() {

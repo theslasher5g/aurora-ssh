@@ -371,6 +371,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
     let mut toasts: Vec<(String, Color32)> = Vec::new();
     let mut source_change: Option<(usize, Option<Uuid>)> = None;
     let mut reconnect = false;
+    // In a split only the active pane takes files dropped from the OS.
+    let takes_drops = app.active == Some(tab_id);
     let Some(tab) = app.tabs.iter_mut().find(|t| t.id == tab_id) else {
         return;
     };
@@ -432,7 +434,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
             });
         });
 
-    if !dropped.is_empty() {
+    if !dropped.is_empty() && takes_drops {
         let target = pointer
             .and_then(|p| pane_rects.iter().position(|r| r.contains(p)))
             .filter(|i| t.panes[*i].remote.is_some())

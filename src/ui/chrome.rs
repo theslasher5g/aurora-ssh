@@ -71,10 +71,23 @@ fn port_tile(
     led: Color32,
     live: bool,
     active: bool,
+    attention: bool,
+    dead: bool,
 ) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(TILE), Sense::click_and_drag());
     let p = ui.painter();
-    let stroke = if active {
+    let pulse = if attention {
+        // Gentle blink until the session has been looked at.
+        let t = ui.input(|i| i.time) as f32;
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(50));
+        0.35 + 0.65 * (0.5 + 0.5 * (t * 4.0).sin())
+    } else {
+        0.0
+    };
+    let stroke = if attention {
+        Stroke::new(2.0, theme::accent().gamma_multiply(pulse))
+    } else if active {
         Stroke::new(1.5, theme::accent())
     } else if resp.hovered() {
         Stroke::new(1.0, theme::text_dim())
@@ -97,12 +110,24 @@ fn port_tile(
         egui::Align2::CENTER_CENTER,
         label,
         theme::mono_medium(13.0),
-        if active {
+        if dead {
+            theme::text_dim().gamma_multiply(0.5)
+        } else if active {
             theme::text()
         } else {
             theme::text_dim()
         },
     );
+    if dead {
+        // Reconnect hint in the corner.
+        p.text(
+            rect.right_bottom() + Vec2::new(-4.0, -1.0),
+            egui::Align2::RIGHT_BOTTOM,
+            "⟳",
+            FontId::proportional(11.0),
+            theme::amber(),
+        );
+    }
     if index <= 9 {
         p.text(
             rect.left_bottom() + Vec2::new(5.0, -3.0),
@@ -120,7 +145,17 @@ fn port_tile(
         ],
         Stroke::new(2.0, cable.linear_multiply(if active { 1.0 } else { 0.7 })),
     );
-    theme::led(p, rect.right_top() + Vec2::new(-7.0, 7.0), led, live);
+    let led = if attention {
+        theme::accent().gamma_multiply(pulse)
+    } else {
+        led
+    };
+    theme::led(
+        p,
+        rect.right_top() + Vec2::new(-7.0, 7.0),
+        led,
+        live || attention,
+    );
     if in_split {
         p.rect_filled(
             Rect::from_min_size(
@@ -173,6 +208,7 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 let mut activate = None;
                 let mut close = None;
                 let mut reconnect = None;
+                let mut revive = None;
                 let dragging = dragged_tab(ui.ctx()).is_some();
                 for (i, tab) in app.tabs.iter().enumerate() {
                     let (state_color, live, state) = match &tab.kind {
@@ -201,6 +237,7 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         TabKind::Sftp(_) => "Dateien",
                         TabKind::Rdp(_) => "Desktop",
                     };
+                    let dead = matches!(&tab.kind, TabKind::Term(t) if matches!(t.state, ConnState::Closed(_)));
                     let resp = port_tile(
                         ui,
                         app.split.len() >= 2 && app.split.contains(&tab.id),
@@ -210,6 +247,8 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         state_color,
                         live,
                         app.active == Some(tab.id),
+                        tab.attention,
+                        dead,
                     );
                     let tile = resp.rect;
                     if resp.drag_started() {
@@ -227,6 +266,20 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                                     .size(12.0)
                                     .color(theme::text_dim()),
                             );
+                            if dead {
+                                ui.label(
+                                    RichText::new("Getrennt – Klick verbindet neu")
+                                        .size(12.0)
+                                        .color(theme::amber()),
+                                );
+                            }
+                            if tab.attention {
+                                ui.label(
+                                    RichText::new("Neue Ausgabe / Befehl fertig")
+                                        .size(12.0)
+                                        .color(theme::accent()),
+                                );
+                            }
                             ui.label(
                                 RichText::new("Ziehen, um sie neben eine Session zu legen")
                                     .size(11.5)
@@ -245,6 +298,9 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     }
                     if resp.clicked() {
                         activate = Some(tab.id);
+                        if dead {
+                            revive = Some(tab.id);
+                        }
                     }
                     if resp.middle_clicked() {
                         close = Some(tab.id);
@@ -271,7 +327,7 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 if let Some(id) = activate {
                     app.active = Some(id);
                 }
-                if let Some(id) = reconnect {
+                if let Some(id) = reconnect.or(revive) {
                     actions.push(Action::Reconnect(id));
                 }
                 if let Some(id) = close {
@@ -345,6 +401,8 @@ pub fn state_pair(s: &ConnState) -> (String, Color32) {
 #[derive(Clone, Default)]
 pub struct SplitInfo {
     pub split: Vec<u64>,
+    pub maximized: Option<u64>,
+    pub split_broadcast: bool,
     pub tabs: Vec<(u64, String)>,
 }
 
@@ -356,6 +414,10 @@ pub enum SplitOp {
     Clear,
     /// End the session (header ×).
     Close(u64),
+    /// Show this split pane alone / back in the split.
+    Maximize(u64),
+    /// Toggle typing into all split panes at once.
+    Broadcast,
 }
 
 /// Session tile currently dragged out of the rail.
@@ -497,7 +559,7 @@ fn split_menu(ui: &mut egui::Ui, index: usize) {
             .filter(|(id, _)| !shown.contains(id))
             .collect();
         if shown.len() < MAX_SPLIT {
-            if others.is_empty() {
+            if others.is_empty() && !in_split {
                 ui.label(
                     RichText::new("Öffne eine weitere Session, um sie hier daneben zu legen.")
                         .size(12.5)
@@ -519,6 +581,27 @@ fn split_menu(ui: &mut egui::Ui, index: usize) {
         }
         if in_split {
             ui.separator();
+            let mark = if info.split_broadcast { "✔ " } else { "" };
+            if ui
+                .button(format!("{mark}Eingaben an alle Panes senden"))
+                .on_hover_text("Was du in einem Terminal tippst, geht an alle Terminals im Split")
+                .clicked()
+            {
+                push_split_op(ui.ctx(), SplitOp::Broadcast);
+                ui.close();
+            }
+            let maxed = info.maximized == Some(me);
+            if ui
+                .button(if maxed {
+                    "Zurück zum Split"
+                } else {
+                    "Maximieren"
+                })
+                .clicked()
+            {
+                push_split_op(ui.ctx(), SplitOp::Maximize(me));
+                ui.close();
+            }
             if ui.button("Diese Session lösen").clicked() {
                 push_split_op(ui.ctx(), SplitOp::Remove(me));
                 ui.close();
@@ -584,6 +667,12 @@ pub fn session_header(
                 .unwrap_or_default();
             let me = info.tabs.get(index.wrapping_sub(1)).map(|t| t.0);
             let in_split = me.is_some_and(|m| info.split.len() >= 2 && info.split.contains(&m));
+            if let (Some(me), true) = (me, in_split) {
+                let bg = ui.interact(ui.max_rect(), ui.id().with("header-bg"), Sense::click());
+                if bg.double_clicked() {
+                    push_split_op(ui.ctx(), SplitOp::Maximize(me));
+                }
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 if let (Some(me), true) = (me, in_split) {
@@ -594,21 +683,62 @@ pub fn session_header(
                         } else {
                             theme::text_dim()
                         };
-                        let b = Rect::from_center_size(r.center(), Vec2::splat(14.0));
-                        p.rect_stroke(
-                            b,
-                            CornerRadius::same(3),
-                            Stroke::new(1.2, color),
-                            egui::StrokeKind::Inside,
-                        );
-                        let c = b.center();
                         let s = Stroke::new(1.3, color);
-                        p.line_segment([c + Vec2::new(-3.0, -3.0), c + Vec2::new(3.0, 3.0)], s);
-                        p.line_segment([c + Vec2::new(-3.0, 3.0), c + Vec2::new(3.0, -3.0)], s);
+                        let c = r.center();
+                        // Box open at the top right with an arrow leaving it.
+                        let b = Rect::from_center_size(c + Vec2::new(-1.0, 1.0), Vec2::splat(11.0));
+                        p.line_segment([b.left_top() + Vec2::new(0.0, 0.0), b.left_bottom()], s);
+                        p.line_segment([b.left_bottom(), b.right_bottom()], s);
+                        p.line_segment([b.left_top(), b.left_top() + Vec2::new(4.0, 0.0)], s);
+                        p.line_segment(
+                            [b.right_bottom(), b.right_bottom() - Vec2::new(0.0, 4.0)],
+                            s,
+                        );
+                        let tip = b.right_top() + Vec2::new(2.0, -2.0);
+                        p.line_segment([b.center(), tip], s);
+                        p.line_segment([tip, tip + Vec2::new(-4.5, 0.0)], s);
+                        p.line_segment([tip, tip + Vec2::new(0.0, 4.5)], s);
                     })
-                    .on_hover_text("Aus dem Splitscreen lösen (Session bleibt offen)");
+                    .on_hover_text("Aus dem Splitscreen lösen – Session bleibt offen");
                     if resp.clicked() {
                         push_split_op(ui.ctx(), SplitOp::Remove(me));
+                    }
+                    let maxed = info.maximized == Some(me);
+                    let resp = header_icon(ui, |p, r, hot| {
+                        let color = if maxed {
+                            theme::accent()
+                        } else if hot {
+                            theme::text()
+                        } else {
+                            theme::text_dim()
+                        };
+                        let s = Stroke::new(1.3, color);
+                        let b = Rect::from_center_size(r.center(), Vec2::splat(12.0));
+                        let l = 4.0;
+                        // Corner brackets: outward = maximize, inward = restore.
+                        for (corner, dx, dy) in [
+                            (b.left_top(), 1.0, 1.0),
+                            (b.right_top(), -1.0, 1.0),
+                            (b.left_bottom(), 1.0, -1.0),
+                            (b.right_bottom(), -1.0, -1.0),
+                        ] {
+                            let c = if maxed {
+                                corner + Vec2::new(dx * l, dy * l)
+                            } else {
+                                corner
+                            };
+                            let (sx, sy) = if maxed { (-dx, -dy) } else { (dx, dy) };
+                            p.line_segment([c, c + Vec2::new(sx * l, 0.0)], s);
+                            p.line_segment([c, c + Vec2::new(0.0, sy * l)], s);
+                        }
+                    })
+                    .on_hover_text(if maxed {
+                        "Zurück zum Splitscreen (Doppelklick auf den Kopf)"
+                    } else {
+                        "Maximieren (Doppelklick auf den Kopf)"
+                    });
+                    if resp.clicked() {
+                        push_split_op(ui.ctx(), SplitOp::Maximize(me));
                     }
                 }
                 split_menu(ui, index);

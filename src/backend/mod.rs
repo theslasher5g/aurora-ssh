@@ -14,7 +14,16 @@ use tokio::sync::{mpsc, oneshot};
 #[derive(Debug)]
 pub enum TermCmd {
     Input(Vec<u8>),
-    Resize { cols: u16, rows: u16 },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
+    /// Upload local files/folders over SFTP on the same connection. `dir` is the
+    /// shell's working directory if known (may start with `~`), else the home folder.
+    Upload {
+        files: Vec<std::path::PathBuf>,
+        dir: Option<String>,
+    },
     Close,
 }
 
@@ -24,6 +33,13 @@ pub enum TermEvent {
     Status(String),
     Connected,
     Output(Vec<u8>),
+    UploadProgress {
+        name: String,
+        done: u64,
+        total: u64,
+    },
+    /// Upload finished: target directory, or the error.
+    UploadDone(Result<String, String>),
     Closed(Option<String>),
 }
 
@@ -62,6 +78,10 @@ impl<T> Sink<T> {
     pub fn send(&self, ev: T) {
         let _ = self.tx.send(ev);
         self.ctx.request_repaint();
+    }
+
+    pub fn ctx(&self) -> egui::Context {
+        self.ctx.clone()
     }
 
     pub fn is_closed(&self) -> bool {

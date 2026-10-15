@@ -46,6 +46,16 @@ pub fn human_size(bytes: u64) -> String {
     }
 }
 
+/// `12 s`, `3 min 5 s`, `1 h 20 min`.
+pub fn short_duration(d: std::time::Duration) -> String {
+    let s = d.as_secs();
+    match s {
+        0..60 => format!("{s} s"),
+        60..3600 => format!("{} min {} s", s / 60, s % 60),
+        _ => format!("{} h {} min", s / 3600, (s % 3600) / 60),
+    }
+}
+
 pub fn relative_time(t: chrono::DateTime<chrono::Utc>) -> String {
     let secs = (chrono::Utc::now() - t).num_seconds().max(0);
     match secs {

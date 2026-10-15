@@ -187,7 +187,7 @@ async fn run_shell(
     prompts: Sink<HostKeyPrompt>,
 ) -> Result<()> {
     events.send(TermEvent::Status(format!("Verbinde mit {}…", p.host_id())));
-    let handle = connect(p, prompts).await?;
+    let handle = Arc::new(connect(p, prompts).await?);
     events.send(TermEvent::Status("Öffne Shell…".into()));
     let channel = handle.channel_open_session().await?;
     channel
@@ -203,6 +203,13 @@ async fn run_shell(
                 Some(TermCmd::Input(bytes)) => writer.data_bytes(bytes).await?,
                 Some(TermCmd::Resize { cols, rows }) => {
                     writer.window_change(cols as u32, rows as u32, 0, 0).await?
+                }
+                Some(TermCmd::Upload { files, dir }) => {
+                    let (handle, events) = (handle.clone(), events.clone());
+                    tokio::spawn(async move {
+                        let r = upload(&handle, files, dir, &events).await;
+                        events.send(TermEvent::UploadDone(r.map_err(|e| format!("{e:#}"))));
+                    });
                 }
                 Some(TermCmd::Close) | None => {
                     let _ = writer.close().await;
@@ -222,4 +229,54 @@ async fn run_shell(
         .disconnect(Disconnect::ByApplication, "bye", "en")
         .await;
     Ok(())
+}
+
+/// Files dropped onto a terminal: a second channel on the same connection runs SFTP.
+async fn upload(
+    handle: &SshHandle,
+    files: Vec<std::path::PathBuf>,
+    dir: Option<String>,
+    events: &Sink<TermEvent>,
+) -> Result<String> {
+    use super::sftp::{SftpEvent, join, upload};
+    let channel = handle.channel_open_session().await?;
+    channel.request_subsystem(true, "sftp").await?;
+    let sftp = russh_sftp::client::SftpSession::new(channel.into_stream()).await?;
+    let home = sftp.canonicalize(".").await.unwrap_or_else(|_| "/".into());
+    let target = match dir.as_deref() {
+        None | Some("~") => home.clone(),
+        Some(d) if d.starts_with("~/") => join(&home, &d[2..]),
+        Some(d) if d.starts_with('/') => d.to_string(),
+        Some(d) => join(&home, d),
+    };
+    // A prompt title can be stale or abbreviated; fall back to home.
+    let target = if sftp.try_exists(target.clone()).await.unwrap_or(false) {
+        target
+    } else {
+        home
+    };
+
+    let (progress, mut rx) = Sink::<SftpEvent>::new(events.ctx());
+    let fwd = events.clone();
+    let forward = tokio::spawn(async move {
+        while let Some(ev) = rx.recv().await {
+            if let SftpEvent::Progress {
+                name, done, total, ..
+            } = ev
+            {
+                fwd.send(TermEvent::UploadProgress { name, done, total });
+            }
+        }
+    });
+    let mut result = Ok(());
+    for f in &files {
+        result = upload(&sftp, f, &target, 0, &progress).await;
+        if result.is_err() {
+            break;
+        }
+    }
+    drop(progress);
+    let _ = forward.await;
+    let _ = sftp.close().await;
+    result.map(|_| target)
 }
