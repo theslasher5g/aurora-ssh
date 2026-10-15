@@ -1,6 +1,7 @@
 # Builds and publishes releases. Two separate releases per version:
-#   git tag v0.1.0-windows && git push origin v0.1.0-windows   -> Windows installer + portable zip
-#   git tag v0.1.0-linux   && git push origin v0.1.0-linux     -> .deb + portable tar.gz
+#   tag v0.1.0-windows -> Windows installer + portable zip
+#   tag v0.1.0-linux   -> .deb + portable tar.gz
+# Either push the tag, or run the workflow manually (it then creates the tag itself).
 name: Release
 
 on:
@@ -8,6 +9,15 @@ on:
     tags:
       - "v*-windows"
       - "v*-linux"
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Plattform
+        type: choice
+        options: [windows, linux]
+      version:
+        description: Version (ohne v)
+        default: "0.1.0"
 
 permissions:
   contents: write
@@ -17,7 +27,7 @@ env:
 
 jobs:
   windows:
-    if: endsWith(github.ref_name, '-windows')
+    if: (github.event_name == 'push' && endsWith(github.ref_name, '-windows')) || inputs.platform == 'windows'
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -41,7 +51,7 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}" -replace '^v', '' -replace '-windows$', ''
+          $version = if ("${{ inputs.version }}") { "${{ inputs.version }}" } else { "${{ github.ref_name }}" -replace '^v', '' -replace '-windows$', '' }
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
           New-Item -ItemType Directory -Force dist/Aurora | Out-Null
           Copy-Item target/release/aurora-term.exe dist/Aurora/Aurora.exe
@@ -61,6 +71,8 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ env.VERSION }}-windows
+          target_commitish: ${{ github.sha }}
           name: Aurora ${{ env.VERSION }} für Windows
           body: |
             **Aurora ${{ env.VERSION }} – Windows (x64)**
@@ -76,7 +88,7 @@ jobs:
             dist/SHA256SUMS-windows.txt
 
   linux:
-    if: endsWith(github.ref_name, '-linux')
+    if: (github.event_name == 'push' && endsWith(github.ref_name, '-linux')) || inputs.platform == 'linux'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -99,14 +111,16 @@ jobs:
 
       - name: Package
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          VERSION="${VERSION%-linux}"
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ]; then VERSION="${GITHUB_REF_NAME#v}"; VERSION="${VERSION%-linux}"; fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           packaging/linux/build.sh "$VERSION" dist
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ env.VERSION }}-linux
+          target_commitish: ${{ github.sha }}
           name: Aurora ${{ env.VERSION }} für Linux
           body: |
             **Aurora ${{ env.VERSION }} – Linux (x86_64)**

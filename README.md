@@ -60,8 +60,8 @@ pinnt, die mit russh kollidieren. Sie läuft als Hilfsprozess neben `aurora` und
 geänderte Bildbereiche. Zwei kleine Fixes an IronRDP liegen unter `crates/aurora-rdp/vendor`
 (markiert mit `AURORA PATCH`).
 
-Releases: Tag `v<version>-windows` bzw. `v<version>-linux` pushen – GitHub Actions baut und
-veröffentlicht das jeweilige Release (`.github/workflows/release.yml`).
+Releases: Workflow „Release“ unter *Actions* manuell starten (Plattform + Version) oder Tag
+`v<version>-windows` / `v<version>-linux` pushen – GitHub Actions baut und veröffentlicht das Release.
 
 ## Daten & Sicherheit
 
