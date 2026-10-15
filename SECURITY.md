@@ -12,6 +12,8 @@
 | Updates | Nur HTTPS (System-Zertifikatsspeicher); Download wird gegen `SHA256SUMS.txt` des Releases geprüft, sonst verworfen. Weiterleitungen nur auf `https://` |
 | Server ⇄ Server | Daten laufen durch Aurora (keine Zugangsdaten auf den Servern nötig); Dateinamen mit `..`/Trennern werden übersprungen |
 | Erreichbarkeit | Reiner TCP-Verbindungsaufbau zum Host-Port, es werden keine Daten gesendet; abschaltbar in den Einstellungen |
+| Sperren | Tresor sperrt nach einstellbarer Inaktivität (Standard 15 min); Schlüssel werden aus dem Speicher genommen, offene Sessions laufen weiter |
+| PROD-Schutz | Gefährliche Befehle (`rm -r`, `reboot`, `mkfs`, `DROP TABLE` …) werden auf PROD-Hosts vor dem Absenden bestätigt – eine Komfort-Bremse, keine Sicherheitsgrenze |
 
 ## Security-Review 0.1 (behobene Funde)
 

@@ -12,7 +12,9 @@ use crate::backend::rdp::{RdpLaunch, RdpProcess};
 use crate::backend::sftp::{Entry, SftpCmd, SftpEvent};
 use crate::backend::ssh::SshParams;
 use crate::backend::{self, HostKeyPrompt, Sink, TermCmd, TermEvent};
-use crate::model::{Group, Host, Identity, Keychain, Library, Protocol, SerialSettings, Snippet};
+use crate::model::{
+    Env, Group, Host, Identity, Keychain, Library, Protocol, SerialSettings, Snippet,
+};
 use crate::store::{Store, Vault};
 use crate::terminal::{TermView, Terminal};
 use crate::theme;
@@ -181,6 +183,12 @@ pub struct Tab {
     pub kind: TabKind,
     /// Something happened while the session was out of sight (command done, bell).
     pub attention: bool,
+    pub env: Env,
+    /// Host notes, shown as a banner when the session opens.
+    pub notes: String,
+    pub notes_open: bool,
+    /// Quick-connect target that isn't saved as a host yet.
+    pub unsaved: Option<Host>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -207,6 +215,16 @@ pub struct HostEditor {
     pub host: Host,
     pub is_new: bool,
     pub tags_text: String,
+}
+
+impl HostEditor {
+    pub fn new(host: Host, is_new: bool) -> Self {
+        Self {
+            tags_text: host.tags.join(", "),
+            host,
+            is_new,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -266,7 +284,17 @@ pub struct App {
     pub files_left: Option<Uuid>,
     pub files_right: Option<Uuid>,
     /// Pane connections waiting for the password dialog to be free.
-    pub pane_queue: VecDeque<(u64, usize, Host)>,
+    /// Connections waiting for the password dialog to be free.
+    pub connect_queue: VecDeque<(Purpose, Host)>,
+    /// Hosts of a group being opened together; their sessions go into the split.
+    pub group_split: Vec<Uuid>,
+    /// Enter on a dangerous command waits here for confirmation: (tab, command, why).
+    pub danger: Option<(u64, String, &'static str)>,
+    pub last_activity: Instant,
+    pub show_shortcuts: bool,
+    pub tour_step: usize,
+    /// Terminal that gets the keyboard focus on the next frame.
+    pub focus_term: Option<u64>,
     pub next_id: u64,
 
     pub search: String,
@@ -335,6 +363,15 @@ pub enum Action {
     Lock,
     SetTheme(String),
     Reconnect(u64),
+    /// Open every host of a group, side by side.
+    OpenGroup(Uuid),
+    /// Snippet editor prefilled with this text.
+    SnippetFromText(String),
+    /// Host editor for a quick-connect session.
+    SaveQuickHost(u64),
+    /// New host with this hostname (from a search without results).
+    NewHostNamed(String),
+    ImportSshConfig,
     /// Ask before running the inner (destructive) action.
     Confirm(String, Box<Action>),
 }
@@ -379,7 +416,13 @@ impl App {
             split: Vec::new(),
             files_left: None,
             files_right: None,
-            pane_queue: VecDeque::new(),
+            connect_queue: VecDeque::new(),
+            group_split: Vec::new(),
+            danger: None,
+            last_activity: Instant::now(),
+            show_shortcuts: false,
+            tour_step: 0,
+            focus_term: None,
             next_id: 1,
             search: String::new(),
             host_filter: 0,
@@ -493,9 +536,7 @@ impl App {
         };
         if needs_secret && !has_secret {
             if self.password_prompt.is_some() {
-                if let Purpose::Pane(tab, idx) = purpose {
-                    self.pane_queue.push_back((tab, idx, host));
-                }
+                self.connect_queue.push_back((purpose, host));
                 return;
             }
             self.password_prompt = Some(PasswordPrompt {
@@ -605,7 +646,20 @@ impl App {
             color,
             kind,
             attention: false,
+            env: self.lib.env_of(host),
+            notes: host.notes.trim().to_string(),
+            notes_open: !host.notes.trim().is_empty(),
+            unsaved: (self.lib.host(host.id).is_none() && host.protocol == Protocol::Ssh)
+                .then(|| host.clone()),
         });
+        if self.group_split.contains(&host.id) {
+            self.group_split.retain(|h| *h != host.id);
+            if self.split.len() < crate::ui::chrome::MAX_SPLIT {
+                self.split.push(id);
+            }
+            self.active = self.split.first().copied().or(Some(id));
+            return;
+        }
         self.active = Some(id);
     }
 
@@ -647,6 +701,10 @@ impl App {
             subtitle: "sftp".into(),
             color: theme::accent(),
             attention: false,
+            env: Env::None,
+            notes: String::new(),
+            notes_open: false,
+            unsaved: None,
             kind: TabKind::Sftp(Box::new(SftpTab {
                 panes: [
                     crate::ui::sftp::local_pane(home.clone()),
@@ -801,6 +859,22 @@ impl App {
         self.maximized = None;
         if self.split.len() < 2 {
             self.split.clear();
+        }
+    }
+
+    /// Coloured frame around PROD / STAGING sessions.
+    fn env_frame(&self, painter: &egui::Painter, rect: egui::Rect, id: u64) {
+        let Some(env) = self.tabs.iter().find(|t| t.id == id).map(|t| t.env) else {
+            return;
+        };
+        if matches!(env, Env::Prod | Env::Staging) {
+            let width = if env == Env::Prod { 3.0 } else { 2.0 };
+            painter.rect_stroke(
+                rect,
+                CornerRadius::ZERO,
+                Stroke::new(width, theme::env_color(env)),
+                egui::StrokeKind::Inside,
+            );
         }
     }
 
@@ -959,7 +1033,7 @@ impl App {
     }
 
     /// Bytes typed into a terminal; mirrored to all terminals in broadcast mode.
-    fn send_input(&mut self, from: u64, bytes: Vec<u8>) {
+    pub fn send_input(&mut self, from: u64, bytes: Vec<u8>) {
         let split = self.split_broadcast_targets();
         let enter = bytes.contains(&b'\r');
         for tab in &mut self.tabs {
@@ -1435,6 +1509,88 @@ impl App {
                 self.save_library();
             }
             Action::Confirm(text, inner) => self.confirm_delete = Some((text, *inner)),
+            Action::OpenGroup(gid) => {
+                let hosts: Vec<Host> = self
+                    .lib
+                    .hosts_in_group(gid)
+                    .into_iter()
+                    .filter(|h| h.protocol != Protocol::Serial)
+                    .take(crate::ui::chrome::MAX_SPLIT)
+                    .collect();
+                if hosts.is_empty() {
+                    self.toast("Die Gruppe enthält keine Hosts", theme::amber());
+                } else {
+                    self.split.clear();
+                    self.maximized = None;
+                    self.group_split = hosts.iter().map(|h| h.id).collect();
+                    for h in hosts {
+                        self.connect_host(h, Purpose::Terminal, ctx);
+                    }
+                }
+            }
+            Action::SnippetFromText(text) => {
+                let name: String = text
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(40)
+                    .collect();
+                self.snippet_editor = Some((
+                    Snippet {
+                        name: name.trim().to_string(),
+                        script: text.trim_end().to_string(),
+                        ..Default::default()
+                    },
+                    true,
+                    String::new(),
+                ));
+            }
+            Action::SaveQuickHost(tab_id) => {
+                if let Some(h) = self
+                    .tabs
+                    .iter()
+                    .find(|t| t.id == tab_id)
+                    .and_then(|t| t.unsaved.clone())
+                {
+                    let mut h = h;
+                    if h.label.is_empty() {
+                        h.label = h.hostname.clone();
+                    }
+                    self.host_editor = Some(HostEditor::new(h, true));
+                }
+            }
+            Action::NewHostNamed(name) => {
+                let host = parse_quick(&name).unwrap_or_else(|| Host {
+                    hostname: name.trim().to_string(),
+                    ..Default::default()
+                });
+                self.host_editor = Some(HostEditor::new(host, true));
+            }
+            Action::ImportSshConfig => {
+                let found = ssh_config_hosts();
+                let mut added = 0;
+                for h in found {
+                    let dup = self.lib.hosts.iter().any(|x| {
+                        x.hostname.eq_ignore_ascii_case(&h.hostname)
+                            && x.port == h.port
+                            && x.username == h.username
+                    });
+                    if !dup {
+                        self.lib.hosts.push(h);
+                        added += 1;
+                    }
+                }
+                self.save_library();
+                self.toast(
+                    match added {
+                        0 => "Keine neuen Hosts in ~/.ssh/config".to_string(),
+                        1 => "1 Host importiert".to_string(),
+                        n => format!("{n} Hosts importiert"),
+                    },
+                    theme::green(),
+                );
+            }
             Action::Lock => {
                 self.vault = None;
                 self.keychain = Keychain::default();
@@ -1470,11 +1626,28 @@ impl App {
             .collect();
         let mut reconnect = false;
         let mut input = None;
+        let mut danger = None;
+        // Kept until the terminal really has the focus: a modal that just closed still
+        // blocks focus changes for a frame.
+        let refocus = self.focus_term == Some(tab_id);
+        let mut focused_now = false;
+        let saved_ids: Vec<Uuid> = self.lib.hosts.iter().map(|h| h.id).collect();
         let index = self.tabs.iter().position(|t| t.id == tab_id).unwrap_or(0) + 1;
         let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
             return;
         };
         let (title, subtitle) = (tab.title.clone(), tab.subtitle.clone());
+        let guarded = tab.env == Env::Prod || settings.warn_everywhere;
+        let unsaved = tab
+            .unsaved
+            .as_ref()
+            .is_some_and(|h| saved_ids.iter().all(|id| *id != h.id));
+        let has_notes = !tab.notes.is_empty();
+        let notes = tab.notes.clone();
+        let mut notes_open = tab.notes_open;
+        let mut toggle_notes = false;
+        let mut save_host = false;
+        let mut search = false;
         let TabKind::Term(t) = &mut tab.kind else {
             return;
         };
@@ -1493,6 +1666,20 @@ impl App {
                 if theme::icon_button(ui, "⚡", "Snippets ein-/ausblenden").clicked() {
                     toggle_snippets = true;
                 }
+                if theme::icon_button(ui, "🔍", "Im Terminal suchen (Ctrl+Shift+F)").clicked() {
+                    search = true;
+                }
+                if has_notes && theme::icon_button(ui, "📝", "Notizen zum Host").clicked() {
+                    toggle_notes = true;
+                }
+                if unsaved
+                    && ui
+                        .button("Als Host speichern")
+                        .on_hover_text("Diese Schnellverbindung in die Hostliste übernehmen")
+                        .clicked()
+                {
+                    save_host = true;
+                }
                 if closed && theme::icon_button(ui, "⟳", "Neu verbinden (Enter)").clicked() {
                     reconnect = true;
                 }
@@ -1500,6 +1687,37 @@ impl App {
         );
         if toggle_snippets {
             t.show_snippets = !t.show_snippets;
+        }
+        if search {
+            t.term.open_search();
+        }
+        if toggle_notes {
+            notes_open = !notes_open;
+        }
+        if notes_open && has_notes {
+            egui::Panel::top(egui::Id::new(("term-notes", tab_id)))
+                .frame(
+                    egui::Frame::NONE
+                        .fill(theme::amber().gamma_multiply(0.10))
+                        .inner_margin(Margin::symmetric(18, 8)),
+                )
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("📝").color(theme::amber()));
+                        ui.add(
+                            egui::Label::new(RichText::new(&notes).size(13.0).color(theme::text()))
+                                .wrap(),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("×").on_hover_text("Ausblenden").clicked() {
+                                notes_open = false;
+                            }
+                        });
+                    });
+                });
+        }
+        if save_host {
+            actions.push(Action::SaveQuickHost(tab_id));
         }
 
         if t.show_snippets {
@@ -1621,6 +1839,9 @@ impl App {
                     });
                     t.upload = Some((String::new(), 0, 0));
                 }
+                if refocus {
+                    ui.memory_mut(|m| m.request_focus(egui::Id::new(("term", tab_id))));
+                }
                 let out = t.term.show(
                     ui,
                     egui::Id::new(("term", tab_id)),
@@ -1632,6 +1853,7 @@ impl App {
                         overlay,
                     },
                 );
+                focused_now = ui.memory(|m| m.has_focus(egui::Id::new(("term", tab_id))));
                 if let Some((cols, rows)) = out.resize {
                     let _ = t.tx.send(TermCmd::Resize { cols, rows });
                 }
@@ -1647,11 +1869,29 @@ impl App {
                         if out.input.contains(&b'\r') {
                             reconnect = true;
                         }
+                    } else if guarded
+                        && out.input == b"\r"
+                        && let Some(why) =
+                            crate::model::dangerous_command(&t.term.current_command())
+                    {
+                        danger = Some((t.term.current_command(), why));
                     } else {
                         input = Some(out.input);
                     }
                 }
+                if let Some(text) = out.save_snippet {
+                    actions.push(Action::SnippetFromText(text));
+                }
             });
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            tab.notes_open = notes_open;
+        }
+        if let Some((cmd, why)) = danger {
+            self.danger = Some((tab_id, cmd, why));
+        }
+        if refocus && focused_now {
+            self.focus_term = None;
+        }
 
         if let Some(bytes) = input {
             self.send_input(tab_id, bytes);
@@ -1832,6 +2072,18 @@ impl App {
         if palette {
             actions.push(Action::OpenPalette);
         }
+        // F1 anywhere, "?" when no text field or terminal has the keyboard.
+        let nothing_focused = ctx.memory(|m| m.focused().is_none());
+        let help = ctx.input_mut(|i| {
+            i.consume_key(egui::Modifiers::NONE, egui::Key::F1)
+                || (nothing_focused
+                    && i.events
+                        .iter()
+                        .any(|e| matches!(e, egui::Event::Text(t) if t == "?")))
+        });
+        if help {
+            self.show_shortcuts = !self.show_shortcuts;
+        }
         if close_tab && let Some(id) = self.active {
             self.close_tab(id);
         }
@@ -1877,11 +2129,31 @@ impl eframe::App for App {
 
         if self.vault.is_none() {
             crate::ui::lock::show(self, ui);
+            // The idle timer starts again after unlocking.
+            self.last_activity = Instant::now();
             self.toasts_ui(&ctx);
             return;
         }
 
         let mut actions = Vec::new();
+        // Auto-lock after a period without any input; sessions keep running.
+        if ctx.input(|i| !i.events.is_empty() || i.pointer.is_moving()) {
+            self.last_activity = Instant::now();
+        }
+        let minutes = self.lib.settings.auto_lock_minutes;
+        if minutes > 0 {
+            let limit = Duration::from_secs(minutes as u64 * 60);
+            if self.last_activity.elapsed() >= limit {
+                self.apply(Action::Lock, &ctx);
+                self.toast(
+                    "Automatisch gesperrt – Sessions laufen weiter",
+                    theme::accent(),
+                );
+                ctx.request_repaint();
+                return;
+            }
+            ctx.request_repaint_after(limit.saturating_sub(self.last_activity.elapsed()));
+        }
         self.shortcuts(&ctx, &mut actions);
         crate::ui::chrome::rail(self, ui, &mut actions);
         let central = ui.available_rect_before_wrap();
@@ -1893,6 +2165,7 @@ impl eframe::App for App {
                     split: self.split.clone(),
                     maximized: self.maximized,
                     split_broadcast: self.split_broadcast,
+                    envs: self.tabs.iter().map(|t| t.env).collect(),
                     tabs: self.tabs.iter().map(|t| (t.id, t.title.clone())).collect(),
                 },
             )
@@ -1924,6 +2197,7 @@ impl eframe::App for App {
                             if pressed {
                                 self.active = Some(id);
                             }
+                            self.env_frame(ui.painter(), rect, id);
                             if self.active == Some(id) {
                                 ui.painter().rect_stroke(
                                     rect,
@@ -1937,6 +2211,7 @@ impl eframe::App for App {
             }
             Some(id) if self.tabs.iter().any(|t| t.id == id) => {
                 self.render_tab(ui, id, &mut actions);
+                self.env_frame(&ui.painter().clone(), central, id);
             }
             _ => {
                 self.active = None;
@@ -1968,9 +2243,13 @@ impl eframe::App for App {
         }
 
         if self.password_prompt.is_none()
-            && let Some((tab, idx, host)) = self.pane_queue.pop_front()
+            && let Some((purpose, host)) = self.connect_queue.pop_front()
         {
-            self.connect_host(host, Purpose::Pane(tab, idx), &ctx);
+            self.connect_host(host, purpose, &ctx);
+        }
+        if self.password_prompt.is_none() && self.connect_queue.is_empty() {
+            // Cancelled prompts must not pull later sessions into the split.
+            self.group_split.clear();
         }
 
         crate::ui::editors::show_all(self, &ctx, &mut actions);
@@ -2074,11 +2353,34 @@ pub fn state_color(s: &ConnState) -> Color32 {
 }
 
 /// Parses `user@host:port` (user and port optional) into an ad-hoc SSH host.
+/// Hosts from `~/.ssh/config`, if there is one.
+pub fn ssh_config_hosts() -> Vec<Host> {
+    let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) else {
+        return Vec::new();
+    };
+    let path = std::path::Path::new(&home).join(".ssh").join("config");
+    std::fs::read_to_string(path)
+        .map(|t| crate::model::parse_ssh_config(&t))
+        .unwrap_or_default()
+}
+
+/// `user@host`, `host:port`, `ssh -p 2222 user@host` → an unsaved SSH host.
 pub fn parse_quick(s: &str) -> Option<Host> {
-    let s = s.trim().trim_start_matches("ssh ").trim();
-    if s.is_empty() || s.contains(' ') {
-        return None;
+    let s = s.trim();
+    let s = s.strip_prefix("ssh ").unwrap_or(s).trim();
+    let mut port_flag = None;
+    let mut target = None;
+    let mut words = s.split_whitespace();
+    while let Some(w) = words.next() {
+        if w == "-p" {
+            port_flag = Some(words.next()?.parse::<u16>().ok()?);
+        } else if target.is_none() && !w.starts_with('-') {
+            target = Some(w);
+        } else {
+            return None;
+        }
     }
+    let s = target?;
     let (user, rest) = match s.rsplit_once('@') {
         Some((u, r)) => (u.to_string(), r),
         None => (String::new(), s),
@@ -2093,7 +2395,7 @@ pub fn parse_quick(s: &str) -> Option<Host> {
     Some(Host {
         id: Uuid::new_v4(),
         hostname: host,
-        port,
+        port: port_flag.unwrap_or(port),
         username: user,
         ..Default::default()
     })
@@ -2116,6 +2418,8 @@ mod tests {
             ("", "example.org", 22)
         );
         assert!(parse_quick("bad host").is_none());
+        let h = parse_quick("ssh -p 2200 admin@db.local").unwrap();
+        assert_eq!((h.username.as_str(), h.port), ("admin", 2200));
         assert!(parse_quick("u@h:notaport").is_none());
     }
 }

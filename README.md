@@ -29,10 +29,14 @@ Unter [Releases](../../releases) liegen Windows und Linux im selben Release:
 | **Snippets** | Platzhalter `{{variable}}` mit Live-Vorschau, Snippet-Leiste im Terminal, in allen Sessions ausführen, Startup-Snippet pro Host |
 | **Gruppen** | Verschachtelt, Farbe & Icon, vererbte Standard-User/-Identität, Favoriten, Zuletzt verbunden, Tags |
 | **Design** | Eigenes „Patchbay“-Design: Sessions als nummerierte Ports mit Status-LED in der Leiste, IBM Plex Sans/Mono. 12 Themes (Phosphor, Glacier, Nord, Dracula, Paper, Tokyo Night, Gruvbox, Catppuccin, Rosé Pine, Solarized Dark/Light, GitHub Light) – das Terminal übernimmt jeweils die passenden Farben. Befehlspalette `Ctrl/⌘+K`, Broadcast-Modus |
+| **Produktiv** | **Schnellverbindung**: `user@host`, `host:port` oder `ssh -p 2222 user@host` in `Ctrl+K` – danach „Als Host speichern“ · **Ganze Gruppe öffnen** (bis zu 4 Hosts direkt im Splitscreen) · **Suche im Terminal** (`Ctrl+Shift+F`, inkl. Scrollback) · **Schriftgröße per `Ctrl`+Mausrad** pro Pane · markierten Text **als Snippet speichern** · Import aus `~/.ssh/config` |
+| **Sicherheit** | **Umgebungs-Etikett** PROD / STAGING / TEST / DEV pro Host oder Gruppe – PROD-Sessions mit rotem Rahmen und **Nachfrage bei gefährlichen Befehlen** (`rm -rf`, `reboot`, `DROP TABLE` …) · **Notizen pro Host** als Banner beim Verbinden · **automatisches Sperren** nach Inaktivität (Sessions laufen weiter) |
+| **Einstieg** | Kurze Einführung beim ersten Start, Tastenkürzel-Übersicht mit `F1` / `?`, Leerzustände mit direkter Aktion |
 | **Komfort** | Erreichbarkeits-LED je Host (TCP-Check mit Latenz), **Update-Check** beim Start mit Ein-Klick-Update (SHA256-geprüft) · Dateien aufs Terminal ziehen lädt sie per SFTP ins aktuelle Verzeichnis · Kachel blinkt, wenn ein langer Befehl im Hintergrund fertig ist · getrennte Sessions mit ⟳ markiert, Klick verbindet neu |
 
 | | |
 |---|---|
+| ![PROD-Warnung](docs/screenshots/prod.png) | ![Session per Drag & Drop neben eine andere legen](docs/screenshots/drag-split.png) |
 | ![Splitscreen](docs/screenshots/split.png) | ![Server ⇄ Server](docs/screenshots/sftp.png) |
 | ![Dateien](docs/screenshots/files.png) | ![Tokyo Night](docs/screenshots/tokyo.png) |
 | ![Terminal](docs/screenshots/terminal.png) | ![GitHub Light](docs/screenshots/light.png) |
@@ -48,6 +52,9 @@ Unter [Releases](../../releases) liegen Windows und Linux im selben Release:
 | `Ctrl + 1…9` | Zu Port/Session 1…9 springen, `Ctrl + 0` zurück zur Übersicht |
 | `Ctrl + Tab` | Nächste Session |
 | `Ctrl/⌘ + Shift + W` | Session schließen |
+| `Ctrl + Shift + F` | Im Terminal suchen (Enter = älterer, Shift+Enter = neuerer Treffer) |
+| `Ctrl` + Mausrad | Schriftgröße des Terminals |
+| `F1` / `?` | Alle Tastenkürzel |
 | `Ctrl + Shift + C` / Auswahl | Kopieren im Terminal |
 | `Enter` in getrennter Session | Neu verbinden |
 

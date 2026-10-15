@@ -71,6 +71,70 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             });
             ui.add_space(18.0);
 
+            theme::section_title(ui, "Sicherheit & Hilfe");
+            theme::card_frame().show(ui, |ui| {
+                ui.set_width(ui.available_width().min(560.0));
+                egui::Grid::new("safety-grid")
+                    .num_columns(2)
+                    .spacing([16.0, 10.0])
+                    .show(ui, |ui| {
+                        ui.label("Automatisch sperren");
+                        let m = app.lib.settings.auto_lock_minutes;
+                        let text = |m: u32| {
+                            if m == 0 {
+                                "nie".to_string()
+                            } else {
+                                format!("nach {m} min")
+                            }
+                        };
+                        egui::ComboBox::from_id_salt("autolock")
+                            .selected_text(text(m))
+                            .show_ui(ui, |ui| {
+                                for v in [0, 5, 15, 30, 60, 120] {
+                                    changed |= ui
+                                        .selectable_value(
+                                            &mut app.lib.settings.auto_lock_minutes,
+                                            v,
+                                            text(v),
+                                        )
+                                        .changed();
+                                }
+                            });
+                        ui.end_row();
+                        ui.label("");
+                        ui.label(
+                            RichText::new("ohne Eingabe – offene Sessions laufen weiter")
+                                .size(12.0)
+                                .color(theme::text_dim()),
+                        );
+                        ui.end_row();
+                        ui.label("Gefährliche Befehle");
+                        changed |= ui
+                            .checkbox(
+                                &mut app.lib.settings.warn_everywhere,
+                                "auf allen Hosts nachfragen (sonst nur bei PROD)",
+                            )
+                            .changed();
+                        ui.end_row();
+                        ui.label("Hilfe");
+                        ui.horizontal(|ui| {
+                            if ui.button("Einführung zeigen").clicked() {
+                                app.lib.settings.onboarded = false;
+                                app.tour_step = 0;
+                                changed = true;
+                            }
+                            if ui.button("Tastenkürzel").clicked() {
+                                app.show_shortcuts = true;
+                            }
+                            if ui.button("Aus ~/.ssh/config importieren").clicked() {
+                                actions.push(crate::app::Action::ImportSshConfig);
+                            }
+                        });
+                        ui.end_row();
+                    });
+            });
+            ui.add_space(18.0);
+
             theme::section_title(ui, "Master-Passwort");
             theme::card_frame().show(ui, |ui| {
                 ui.set_width(ui.available_width().min(560.0));

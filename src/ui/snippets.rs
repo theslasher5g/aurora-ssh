@@ -52,6 +52,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             }
             return;
         }
+        if list.is_empty() {
+            if empty_list(
+                ui,
+                "Kein Snippet gefunden",
+                "Leg eins an – oder markiere Text im Terminal und wähle „Als Snippet speichern“.",
+                "Snippet anlegen",
+            ) {
+                actions.push(Action::NewSnippet);
+            }
+            return;
+        }
         for (_, s) in list {
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 58.0), Sense::click());
             let hovered = ui.rect_contains_pointer(rect);

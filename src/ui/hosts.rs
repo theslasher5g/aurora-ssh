@@ -108,10 +108,25 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 }
                 if hosts.is_empty() && quick.is_none() {
                     ui.add_space(20.0);
+                    ui.label(theme::heading(
+                        format!("Kein Host passt zu „{query}“"),
+                        16.0,
+                    ));
                     ui.label(
-                        RichText::new("Keine Treffer. Tipp: user@host eingeben und Enter drücken.")
+                        RichText::new("Leg ihn an – oder tippe user@host, um direkt zu verbinden.")
                             .color(theme::text_dim()),
                     );
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        if theme::primary_button(ui, &format!("„{query}“ als Host anlegen"))
+                            .clicked()
+                        {
+                            actions.push(Action::NewHostNamed(query.clone()));
+                        }
+                        if !query.contains(' ') && ui.button("Direkt verbinden").clicked() {
+                            actions.push(Action::QuickConnect(query.clone()));
+                        }
+                    });
                 }
                 for h in &hosts {
                     host_row(app, ui, h, &live, actions);
@@ -197,6 +212,19 @@ fn empty_state(ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     actions.push(Action::NewHostOf(Protocol::Serial, None));
                 }
             });
+            let found = crate::app::ssh_config_hosts().len();
+            if found > 0 {
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("In deiner ~/.ssh/config stehen {found} Hosts."))
+                            .color(theme::text_dim()),
+                    );
+                    if ui.button("Importieren").clicked() {
+                        actions.push(Action::ImportSshConfig);
+                    }
+                });
+            }
         });
     });
 }
@@ -361,28 +389,75 @@ fn group_tree(
             FontId::monospace(11.0),
             theme::text_dim(),
         );
+        if g.env != crate::model::Env::None {
+            let color = theme::env_color(g.env);
+            let gl = p.layout_no_wrap(
+                g.env.label().into(),
+                FontId::monospace(9.5),
+                theme::bg_deep(),
+            );
+            let tx = x + 40.0 + w + 24.0;
+            let r = Rect::from_min_size(
+                Pos2::new(tx, rect.center().y - 8.0),
+                gl.size() + Vec2::new(8.0, 4.0),
+            );
+            p.rect_filled(r, CornerRadius::same(3), color);
+            p.galley(r.min + Vec2::new(4.0, 2.0), gl, theme::bg_deep());
+        }
+        let plus_rect =
+            Rect::from_min_max(rect.right_top() - Vec2::new(70.0, 0.0), rect.right_bottom());
+        let all_rect = Rect::from_min_max(
+            rect.right_top() - Vec2::new(170.0, 0.0),
+            rect.right_bottom() - Vec2::new(76.0, 0.0),
+        );
         if resp.hovered() {
+            let pointer = ui.input(|i| i.pointer.hover_pos());
+            let hot = |r: Rect| pointer.is_some_and(|p| r.contains(p));
             p.text(
                 rect.right_center() - Vec2::new(8.0, 0.0),
                 egui::Align2::RIGHT_CENTER,
                 "+ Host",
                 FontId::proportional(12.0),
-                theme::text_dim(),
+                if hot(plus_rect) {
+                    theme::accent()
+                } else {
+                    theme::text_dim()
+                },
             );
+            if total > 0 {
+                p.text(
+                    all_rect.right_center(),
+                    egui::Align2::RIGHT_CENTER,
+                    "▶ Alle öffnen",
+                    FontId::proportional(12.0),
+                    if hot(all_rect) {
+                        theme::accent()
+                    } else {
+                        theme::text_dim()
+                    },
+                );
+            }
         }
-        let plus_rect =
-            Rect::from_min_max(rect.right_top() - Vec2::new(70.0, 0.0), rect.right_bottom());
-        let clicked_plus = resp.clicked()
-            && ui
-                .input(|i| i.pointer.interact_pos())
-                .is_some_and(|p| plus_rect.contains(p));
-        if clicked_plus {
+        let click_pos = ui.input(|i| i.pointer.interact_pos());
+        let clicked_in = |r: Rect| resp.clicked() && click_pos.is_some_and(|p| r.contains(p));
+        if clicked_in(plus_rect) {
             actions.push(Action::NewHost(Some(g.id)));
+        } else if total > 0 && clicked_in(all_rect) {
+            actions.push(Action::OpenGroup(g.id));
         } else if resp.clicked() {
             actions.push(Action::ToggleGroup(g.id));
         }
         resp.on_hover_cursor(egui::CursorIcon::PointingHand)
             .context_menu(|ui| {
+                if total > 0
+                    && ui
+                        .button("Alle öffnen (nebeneinander)")
+                        .on_hover_text("Verbindet die ersten vier Hosts der Gruppe im Splitscreen")
+                        .clicked()
+                {
+                    actions.push(Action::OpenGroup(g.id));
+                    ui.close();
+                }
                 if ui.button("Host hinzufügen").clicked() {
                     actions.push(Action::NewHost(Some(g.id)));
                     ui.close();
@@ -477,14 +552,37 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
         name_galley,
         theme::text(),
     );
+    let mut nx = col_name + name_w + 8.0;
     if h.favorite {
         p.text(
-            Pos2::new(col_name + name_w + 8.0, cy),
+            Pos2::new(nx, cy),
             egui::Align2::LEFT_CENTER,
             "★",
             FontId::proportional(11.0),
             theme::accent(),
         );
+        nx += 16.0;
+    }
+    let env = app.lib.env_of(h);
+    if env != crate::model::Env::None {
+        let color = theme::env_color(env);
+        let g = p.layout_no_wrap(env.label().into(), FontId::monospace(9.5), theme::bg_deep());
+        let r = Rect::from_min_size(Pos2::new(nx, cy - 8.0), g.size() + Vec2::new(8.0, 4.0));
+        p.rect_filled(r, CornerRadius::same(3), color);
+        p.galley(r.min + Vec2::new(4.0, 2.0), g, theme::bg_deep());
+        nx = r.right() + 6.0;
+    }
+    if !h.notes.trim().is_empty() {
+        let r = Rect::from_center_size(Pos2::new(nx + 7.0, cy), Vec2::splat(16.0));
+        p.text(
+            r.center(),
+            egui::Align2::CENTER_CENTER,
+            "📝",
+            FontId::proportional(11.0),
+            theme::text_dim(),
+        );
+        ui.interact(r, ui.id().with(("notes", h.id)), Sense::hover())
+            .on_hover_text(h.notes.trim());
     }
 
     // Address: user@host in dim, port in accent.

@@ -134,6 +134,32 @@ impl Default for RdpSettings {
     }
 }
 
+/// Environment label of a host or group; production sessions get a red frame and
+/// confirm dangerous commands.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
+pub enum Env {
+    #[default]
+    None,
+    Prod,
+    Staging,
+    Test,
+    Dev,
+}
+
+impl Env {
+    pub const ALL: [Env; 5] = [Env::None, Env::Prod, Env::Staging, Env::Test, Env::Dev];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Env::None => "—",
+            Env::Prod => "PROD",
+            Env::Staging => "STAGING",
+            Env::Test => "TEST",
+            Env::Dev => "DEV",
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(default)]
 pub struct Host {
@@ -149,6 +175,8 @@ pub struct Host {
     pub tags: Vec<String>,
     pub favorite: bool,
     pub notes: String,
+    /// `Env::None` inherits from the group.
+    pub env: Env,
     pub startup_snippet: Option<Uuid>,
     pub last_connected: Option<DateTime<Utc>>,
     pub serial: SerialSettings,
@@ -170,6 +198,7 @@ impl Default for Host {
             tags: Vec::new(),
             favorite: false,
             notes: String::new(),
+            env: Env::None,
             startup_snippet: None,
             last_connected: None,
             serial: SerialSettings::default(),
@@ -221,6 +250,7 @@ pub struct Group {
     /// Defaults inherited by hosts in this group that leave the field empty.
     pub default_username: String,
     pub default_identity: Option<Uuid>,
+    pub env: Env,
     pub collapsed: bool,
 }
 
@@ -234,6 +264,7 @@ impl Default for Group {
             icon: "🗀".into(),
             default_username: String::new(),
             default_identity: None,
+            env: Env::None,
             collapsed: false,
         }
     }
@@ -339,6 +370,12 @@ pub struct Settings {
     pub check_updates: bool,
     /// Probe hosts in the list and show whether they are reachable.
     pub reachability: bool,
+    /// Lock the vault after this many minutes without input (0 = never).
+    pub auto_lock_minutes: u32,
+    /// Ask before dangerous commands on every host, not only on PROD.
+    pub warn_everywhere: bool,
+    /// The first-start tour was shown.
+    pub onboarded: bool,
 }
 
 impl Default for Settings {
@@ -350,6 +387,9 @@ impl Default for Settings {
             copy_on_select: true,
             check_updates: true,
             reachability: true,
+            auto_lock_minutes: 15,
+            warn_everywhere: false,
+            onboarded: false,
         }
     }
 }
@@ -401,6 +441,33 @@ impl Library {
         (user, identity)
     }
 
+    /// Environment of a host: its own, else the nearest group's.
+    pub fn env_of(&self, host: &Host) -> Env {
+        if host.env != Env::None {
+            return host.env;
+        }
+        let mut next = host.group_id;
+        for _ in 0..32 {
+            let Some(g) = next.and_then(|id| self.group(id)) else {
+                break;
+            };
+            if g.env != Env::None {
+                return g.env;
+            }
+            next = g.parent_id;
+        }
+        Env::None
+    }
+
+    /// All hosts in `group` and its subgroups, in list order.
+    pub fn hosts_in_group(&self, group: Uuid) -> Vec<Host> {
+        self.hosts
+            .iter()
+            .filter(|h| h.group_id.is_some_and(|g| self.is_descendant(g, group)))
+            .cloned()
+            .collect()
+    }
+
     /// True if `candidate` is `group` or one of its descendants (prevents parent cycles).
     pub fn is_descendant(&self, candidate: Uuid, group: Uuid) -> bool {
         let mut next = Some(candidate);
@@ -419,9 +486,130 @@ impl Library {
     }
 }
 
+/// Commands that deserve a second look before they run (on PROD).
+pub fn dangerous_command(line: &str) -> Option<&'static str> {
+    let l = line.trim().to_lowercase();
+    let l = l.strip_prefix("sudo ").unwrap_or(&l).trim();
+    let words: Vec<&str> = l.split_whitespace().collect();
+    let first = *words.first()?;
+    let has = |w: &str| words.contains(&w);
+    let rm_recursive = first == "rm"
+        && words.iter().any(|w| {
+            w.starts_with('-') && !w.starts_with("--") && (w.contains('r') || w.contains('R'))
+        })
+        || first == "rm" && has("--recursive");
+    if rm_recursive {
+        return Some("löscht rekursiv");
+    }
+    match first {
+        "shutdown" | "poweroff" | "halt" => return Some("fährt den Server herunter"),
+        "reboot" => return Some("startet den Server neu"),
+        "dd" => return Some("schreibt direkt auf ein Gerät"),
+        "init" if has("0") || has("6") => return Some("ändert den Runlevel"),
+        "kill" | "killall" | "pkill" if has("-9") || has("-kill") => {
+            return Some("beendet Prozesse hart");
+        }
+        "truncate" => return Some("leert Dateien"),
+        "chmod" | "chown" if has("-r") || has("--recursive") => {
+            return Some("ändert Rechte rekursiv");
+        }
+        _ => {}
+    }
+    if first.starts_with("mkfs") {
+        return Some("formatiert ein Dateisystem");
+    }
+    if first == "systemctl" && (has("stop") || has("restart") || has("poweroff") || has("reboot")) {
+        return Some("stoppt oder startet Dienste");
+    }
+    if l.contains("drop database") || l.contains("drop table") || l.contains("truncate table") {
+        return Some("löscht Datenbankinhalte");
+    }
+    if l.contains(":(){") || l.contains("> /dev/sd") || l.contains(">/dev/sd") {
+        return Some("überschreibt Systemdaten");
+    }
+    None
+}
+
+/// Hosts from an OpenSSH config file (`Host` blocks without wildcards).
+pub fn parse_ssh_config(text: &str) -> Vec<Host> {
+    let mut out: Vec<Host> = Vec::new();
+    let mut current: Vec<usize> = Vec::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (key, value) = match line.split_once(|c: char| c.is_whitespace() || c == '=') {
+            Some((k, v)) => (k.to_lowercase(), v.trim().trim_start_matches('=').trim()),
+            None => continue,
+        };
+        match key.as_str() {
+            "host" => {
+                current.clear();
+                for name in value.split_whitespace() {
+                    if name.contains(['*', '?', '!']) {
+                        continue;
+                    }
+                    out.push(Host {
+                        label: name.to_string(),
+                        hostname: name.to_string(),
+                        ..Default::default()
+                    });
+                    current.push(out.len() - 1);
+                }
+            }
+            "match" => current.clear(),
+            "hostname" => current
+                .iter()
+                .for_each(|&i| out[i].hostname = value.to_string()),
+            "user" => current
+                .iter()
+                .for_each(|&i| out[i].username = value.to_string()),
+            "port" => {
+                if let Ok(p) = value.parse() {
+                    current.iter().for_each(|&i| out[i].port = p);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dangerous_commands() {
+        assert!(dangerous_command("rm -rf /var/www").is_some());
+        assert!(dangerous_command("sudo rm -Rf x").is_some());
+        assert!(dangerous_command("rm file.txt").is_none());
+        assert!(dangerous_command("sudo reboot").is_some());
+        assert!(dangerous_command("systemctl restart nginx").is_some());
+        assert!(dangerous_command("systemctl status nginx").is_none());
+        assert!(dangerous_command("mysql -e 'DROP TABLE users'").is_some());
+        assert!(dangerous_command("ls -la").is_none());
+        assert!(dangerous_command("echo shutdown").is_none());
+    }
+
+    #[test]
+    fn ssh_config_import() {
+        let cfg = "Host *\n  ServerAliveInterval 30\nHost web db\n  HostName 10.0.0.5\n  User deploy\n  Port 2222\nHost pi\n  HostName=raspberrypi.local\n";
+        let hosts = parse_ssh_config(cfg);
+        assert_eq!(hosts.len(), 3);
+        assert_eq!(
+            (
+                hosts[0].label.as_str(),
+                hosts[0].hostname.as_str(),
+                hosts[0].username.as_str(),
+                hosts[0].port
+            ),
+            ("web", "10.0.0.5", "deploy", 2222)
+        );
+        assert_eq!(hosts[2].hostname, "raspberrypi.local");
+        assert_eq!(hosts[2].port, 22);
+    }
 
     #[test]
     fn snippet_variables_and_render() {

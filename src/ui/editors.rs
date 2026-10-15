@@ -250,6 +250,9 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                 .hint_text("prod, nginx, …"),
                         );
                         ui.end_row();
+                        ui.label("Umgebung");
+                        env_picker(ui, &mut h.env, "von der Gruppe");
+                        ui.end_row();
                         ui.label("Favorit");
                         ui.checkbox(&mut h.favorite, "★ in Favoriten anzeigen");
                         ui.end_row();
@@ -477,6 +480,32 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
     }
 }
 
+/// PROD / STAGING / TEST / DEV chips; `none` names the empty choice.
+fn env_picker(ui: &mut egui::Ui, env: &mut crate::model::Env, none: &str) {
+    use crate::model::Env;
+    ui.horizontal(|ui| {
+        for e in Env::ALL {
+            let label = if e == Env::None {
+                none.to_string()
+            } else {
+                e.label().to_string()
+            };
+            let selected = *env == e;
+            let mut text = RichText::new(label).size(12.0);
+            if selected && e != Env::None {
+                text = text.color(theme::env_color(e)).strong();
+            }
+            if ui.selectable_label(selected, text).clicked() {
+                *env = e;
+            }
+        }
+    })
+    .response
+    .on_hover_text(
+        "PROD-Sessions bekommen einen roten Rahmen und fragen bei gefährlichen Befehlen nach",
+    );
+}
+
 fn group_editor(app: &mut App, ctx: &egui::Context) {
     let idents: Vec<(Uuid, String)> = app
         .keychain
@@ -547,6 +576,9 @@ fn group_editor(app: &mut App, ctx: &egui::Context) {
                     &idents,
                     "— keine —",
                 );
+                ui.end_row();
+                ui.label("Umgebung");
+                env_picker(ui, &mut g.env, "keine");
                 ui.end_row();
             });
         (save, cancel) = footer(ui, !g.name.trim().is_empty());

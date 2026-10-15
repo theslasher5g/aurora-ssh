@@ -1144,9 +1144,13 @@ pub fn page(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             ui.add_space(4.0);
             if hosts.is_empty() {
                 ui.label(
-                    RichText::new("Noch keine SSH- oder Windows-Hosts angelegt.")
+                    RichText::new("Noch keine Server. Leg einen SSH-Host an – Windows-Server mit OpenSSH gehen auch.")
                         .color(theme::text_dim()),
                 );
+                ui.add_space(8.0);
+                if theme::primary_button(ui, "SSH-Host anlegen").clicked() {
+                    actions.push(Action::NewHostOf(Protocol::Ssh, None));
+                }
             }
             for h in app
                 .lib

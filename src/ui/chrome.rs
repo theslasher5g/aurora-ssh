@@ -73,6 +73,7 @@ fn port_tile(
     active: bool,
     attention: bool,
     dead: bool,
+    env: crate::model::Env,
 ) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(TILE), Sense::click_and_drag());
     let p = ui.painter();
@@ -118,6 +119,17 @@ fn port_tile(
             theme::text_dim()
         },
     );
+    if matches!(env, crate::model::Env::Prod | crate::model::Env::Staging) {
+        // Environment stripe along the top edge.
+        p.rect_filled(
+            Rect::from_min_size(
+                rect.left_top() + Vec2::new(8.0, 1.0),
+                Vec2::new(TILE - 16.0, 3.0),
+            ),
+            CornerRadius::same(2),
+            theme::env_color(env),
+        );
+    }
     if dead {
         // Reconnect hint in the corner.
         p.text(
@@ -249,6 +261,7 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         app.active == Some(tab.id),
                         tab.attention,
                         dead,
+                        tab.env,
                     );
                     let tile = resp.rect;
                     if resp.drag_started() {
@@ -339,6 +352,9 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     if rail_button(ui, "🔒", "Sperren", false, None).clicked() {
                         actions.push(Action::Lock);
                     }
+                    if rail_button(ui, "?", "Tastenkürzel (F1)", app.show_shortcuts, None).clicked() {
+                        app.show_shortcuts = true;
+                    }
                     if let Some(rel) = &app.update.latest {
                         let tip = format!("Update auf {} verfügbar", rel.version_text());
                         if rail_button(ui, "⬆", &tip, false, Some(theme::accent())).clicked() {
@@ -403,6 +419,8 @@ pub struct SplitInfo {
     pub split: Vec<u64>,
     pub maximized: Option<u64>,
     pub split_broadcast: bool,
+    /// Environment per tab, same order as `tabs`.
+    pub envs: Vec<crate::model::Env>,
     pub tabs: Vec<(u64, String)>,
 }
 
@@ -771,6 +789,11 @@ pub fn session_header(
                             .font(theme::mono_medium(12.5))
                             .color(theme::accent()),
                     );
+                    if let Some(&env) = info.envs.get(index.wrapping_sub(1))
+                        && env != crate::model::Env::None
+                    {
+                        crate::ui::dialogs::env_badge(ui, env);
+                    }
                     ui.add(egui::Label::new(theme::heading(title, 15.0)).truncate());
                     if !narrow {
                         ui.add(

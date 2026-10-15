@@ -11,6 +11,238 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     password(app, ctx);
     snippet_vars(app, ctx);
     confirm(app, ctx);
+    danger(app, ctx);
+    shortcuts(app, ctx);
+    tour(app, ctx);
+}
+
+/// Enter on a dangerous command in a guarded (PROD) session.
+fn danger(app: &mut App, ctx: &egui::Context) {
+    let Some((tab, cmd, why)) = app.danger.clone() else {
+        return;
+    };
+    let host = app
+        .tabs
+        .iter()
+        .find(|t| t.id == tab)
+        .map(|t| (t.title.clone(), t.env))
+        .unwrap_or_default();
+    let mut answer = None;
+    egui::Modal::new(egui::Id::new("danger")).show(ctx, |ui| {
+        ui.set_width(460.0);
+        ui.horizontal(|ui| {
+            if host.1 != crate::model::Env::None {
+                env_badge(ui, host.1);
+            }
+            ui.label(theme::heading(
+                format!("Wirklich auf {} ausführen?", host.0),
+                19.0,
+            ));
+        });
+        ui.label(RichText::new(format!("Dieser Befehl {why}.")).color(theme::text_dim()));
+        ui.add_space(8.0);
+        theme::card_frame().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(theme::mono(&cmd, 13.5).color(theme::red()));
+        });
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new("Ausführen").color(theme::bg_deep()))
+                            .fill(theme::red()),
+                    )
+                    .clicked()
+                {
+                    answer = Some(true);
+                }
+                if theme::primary_button(ui, "Abbrechen").clicked() {
+                    answer = Some(false);
+                }
+            });
+        });
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            answer = Some(false);
+        }
+    });
+    if let Some(run) = answer {
+        app.danger = None;
+        // Give the keyboard back to the terminal (next frame).
+        app.focus_term = Some(tab);
+        if run {
+            app.send_input(tab, b"\r".to_vec());
+        }
+    }
+}
+
+/// Small coloured environment label (PROD, STAGING …).
+pub fn env_badge(ui: &mut egui::Ui, env: crate::model::Env) {
+    let color = theme::env_color(env);
+    let text = env.label();
+    let galley =
+        ui.painter()
+            .layout_no_wrap(text.into(), egui::FontId::monospace(10.5), theme::bg_deep());
+    let (rect, _) =
+        ui.allocate_exact_size(galley.size() + Vec2::new(10.0, 4.0), egui::Sense::hover());
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(4), color);
+    ui.painter()
+        .galley(rect.min + Vec2::new(5.0, 2.0), galley, theme::bg_deep());
+}
+
+const SHORTCUTS: &[(&str, &str)] = &[
+    ("Ctrl+K", "Suchen, Befehle, user@host verbinden"),
+    ("Ctrl+1 … 9", "Zu Session 1 … 9 wechseln"),
+    ("Ctrl+0", "Startseite"),
+    ("Ctrl+Tab", "Nächste Session"),
+    ("Ctrl+Shift+W", "Session schließen"),
+    ("Ctrl+Shift+F", "Im Terminal suchen"),
+    ("Ctrl+Mausrad", "Schriftgröße des Terminals"),
+    ("Ctrl+Shift+C / V", "Kopieren / Einfügen im Terminal"),
+    ("Enter", "Getrennte Session neu verbinden"),
+    ("Doppelklick Kopf", "Pane im Splitscreen maximieren"),
+    ("Port ziehen", "Session neben eine andere legen"),
+    ("Mittelklick Port", "Session schließen"),
+    ("F1  oder  ?", "Diese Übersicht"),
+];
+
+fn shortcuts(app: &mut App, ctx: &egui::Context) {
+    if !app.show_shortcuts {
+        return;
+    }
+    let modal = egui::Modal::new(egui::Id::new("shortcuts")).show(ctx, |ui| {
+        ui.set_width(460.0);
+        ui.label(theme::heading("Tastenkürzel", 20.0));
+        ui.add_space(8.0);
+        egui::Grid::new("shortcut-grid")
+            .num_columns(2)
+            .spacing([18.0, 8.0])
+            .show(ui, |ui| {
+                for (keys, what) in SHORTCUTS {
+                    ui.label(theme::mono(*keys, 12.5).color(theme::accent()));
+                    ui.label(RichText::new(*what).size(13.0));
+                    ui.end_row();
+                }
+            });
+        ui.add_space(10.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("Schließen").clicked() {
+                app.show_shortcuts = false;
+            }
+        });
+    });
+    if modal.should_close() {
+        app.show_shortcuts = false;
+    }
+}
+
+const TOUR: &[(&str, &str, &str)] = &[
+    (
+        "Willkommen bei Aurora",
+        "Hier verwaltest du deine Server. Leg neue Hosts an oder übernimm sie aus deiner ~/.ssh/config.",
+        "1",
+    ),
+    (
+        "Schnell verbinden",
+        "Ctrl+K öffnet die Suche. Tippe einen Hostnamen oder user@host und drück Enter. Unbekannte Ziele kannst du danach mit einem Klick speichern.",
+        "2",
+    ),
+    (
+        "Nebeneinander arbeiten",
+        "Ziehe Sessions aus der linken Leiste ins Fenster – bis zu vier nebeneinander. Dateien vom Desktop ziehst du einfach aufs Terminal, sie werden hochgeladen.",
+        "3",
+    ),
+    (
+        "Sicher bleiben",
+        "Markiere Server als PROD: Sie bekommen einen roten Rahmen und Aurora fragt bei Befehlen wie rm -rf oder reboot nach. Mit ? siehst du jederzeit alle Tastenkürzel.",
+        "4",
+    ),
+];
+
+/// Short tour on the first start.
+fn tour(app: &mut App, ctx: &egui::Context) {
+    // Pauses while the user follows a step (e.g. the host editor is open).
+    if app.lib.settings.onboarded || app.vault.is_none() || app.host_editor.is_some() {
+        return;
+    }
+    let step = app.tour_step.min(TOUR.len() - 1);
+    let (title, body, _) = TOUR[step];
+    let mut done = false;
+    let mut next = false;
+    let mut action = None;
+    egui::Modal::new(egui::Id::new("tour")).show(ctx, |ui| {
+        ui.set_width(440.0);
+        // Step dots
+        ui.horizontal(|ui| {
+            for i in 0..TOUR.len() {
+                let (r, _) = ui.allocate_exact_size(
+                    Vec2::new(if i == step { 22.0 } else { 8.0 }, 8.0),
+                    egui::Sense::hover(),
+                );
+                ui.painter().rect_filled(
+                    r,
+                    egui::CornerRadius::same(4),
+                    if i == step {
+                        theme::accent()
+                    } else {
+                        theme::border()
+                    },
+                );
+            }
+        });
+        ui.add_space(10.0);
+        ui.label(theme::heading(title, 21.0));
+        ui.add_space(4.0);
+        ui.label(RichText::new(body).size(14.0).color(theme::text_dim()));
+        ui.add_space(14.0);
+        if step == 0 {
+            ui.horizontal(|ui| {
+                if ui.button("SSH-Host anlegen").clicked() {
+                    action = Some(crate::app::Action::NewHostOf(
+                        crate::model::Protocol::Ssh,
+                        None,
+                    ));
+                    next = true;
+                }
+                if !crate::app::ssh_config_hosts().is_empty()
+                    && ui.button("Aus ~/.ssh/config importieren").clicked()
+                {
+                    action = Some(crate::app::Action::ImportSshConfig);
+                    next = true;
+                }
+            });
+            ui.add_space(8.0);
+        }
+        ui.horizontal(|ui| {
+            if ui.button("Überspringen").clicked() {
+                done = true;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let last = step + 1 == TOUR.len();
+                let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if theme::primary_button(ui, if last { "Los geht's" } else { "Weiter" }).clicked()
+                    || enter
+                {
+                    if last {
+                        done = true;
+                    } else {
+                        next = true;
+                    }
+                }
+            });
+        });
+    });
+    if next {
+        app.tour_step = step + 1;
+    }
+    if done {
+        app.lib.settings.onboarded = true;
+        app.save_library();
+    }
+    if let Some(a) = action {
+        app.apply(a, ctx);
+    }
 }
 
 fn hostkey(app: &mut App, ctx: &egui::Context) {

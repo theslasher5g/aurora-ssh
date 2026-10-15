@@ -411,6 +411,18 @@ pub fn red() -> Color32 {
 pub fn green() -> Color32 {
     palette().green
 }
+
+/// Colour of an environment label.
+pub fn env_color(env: crate::model::Env) -> Color32 {
+    use crate::model::Env;
+    match env {
+        Env::Prod => red(),
+        Env::Staging => amber(),
+        Env::Test => Color32::from_rgb(110, 160, 245),
+        Env::Dev => green(),
+        Env::None => text_dim(),
+    }
+}
 pub fn on_accent() -> Color32 {
     palette().on_accent
 }

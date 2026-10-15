@@ -89,8 +89,27 @@ fn dir_from_title(title: &str) -> Option<String> {
     (dir.starts_with('/') || dir.starts_with('~')).then(|| dir.to_string())
 }
 
+/// Find-in-terminal state (Ctrl+Shift+F).
+#[derive(Default)]
+struct Search {
+    query: String,
+    /// (absolute line, first char, length) – absolute line 0 is the oldest scrollback row.
+    matches: Vec<(usize, usize, usize)>,
+    current: usize,
+    /// Scrollback length when the matches were computed.
+    max: usize,
+    dirty: bool,
+    /// Scroll to the current match after the next search (query edited).
+    jump: bool,
+    focus: bool,
+}
+
 pub struct Terminal {
     parser: vt100::Parser<Hooks>,
+    /// Per-pane zoom (Ctrl+mouse wheel).
+    pub font_scale: f32,
+    zoom_hint_until: f64,
+    search: Option<Search>,
     cols: u16,
     rows: u16,
     scrollback_rows: usize,
@@ -104,6 +123,8 @@ pub struct TermOutput {
     pub input: Vec<u8>,
     /// New grid size, if it changed.
     pub resize: Option<(u16, u16)>,
+    /// "Save as snippet" was picked for this text.
+    pub save_snippet: Option<String>,
 }
 
 pub struct TermView<'a> {
@@ -123,7 +144,103 @@ impl Terminal {
             scrollback_rows: 0,
             selection: None,
             selecting: false,
+            font_scale: 1.0,
+            zoom_hint_until: 0.0,
+            search: None,
         }
+    }
+
+    pub fn open_search(&mut self) {
+        let s = self.search.get_or_insert_with(Search::default);
+        s.focus = true;
+        s.dirty = true;
+    }
+
+    /// Command typed after the prompt on the cursor line.
+    pub fn current_command(&self) -> String {
+        let screen = self.parser.screen();
+        let (row, _) = screen.cursor_position();
+        let line = screen.contents_between(row, 0, row, self.cols);
+        let cut = ["$ ", "# ", "> ", "% ", "❯ "]
+            .iter()
+            .filter_map(|p| line.rfind(p).map(|i| i + p.len()))
+            .max()
+            .unwrap_or(0);
+        line[cut..].trim().to_string()
+    }
+
+    /// Every line of scrollback + screen, oldest first; returns them and the scrollback length.
+    fn all_lines(&mut self) -> (Vec<String>, usize) {
+        let keep = self.parser.screen().scrollback();
+        self.parser.screen_mut().set_scrollback(usize::MAX);
+        let max = self.parser.screen().scrollback();
+        let rows = self.rows as usize;
+        let mut lines = vec![String::new(); max + rows];
+        let mut off = max;
+        loop {
+            self.parser.screen_mut().set_scrollback(off);
+            for (i, l) in self.parser.screen().rows(0, self.cols).enumerate() {
+                if let Some(slot) = lines.get_mut(max - off + i) {
+                    *slot = l;
+                }
+            }
+            if off == 0 {
+                break;
+            }
+            off = off.saturating_sub(rows.max(1));
+        }
+        self.parser.screen_mut().set_scrollback(keep);
+        (lines, max)
+    }
+
+    fn run_search(&mut self) {
+        let Some(query) = self.search.as_ref().map(|s| s.query.to_lowercase()) else {
+            return;
+        };
+        let needle: Vec<char> = query.chars().collect();
+        let mut matches = Vec::new();
+        let (lines, max) = if needle.is_empty() {
+            (Vec::new(), 0)
+        } else {
+            self.all_lines()
+        };
+        for (n, line) in lines.iter().enumerate() {
+            let hay: Vec<char> = line.to_lowercase().chars().collect();
+            let mut i = 0;
+            while i + needle.len() <= hay.len() {
+                if hay[i..i + needle.len()] == needle[..] {
+                    matches.push((n, i, needle.len()));
+                    i += needle.len();
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        if let Some(s) = self.search.as_mut() {
+            let keep_last =
+                s.current == usize::MAX || s.matches.is_empty() || s.current + 1 >= s.matches.len();
+            s.matches = matches;
+            s.max = max;
+            s.dirty = false;
+            if keep_last || s.current >= s.matches.len() {
+                // Start at the newest match.
+                s.current = s.matches.len().saturating_sub(1);
+            }
+        }
+    }
+
+    /// Scrolls so that the current match is visible.
+    fn reveal_match(&mut self) {
+        let Some(s) = &self.search else { return };
+        let Some(&(line, _, _)) = s.matches.get(s.current) else {
+            return;
+        };
+        let rows = self.rows as usize;
+        let max = s.max;
+        let top = line.saturating_sub(rows / 2);
+        let off = max.saturating_sub(top).min(max);
+        self.parser.screen_mut().set_scrollback(off);
+        self.scrollback_rows = self.parser.screen().scrollback();
     }
 
     pub fn size(&self) -> (u16, u16) {
@@ -132,6 +249,9 @@ impl Terminal {
 
     pub fn feed(&mut self, bytes: &[u8]) {
         self.parser.process(bytes);
+        if let Some(s) = self.search.as_mut() {
+            s.dirty = true;
+        }
     }
 
     /// Remote working directory, if the shell reports it (OSC 7 or the window title).
@@ -210,11 +330,121 @@ impl Terminal {
         (row, col) >= (s.row, s.col) && (row, col) <= (e.row, e.col)
     }
 
+    /// Floating find bar in the top-right corner. Returns its rect while open.
+    fn search_bar(&mut self, ui: &mut egui::Ui, full: Rect, term: &egui::Response) -> Option<Rect> {
+        let s = self.search.as_mut()?;
+        let w = 330f32.min(full.width() - 20.0);
+        let bar = Rect::from_min_size(
+            full.right_top() + Vec2::new(-w - 10.0, 8.0),
+            Vec2::new(w, 34.0),
+        );
+        ui.painter().rect(
+            bar,
+            CornerRadius::same(8),
+            theme::bg_card(),
+            Stroke::new(1.0, theme::border()),
+            egui::StrokeKind::Inside,
+        );
+        let mut step: i32 = 0;
+        let mut close = false;
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(bar.shrink2(Vec2::new(8.0, 4.0)))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        let count = if s.matches.is_empty() {
+            if s.query.is_empty() {
+                String::new()
+            } else {
+                "0".into()
+            }
+        } else {
+            format!("{}/{}", s.current + 1, s.matches.len())
+        };
+        let edit = child.add(
+            egui::TextEdit::singleline(&mut s.query)
+                .hint_text("Im Terminal suchen")
+                .frame(egui::Frame::NONE)
+                .desired_width(w - 160.0),
+        );
+        if s.focus {
+            edit.request_focus();
+            s.focus = false;
+        }
+        if edit.changed() {
+            s.dirty = true;
+            s.jump = true;
+            s.current = usize::MAX;
+        }
+        let (enter, shift, esc) = child.input(|i| {
+            (
+                i.key_pressed(Key::Enter),
+                i.modifiers.shift,
+                i.key_pressed(Key::Escape),
+            )
+        });
+        // Search runs upwards from the newest output, like reading back in a terminal.
+        if edit.lost_focus() && enter {
+            step = if shift { 1 } else { -1 };
+            edit.request_focus();
+        }
+        if esc && (edit.has_focus() || edit.lost_focus()) {
+            close = true;
+        }
+        child.label(
+            egui::RichText::new(count)
+                .font(FontId::monospace(11.5))
+                .color(theme::text_dim()),
+        );
+        if child
+            .small_button("↑")
+            .on_hover_text("Älterer Treffer (Enter)")
+            .clicked()
+        {
+            step = -1;
+        }
+        if child
+            .small_button("↓")
+            .on_hover_text("Neuerer Treffer (Shift+Enter)")
+            .clicked()
+        {
+            step = 1;
+        }
+        if child
+            .small_button("×")
+            .on_hover_text("Schließen (Esc)")
+            .clicked()
+        {
+            close = true;
+        }
+        if close {
+            self.search = None;
+            term.request_focus();
+            return Some(bar);
+        }
+        if s.dirty {
+            let jump = std::mem::take(&mut s.jump);
+            self.run_search();
+            if jump {
+                self.reveal_match();
+            }
+        }
+        if step != 0
+            && let Some(s) = self.search.as_mut()
+            && !s.matches.is_empty()
+        {
+            let n = s.matches.len() as i32;
+            s.current = ((s.current as i32 + step).rem_euclid(n)) as usize;
+            self.reveal_match();
+        }
+        Some(bar)
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui, id: egui::Id, view: TermView<'_>) -> TermOutput {
         let mut out = TermOutput::default();
         let pal = theme::palette();
         let (term_bg, term_fg) = (pal.term_bg, pal.term_fg);
-        let font = FontId::monospace(view.font_size);
+        let font = FontId::monospace(view.font_size * self.font_scale);
         let (cw, ch) = ui.fonts_mut(|f| (f.glyph_width(&font, 'M'), f.row_height(&font)));
         let cw = cw.max(1.0);
         let ch = ch.ceil().max(1.0);
@@ -256,8 +486,11 @@ impl Terminal {
         if resp.clicked() {
             self.selection = None;
         }
+        // Start the selection where the button went down, not where the drag was detected.
         if resp.drag_started_by(egui::PointerButton::Primary)
-            && let Some(p) = resp.interact_pointer_pos()
+            && let Some(p) = ui
+                .input(|i| i.pointer.press_origin())
+                .or(resp.interact_pointer_pos())
         {
             let c = to_cell(p);
             self.selection = Some((c, c));
@@ -278,8 +511,31 @@ impl Terminal {
             }
         }
         if resp.hovered() {
+            // Ctrl + wheel zooms this pane only, 5 % per wheel event.
+            let notches: i32 = ui.input(|i| {
+                i.events
+                    .iter()
+                    .filter_map(|e| match e {
+                        Event::MouseWheel {
+                            delta, modifiers, ..
+                        } if modifiers.command && delta.y != 0.0 => {
+                            Some(if delta.y > 0.0 { 1 } else { -1 })
+                        }
+                        _ => None,
+                    })
+                    .sum()
+            });
+            let zoom = if ui.input(|i| i.modifiers.command) {
+                0.0
+            } else {
+                1.0
+            };
+            if notches != 0 {
+                self.font_scale = (self.font_scale * 1.05f32.powi(notches)).clamp(0.6, 3.0);
+                self.zoom_hint_until = ui.input(|i| i.time) + 1.2;
+            }
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll.abs() > 0.0 {
+            if zoom == 1.0 && scroll.abs() > 0.0 {
                 let lines = (scroll / ch).round() as isize;
                 let target = (self.scrollback_rows as isize + lines).max(0) as usize;
                 self.parser.screen_mut().set_scrollback(target);
@@ -287,6 +543,7 @@ impl Terminal {
             }
         }
         let selected = self.selected_text();
+        let mut open_search = false;
         resp.context_menu(|ui| {
             if ui
                 .add_enabled(selected.is_some(), egui::Button::new("📋 Kopieren"))
@@ -295,6 +552,20 @@ impl Terminal {
                 if let Some(t) = &selected {
                     ui.ctx().copy_text(t.clone());
                 }
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    selected.is_some(),
+                    egui::Button::new("⚡ Als Snippet speichern"),
+                )
+                .clicked()
+            {
+                out.save_snippet = selected.clone();
+                ui.close();
+            }
+            if ui.button("🔍 Suchen  (Ctrl+Shift+F)").clicked() {
+                open_search = true;
                 ui.close();
             }
             if ui.button("📥 Alles kopieren").clicked() {
@@ -345,6 +616,12 @@ impl Terminal {
                         }
                     }
                     Event::Key {
+                        key: Key::F,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if modifiers.command && modifiers.shift => open_search = true,
+                    Event::Key {
                         key,
                         pressed: true,
                         modifiers,
@@ -361,6 +638,14 @@ impl Terminal {
                 self.parser.screen_mut().set_scrollback(0);
                 self.scrollback_rows = 0;
             }
+        }
+
+        if open_search {
+            self.open_search();
+        }
+        let search_rect = self.search_bar(ui, full, &resp);
+        if self.search.as_ref().is_some_and(|s| s.dirty) {
+            self.run_search();
         }
 
         // --- paint grid
@@ -474,7 +759,44 @@ impl Terminal {
             }
         }
 
-        if self.scrollback_rows > 0 {
+        // --- search hits
+        if let Some(s) = &self.search {
+            let top = s.max.saturating_sub(self.scrollback_rows);
+            for (i, &(line, start, len)) in s.matches.iter().enumerate() {
+                if line < top || line >= top + rows as usize {
+                    continue;
+                }
+                let r = Rect::from_min_size(
+                    Pos2::new(
+                        inner.left() + start as f32 * cw,
+                        inner.top() + (line - top) as f32 * ch,
+                    ),
+                    Vec2::new(len as f32 * cw, ch),
+                );
+                if i == s.current {
+                    painter.rect(
+                        r,
+                        CornerRadius::same(2),
+                        view.accent.gamma_multiply(0.45),
+                        Stroke::new(1.5, view.accent),
+                        egui::StrokeKind::Outside,
+                    );
+                } else {
+                    painter.rect_filled(r, CornerRadius::same(2), view.accent.gamma_multiply(0.25));
+                }
+            }
+        }
+
+        if ui.input(|i| i.time) < self.zoom_hint_until {
+            let label = format!("{:.0} %", self.font_scale * 100.0);
+            let g = painter.layout_no_wrap(label, FontId::proportional(13.0), theme::text());
+            let bg = Rect::from_center_size(full.center(), g.size() + Vec2::new(24.0, 12.0));
+            painter.rect_filled(bg, CornerRadius::same(255), theme::bg_hover());
+            painter.galley(bg.min + Vec2::new(12.0, 6.0), g, theme::text());
+            ui.ctx().request_repaint();
+        }
+
+        if self.scrollback_rows > 0 && search_rect.is_none() {
             let label = format!("⬆ {} Zeilen zurück", self.scrollback_rows);
             let pos = full.right_top() + Vec2::new(-14.0, 10.0);
             let g = painter.layout_no_wrap(label, FontId::proportional(11.0), theme::text());

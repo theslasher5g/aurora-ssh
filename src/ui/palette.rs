@@ -97,17 +97,18 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             });
         }
     }
-    if crate::app::parse_quick(&q).is_some() && q.contains('@') {
-        items.insert(
-            0,
-            Item {
-                icon: "SSH".into(),
-                title: format!("Direkt verbinden: {q}"),
-                subtitle: "Enter".into(),
-                action: Action::QuickConnect(q.clone()),
-                score: i32::MAX,
-            },
-        );
+    // Quick connect: `user@host`, `ssh -p 22 host` rank first; a bare hostname or IP
+    // is offered below matching hosts.
+    let explicit = q.contains('@') || q.trim_start().starts_with("ssh ");
+    let hostish = q.contains('.') || q.contains(':') || q.trim() == "localhost";
+    if crate::app::parse_quick(&q).is_some() && (explicit || hostish) {
+        items.push(Item {
+            icon: "SSH".into(),
+            title: format!("Direkt verbinden: {}", q.trim()),
+            subtitle: "Enter".into(),
+            action: Action::QuickConnect(q.clone()),
+            score: if explicit { i32::MAX } else { 5 },
+        });
     }
     items.sort_by_key(|i| std::cmp::Reverse(i.score));
     items.truncate(12);
