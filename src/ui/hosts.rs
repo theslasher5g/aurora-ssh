@@ -54,41 +54,43 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     // Header: title, search/quick connect, primary action.
     let mut enter = false;
     ui.horizontal(|ui| {
-        ui.label(theme::heading("Verbindungen", 24.0));
+        ui.label(theme::heading(t!("Verbindungen"), 24.0));
         ui.label(theme::mono(app.lib.hosts.len().to_string(), 13.0).color(theme::text_dim()));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.menu_button(RichText::new("Neu").font(theme::semibold(13.5)), |ui| {
+            ui.menu_button(RichText::new(t!("Neu")).font(theme::semibold(13.5)), |ui| {
                 ui.set_min_width(190.0);
                 for (label, proto) in [
                     ("SSH-Host", Protocol::Ssh),
                     ("Remote Desktop", Protocol::Rdp),
                     ("Serielles Gerät", Protocol::Serial),
                 ] {
-                    if ui.button(label).clicked() {
+                    if ui.button(crate::i18n::tr(label)).clicked() {
                         actions.push(Action::NewHostOf(proto, None));
                         ui.close();
                     }
                 }
                 ui.separator();
-                if ui.button("Gruppe").clicked() {
+                if ui.button(t!("Gruppe")).clicked() {
                     actions.push(Action::NewGroup(None));
                     ui.close();
                 }
-                if ui.button("Netz durchsuchen…").clicked() {
+                if ui.button(t!("Netz durchsuchen…")).clicked() {
                     actions.push(Action::OpenScan);
                     ui.close();
                 }
             });
             if ui
-                .button("Netz scannen")
-                .on_hover_text("Geräte mit SSH/RDP im lokalen Netz finden und übernehmen")
+                .button(t!("Netz scannen"))
+                .on_hover_text(t!(
+                    "Geräte mit SSH/RDP im lokalen Netz finden und übernehmen"
+                ))
                 .clicked()
             {
                 actions.push(Action::OpenScan);
             }
             let search = ui.add(
                 egui::TextEdit::singleline(&mut app.search)
-                    .hint_text("Suchen oder user@host verbinden")
+                    .hint_text(t!("Suchen oder user@host verbinden"))
                     .desired_width(320.0)
                     .margin(egui::Margin::symmetric(10, 6)),
             );
@@ -105,7 +107,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     ui.horizontal(|ui| {
         if let Some(i) = theme::segmented(
             ui,
-            &["Alle", "SSH", "RDP", "Seriell", "Favoriten"],
+            &["Alle", "SSH", "RDP", "Seriell", "Favoriten"].map(crate::i18n::tr),
             app.host_filter,
         ) {
             app.host_filter = i;
@@ -114,8 +116,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             let mut changed = false;
             let compact = app.lib.settings.compact;
             if ui
-                .selectable_label(compact, RichText::new("Kompakt").size(12.5))
-                .on_hover_text("Kleinere Zeilen für viele Hosts")
+                .selectable_label(compact, RichText::new(t!("Kompakt")).size(12.5))
+                .on_hover_text(t!("Kleinere Zeilen für viele Hosts"))
                 .clicked()
             {
                 app.lib.settings.compact = !compact;
@@ -124,18 +126,25 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             let labels = ["Name", "Zuletzt verwendet", "Online zuerst"];
             egui::ComboBox::from_id_salt("host-sort")
                 .selected_text(
-                    RichText::new(labels[app.lib.settings.sort.min(2) as usize]).size(12.5),
+                    RichText::new(crate::i18n::tr(
+                        labels[app.lib.settings.sort.min(2) as usize],
+                    ))
+                    .size(12.5),
                 )
                 .width(150.0)
                 .show_ui(ui, |ui| {
                     for (i, l) in labels.iter().enumerate() {
                         changed |= ui
-                            .selectable_value(&mut app.lib.settings.sort, i as u8, *l)
+                            .selectable_value(
+                                &mut app.lib.settings.sort,
+                                i as u8,
+                                crate::i18n::tr(l),
+                            )
                             .changed();
                     }
                 });
             ui.label(
-                RichText::new("Sortierung")
+                RichText::new(t!("Sortierung"))
                     .size(12.5)
                     .color(theme::text_dim()),
             );
@@ -176,22 +185,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 }
                 if hosts.is_empty() && quick.is_none() {
                     ui.add_space(20.0);
-                    ui.label(theme::heading(
-                        format!("Kein Host passt zu „{query}“"),
-                        16.0,
-                    ));
+                    ui.label(theme::heading(t!("Kein Host passt zu „{}“", query), 16.0));
                     ui.label(
-                        RichText::new("Leg ihn an – oder tippe user@host, um direkt zu verbinden.")
-                            .color(theme::text_dim()),
+                        RichText::new(t!(
+                            "Leg ihn an – oder tippe user@host, um direkt zu verbinden."
+                        ))
+                        .color(theme::text_dim()),
                     );
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        if theme::primary_button(ui, &format!("„{query}“ als Host anlegen"))
-                            .clicked()
+                        if theme::primary_button(ui, &t!("„{}“ als Host anlegen", query)).clicked()
                         {
                             actions.push(Action::NewHostNamed(query.clone()));
                         }
-                        if !query.contains(' ') && ui.button("Direkt verbinden").clicked() {
+                        if !query.contains(' ') && ui.button(t!("Direkt verbinden")).clicked() {
                             actions.push(Action::QuickConnect(query.clone()));
                         }
                     });
@@ -234,7 +241,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     ui.painter().text(
                         r.left_center() + Vec2::new(0.0, 0.0),
                         egui::Align2::LEFT_CENTER,
-                        "OHNE GRUPPE",
+                        t!("OHNE GRUPPE"),
                         FontId::monospace(11.0),
                         theme::text_dim(),
                     );
@@ -293,31 +300,31 @@ fn empty_state(ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 ui.painter().circle_filled(c, 3.0, color);
             }
             ui.add_space(22.0);
-            ui.label(theme::heading("Noch nichts eingesteckt", 22.0));
+            ui.label(theme::heading(t!("Noch nichts eingesteckt"), 22.0));
             ui.add_space(2.0);
             ui.label(
-                RichText::new("Lege deine erste Verbindung an. Für einen schnellen Test reicht user@host oben im Suchfeld.")
+                RichText::new(t!("Lege deine erste Verbindung an. Für einen schnellen Test reicht user@host oben im Suchfeld."))
                     .color(theme::text_dim()),
             );
             ui.add_space(18.0);
             ui.horizontal(|ui| {
-                if theme::primary_button(ui, "SSH-Host anlegen").clicked() {
+                if theme::primary_button(ui, t!("SSH-Host anlegen")).clicked() {
                     actions.push(Action::NewHostOf(Protocol::Ssh, None));
                 }
-                if ui.button("Remote Desktop").clicked() {
+                if ui.button(t!("Remote Desktop")).clicked() {
                     actions.push(Action::NewHostOf(Protocol::Rdp, None));
                 }
-                if ui.button("Serielles Gerät").clicked() {
+                if ui.button(t!("Serielles Gerät")).clicked() {
                     actions.push(Action::NewHostOf(Protocol::Serial, None));
                 }
             });
             ui.add_space(10.0);
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new("Oder such dein Netz nach SSH-/RDP-Geräten ab:")
+                    RichText::new(t!("Oder such dein Netz nach SSH-/RDP-Geräten ab:"))
                         .color(theme::text_dim()),
                 );
-                if ui.button("Netz scannen").clicked() {
+                if ui.button(t!("Netz scannen")).clicked() {
                     actions.push(Action::OpenScan);
                 }
             });
@@ -326,10 +333,10 @@ fn empty_state(ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 ui.add_space(14.0);
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(format!("In deiner ~/.ssh/config stehen {found} Hosts."))
+                        RichText::new(t!("In deiner ~/.ssh/config stehen {} Hosts.", found))
                             .color(theme::text_dim()),
                     );
-                    if ui.button("Importieren").clicked() {
+                    if ui.button(t!("Importieren")).clicked() {
                         actions.push(Action::ImportSshConfig);
                     }
                 });
@@ -368,7 +375,7 @@ fn selection_bar(app: &App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(format!("{n} ausgewählt"))
+                    RichText::new(t!("{} ausgewählt", n))
                         .font(theme::semibold(13.5))
                         .color(theme::text()),
                 );
@@ -376,17 +383,17 @@ fn selection_bar(app: &App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 if theme::primary_button(
                     ui,
                     if n > 1 {
-                        "Öffnen (nebeneinander)"
+                        t!("Öffnen (nebeneinander)")
                     } else {
-                        "Öffnen"
+                        t!("Öffnen")
                     },
                 )
                 .clicked()
                 {
                     actions.push(Action::ConnectMany(ids.clone()));
                 }
-                ui.menu_button("In Gruppe", |ui| {
-                    if ui.button("Ohne Gruppe").clicked() {
+                ui.menu_button(t!("In Gruppe"), |ui| {
+                    if ui.button(t!("Ohne Gruppe")).clicked() {
                         actions.push(Action::MoveHosts(ids.clone(), None));
                         ui.close();
                     }
@@ -397,10 +404,10 @@ fn selection_bar(app: &App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         }
                     }
                 });
-                ui.menu_button("Umgebung", |ui| {
+                ui.menu_button(t!("Umgebung"), |ui| {
                     for e in crate::model::Env::ALL {
                         let label = if e == crate::model::Env::None {
-                            "keine"
+                            t!("keine")
                         } else {
                             e.label()
                         };
@@ -411,24 +418,24 @@ fn selection_bar(app: &App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     }
                 });
                 if ui
-                    .button(RichText::new("Löschen").color(theme::red()))
+                    .button(RichText::new(t!("Löschen")).color(theme::red()))
                     .clicked()
                 {
                     actions.push(Action::Confirm(
-                        format!("{n} Hosts löschen?"),
+                        t!("{} Hosts löschen?", n),
                         Box::new(Action::DeleteHosts(ids.clone())),
                     ));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .small_button("×")
-                        .on_hover_text("Auswahl aufheben (Esc)")
+                        .on_hover_text(t!("Auswahl aufheben (Esc)"))
                         .clicked()
                     {
                         actions.push(Action::ClearSelection);
                     }
                     ui.label(
-                        RichText::new("Ctrl/Shift+Klick wählt aus · ziehen in Gruppen")
+                        RichText::new(t!("Ctrl/Shift+Klick wählt aus · ziehen in Gruppen"))
                             .size(11.5)
                             .color(theme::text_dim()),
                     );
@@ -465,24 +472,24 @@ fn subnet_hint(app: &App, ui: &mut egui::Ui, loose: &[Host], actions: &mut Vec<A
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(format!("{n} Hosts liegen im Netz {net}.x"))
+                    RichText::new(t!("{} Hosts liegen im Netz {}.x", n, net))
                         .size(13.5)
                         .color(theme::text()),
                 );
                 ui.label(
-                    RichText::new("– zusammen als Gruppe ablegen?")
+                    RichText::new(t!("– zusammen als Gruppe ablegen?"))
                         .size(13.5)
                         .color(theme::text_dim()),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .small_button("×")
-                        .on_hover_text("Nicht mehr vorschlagen")
+                        .on_hover_text(t!("Nicht mehr vorschlagen"))
                         .clicked()
                     {
                         actions.push(Action::DismissSubnet(net.clone()));
                     }
-                    if theme::primary_button(ui, &format!("Gruppe „LAN {net}“ anlegen")).clicked()
+                    if theme::primary_button(ui, &t!("Gruppe „LAN {}“ anlegen", net)).clicked()
                     {
                         actions.push(Action::GroupSubnet(net.clone()));
                     }
@@ -503,7 +510,7 @@ fn quick_row(ui: &mut egui::Ui, target: &str, actions: &mut Vec<Action>, query: 
     p.text(
         rect.left_center() + Vec2::new(14.0, 0.0),
         egui::Align2::LEFT_CENTER,
-        "Direkt verbinden",
+        t!("Direkt verbinden"),
         theme::semibold(14.0),
         theme::text(),
     );
@@ -724,7 +731,7 @@ fn group_tree(
                 p.text(
                     all_rect.right_center(),
                     egui::Align2::RIGHT_CENTER,
-                    "▶ Alle öffnen",
+                    t!("▶ Alle öffnen"),
                     FontId::proportional(12.0),
                     if hot(all_rect) { theme::accent() } else { dim },
                 );
@@ -744,31 +751,33 @@ fn group_tree(
             .context_menu(|ui| {
                 if total > 0
                     && ui
-                        .button("Alle öffnen (nebeneinander)")
-                        .on_hover_text("Verbindet die ersten vier Hosts der Gruppe im Splitscreen")
+                        .button(t!("Alle öffnen (nebeneinander)"))
+                        .on_hover_text(t!(
+                            "Verbindet die ersten vier Hosts der Gruppe im Splitscreen"
+                        ))
                         .clicked()
                 {
                     actions.push(Action::OpenGroup(g.id));
                     ui.close();
                 }
-                if ui.button("Host hinzufügen").clicked() {
+                if ui.button(t!("Host hinzufügen")).clicked() {
                     actions.push(Action::NewHost(Some(g.id)));
                     ui.close();
                 }
-                if ui.button("Untergruppe").clicked() {
+                if ui.button(t!("Untergruppe")).clicked() {
                     actions.push(Action::NewGroup(Some(g.id)));
                     ui.close();
                 }
-                if ui.button("Bearbeiten").clicked() {
+                if ui.button(t!("Bearbeiten")).clicked() {
                     actions.push(Action::EditGroup(g.id));
                     ui.close();
                 }
                 if ui
-                    .button(RichText::new("Löschen").color(theme::red()))
+                    .button(RichText::new(t!("Löschen")).color(theme::red()))
                     .clicked()
                 {
                     actions.push(Action::Confirm(
-                        format!("Gruppe „{}“ löschen? Die Hosts bleiben erhalten.", g.name),
+                        t!("Gruppe „{}“ löschen? Die Hosts bleiben erhalten.", g.name),
                         Box::new(Action::DeleteGroup(g.id)),
                     ));
                     ui.close();
@@ -877,7 +886,7 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
                 egui::Id::new("host-drag"),
             ));
             let text = if n > 1 {
-                format!("{n} Hosts")
+                t!("{} Hosts", n)
             } else {
                 h.display_name().to_string()
             };
@@ -946,14 +955,14 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
     {
         let tip_rect = Rect::from_center_size(led_pos, Vec2::splat(18.0));
         let tip = if app.failed.contains(&h.id) && !is_live {
-            "letzte Verbindung fehlgeschlagen".to_string()
+            t!("letzte Verbindung fehlgeschlagen").to_string()
         } else if is_live {
-            "Session offen".to_string()
+            t!("Session offen").to_string()
         } else {
             match reach {
-                Some(Reach::Up(ms)) => format!("erreichbar · {ms} ms"),
-                Some(Reach::Down) => "keine Antwort – vermutlich aus".to_string(),
-                None => "noch nicht geprüft".to_string(),
+                Some(Reach::Up(ms)) => t!("erreichbar · {} ms", ms),
+                Some(Reach::Down) => t!("keine Antwort – vermutlich aus").to_string(),
+                None => t!("noch nicht geprüft").to_string(),
             }
         };
         ui.interact(tip_rect, ui.id().with(("reach", h.id)), Sense::hover())
@@ -1114,7 +1123,7 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
         let (color, tip) = match run.map(|r| &r.state) {
             Some(TunnelState::Up) => (
                 theme::green(),
-                format!(
+                t!(
                     "offen: localhost:{} → {}:{} · {} Verbindung(en)\nKlick schließt den Tunnel",
                     t.local_port,
                     t.remote_host,
@@ -1122,13 +1131,15 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
                     run.map(|r| r.conns).unwrap_or(0)
                 ),
             ),
-            Some(TunnelState::Connecting) => (theme::amber(), "verbindet…".to_string()),
-            Some(TunnelState::Failed(e)) => (theme::red(), format!("{e}\nKlick startet neu")),
+            Some(TunnelState::Connecting) => (theme::amber(), t!("verbindet…").to_string()),
+            Some(TunnelState::Failed(e)) => (theme::red(), t!("{}\nKlick startet neu", e)),
             None => (
                 theme::text_dim(),
-                format!(
+                t!(
                     "localhost:{} → {}:{}\nKlick öffnet den Tunnel",
-                    t.local_port, t.remote_host, t.remote_port
+                    t.local_port,
+                    t.remote_host,
+                    t.remote_port
                 ),
             ),
         };
@@ -1198,7 +1209,11 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
                 &p,
                 &mut x,
                 cy,
-                format!("{n} Update{}", if n == 1 { "" } else { "s" }),
+                if n == 1 {
+                    t!("{} Update", n)
+                } else {
+                    t!("{} Updates", n)
+                },
                 theme::amber(),
                 true,
             );
@@ -1207,10 +1222,10 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
             Rect::from_min_max(Pos2::new(start, rect.top()), Pos2::new(x, rect.bottom()));
         let mut tip = format!("{}\nHostname: {}", f.os_name, f.hostname);
         if let Some(t) = f.collected {
-            tip.push_str(&format!("\nStand: {}", relative_time(t)));
+            tip.push_str(&t!("\nStand: {}", relative_time(t)));
         }
         if f.updates.is_some_and(|n| n > 0) {
-            tip.push_str("\nRechtsklick → Updates installieren");
+            tip.push_str(t!("\nRechtsklick → Updates installieren"));
         }
         ui.interact(info_rect, ui.id().with(("facts", h.id)), Sense::hover())
             .on_hover_text(tip);
@@ -1286,22 +1301,22 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
             }
         };
         button(
-            "Verbinden",
-            "Verbinden (Doppelklick)",
+            t!("Verbinden"),
+            t!("Verbinden (Doppelklick)"),
             Action::Connect(h.id),
             true,
         );
         if matches!(h.protocol, Protocol::Ssh | Protocol::Rdp) {
             button(
-                "Dateien",
-                "Dateien (SFTP) öffnen",
+                t!("Dateien"),
+                t!("Dateien (SFTP) öffnen"),
                 Action::OpenSftp(h.id),
                 false,
             );
         }
         button(
-            "Bearbeiten",
-            "Host bearbeiten",
+            t!("Bearbeiten"),
+            t!("Host bearbeiten"),
             Action::EditHost(h.id),
             false,
         );
@@ -1326,12 +1341,12 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
         actions.push(Action::Connect(h.id));
     }
     resp.context_menu(|ui| {
-        if ui.button("Verbinden").clicked() {
+        if ui.button(t!("Verbinden")).clicked() {
             actions.push(Action::Connect(h.id));
             ui.close();
         }
         if matches!(h.protocol, Protocol::Ssh | Protocol::Rdp)
-            && ui.button("Dateien (SFTP)").clicked()
+            && ui.button(t!("Dateien (SFTP)")).clicked()
         {
             actions.push(Action::OpenSftp(h.id));
             ui.close();
@@ -1339,30 +1354,30 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
         ui.separator();
         if ui
             .button(if h.favorite {
-                "Aus Favoriten entfernen"
+                t!("Aus Favoriten entfernen")
             } else {
-                "Zu Favoriten"
+                t!("Zu Favoriten")
             })
             .clicked()
         {
             actions.push(Action::ToggleFavorite(h.id));
             ui.close();
         }
-        if ui.button("Bearbeiten").clicked() {
+        if ui.button(t!("Bearbeiten")).clicked() {
             actions.push(Action::EditHost(h.id));
             ui.close();
         }
-        if ui.button("Umbenennen  (F2)").clicked() {
+        if ui.button(t!("Umbenennen  (F2)")).clicked() {
             ui.ctx()
                 .data_mut(|d| d.insert_temp(rename_id(), (h.id, h.label.clone())));
             ui.close();
         }
         if h.protocol == Protocol::Ssh {
             if ui
-                .button("SSH-Key einrichten…")
-                .on_hover_text(
-                    "Schlüssel auf dem Server hinterlegen – danach ohne Passwort anmelden",
-                )
+                .button(t!("SSH-Key einrichten…"))
+                .on_hover_text(t!(
+                    "Schlüssel auf dem Server hinterlegen – danach ohne Passwort anmelden"
+                ))
                 .clicked()
             {
                 actions.push(Action::SetupKey(h.id));
@@ -1374,18 +1389,18 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
                 .get(&h.id)
                 .and_then(|f| f.updates)
                 .filter(|n| *n > 0)
-                && ui.button(format!("{n} Updates installieren")).clicked()
+                && ui.button(t!("{} Updates installieren", n)).clicked()
             {
                 actions.push(Action::RunUpdates(h.id));
                 ui.close();
             }
         }
-        if ui.button("Duplizieren").clicked() {
+        if ui.button(t!("Duplizieren")).clicked() {
             actions.push(Action::DuplicateHost(h.id));
             ui.close();
         }
-        ui.menu_button("Verschieben nach", |ui| {
-            if ui.button("Ohne Gruppe").clicked() {
+        ui.menu_button(t!("Verschieben nach"), |ui| {
+            if ui.button(t!("Ohne Gruppe")).clicked() {
                 actions.push(Action::MoveHost(h.id, None));
                 ui.close();
             }
@@ -1398,11 +1413,11 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
         });
         ui.separator();
         if ui
-            .button(RichText::new("Löschen").color(theme::red()))
+            .button(RichText::new(t!("Löschen")).color(theme::red()))
             .clicked()
         {
             actions.push(Action::Confirm(
-                format!("Host „{}“ löschen?", h.display_name()),
+                t!("Host „{}“ löschen?", h.display_name()),
                 Box::new(Action::DeleteHost(h.id)),
             ));
             ui.close();
