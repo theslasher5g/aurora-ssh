@@ -14,6 +14,9 @@
 | Erreichbarkeit | Reiner TCP-Verbindungsaufbau zum Host-Port, es werden keine Daten gesendet; abschaltbar in den Einstellungen |
 | Sperren | Tresor sperrt nach einstellbarer Inaktivität (Standard 15 min); Schlüssel werden aus dem Speicher genommen, offene Sessions laufen weiter |
 | PROD-Schutz | Gefährliche Befehle (`rm -r`, `reboot`, `mkfs`, `DROP TABLE` …) werden auf PROD-Hosts vor dem Absenden bestätigt – eine Komfort-Bremse, keine Sicherheitsgrenze |
+| Server-Infos | Nach dem Login laufen nur lesende Befehle (`/etc/os-release`, `hostname`, `/proc/uptime`, `df`, `apt-get -s upgrade`) auf einem eigenen Kanal; Ausgabe wird gekürzt und von Steuerzeichen bereinigt |
+| Netz-Scan | Nur TCP-Verbindungsaufbau (+ SSH-Banner lesen), höchstens /22, nichts wird angemeldet |
+| SSH-Key einrichten | Öffentlicher Schlüssel wird vor dem Einfügen in den Shell-Befehl auf erlaubte Zeichen geprüft; danach wird die Anmeldung nur mit dem Key verifiziert |
 
 ## Security-Review 0.1 (behobene Funde)
 

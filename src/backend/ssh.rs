@@ -195,6 +195,15 @@ async fn run_shell(
         .await?;
     channel.request_shell(false).await?;
     events.send(TermEvent::Connected);
+    {
+        // Facts for the host list run on a separate channel of the same connection.
+        let (handle, events) = (handle.clone(), events.clone());
+        tokio::spawn(async move {
+            if let Some(f) = collect_facts(&handle).await {
+                events.send(TermEvent::Facts(f));
+            }
+        });
+    }
 
     let (mut reader, writer) = channel.split();
     loop {
@@ -225,6 +234,95 @@ async fn run_shell(
             },
         }
     }
+    let _ = handle
+        .disconnect(Disconnect::ByApplication, "bye", "en")
+        .await;
+    Ok(())
+}
+
+/// Read-only system facts: os-release, hostname, uptime, root disk, pending updates.
+/// Runs under `sh` so it works whatever the login shell is.
+const FACTS_SCRIPT: &str = r#"sh -c '. /etc/os-release 2>/dev/null; echo "id=$ID"; echo "name=$PRETTY_NAME"; echo "host=$(hostname 2>/dev/null || cat /etc/hostname 2>/dev/null)"; echo "up=$(cut -d. -f1 /proc/uptime 2>/dev/null)"; echo "disk=$(df -P / 2>/dev/null | awk "NR==2{print \$5}")"; command -v pveversion >/dev/null 2>&1 && echo pve=1; if command -v apt-get >/dev/null 2>&1; then echo "upd=$(apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null | grep -c "^Inst ")"; elif command -v dnf >/dev/null 2>&1; then echo "upd=$(dnf -q --cacheonly check-update 2>/dev/null | grep -c "^[a-zA-Z0-9]")"; fi'"#;
+
+async fn collect_facts(handle: &SshHandle) -> Option<crate::model::HostFacts> {
+    let mut facts = match exec(handle, FACTS_SCRIPT).await {
+        Ok((_, out)) => crate::model::HostFacts::parse(&out),
+        Err(_) => None,
+    };
+    if facts.is_none() {
+        // Windows OpenSSH runs commands in cmd.exe.
+        if let Ok((_, out)) = exec(handle, "ver & hostname").await {
+            facts = crate::model::HostFacts::parse_windows(&out);
+        }
+    }
+    let mut f = facts?;
+    f.collected = Some(chrono::Utc::now());
+    Some(f)
+}
+
+/// Runs one command on its own channel; returns (exit status, stdout), output capped at 64 KiB.
+pub async fn exec(handle: &SshHandle, cmd: &str) -> Result<(u32, String)> {
+    let run = async {
+        let mut ch = handle.channel_open_session().await?;
+        ch.exec(true, cmd).await?;
+        let mut out = Vec::new();
+        let mut status = 0;
+        while let Some(msg) = ch.wait().await {
+            match msg {
+                ChannelMsg::Data { data } => {
+                    if out.len() < 64 * 1024 {
+                        out.extend_from_slice(&data);
+                    }
+                }
+                ChannelMsg::ExitStatus { exit_status } => status = exit_status,
+                ChannelMsg::Close => break,
+                _ => {}
+            }
+        }
+        anyhow::Ok((status, String::from_utf8_lossy(&out).into_owned()))
+    };
+    tokio::time::timeout(Duration::from_secs(25), run)
+        .await
+        .map_err(|_| anyhow!("Zeitüberschreitung"))?
+}
+
+/// Puts `public` into `~/.ssh/authorized_keys` (password login), then proves that a
+/// login with the matching private key works.
+pub async fn install_key(
+    p: SshParams,
+    public: String,
+    private: String,
+    prompts: Sink<HostKeyPrompt>,
+) -> Result<()> {
+    let line = public.trim();
+    // The key goes into a shell command: only the characters a public key line uses.
+    let safe = line.chars().all(|c| {
+        c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '=' | '@' | '.' | '_' | '-' | ' ')
+    });
+    if !safe || !line.starts_with("ssh-") {
+        bail!("Ungültiger öffentlicher Schlüssel");
+    }
+    let handle = connect(&p, prompts.clone()).await?;
+    let cmd = format!(
+        "sh -c 'umask 077; mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && (grep -qxF \"{line}\" ~/.ssh/authorized_keys || echo \"{line}\" >> ~/.ssh/authorized_keys)'"
+    );
+    let (status, _) = exec(&handle, &cmd).await?;
+    let _ = handle
+        .disconnect(Disconnect::ByApplication, "bye", "en")
+        .await;
+    if status != 0 {
+        bail!("Server hat den Schlüssel nicht übernommen (nur Linux/Unix-Server, Exit {status})");
+    }
+    // Verify: key only, no password fallback.
+    let check = SshParams {
+        password: None,
+        private_key: Some(private),
+        passphrase: None,
+        ..p
+    };
+    let handle = connect(&check, prompts)
+        .await
+        .map_err(|e| anyhow!("Schlüssel eingetragen, Anmeldung damit klappt aber nicht: {e:#}"))?;
     let _ = handle
         .disconnect(Disconnect::ByApplication, "bye", "en")
         .await;

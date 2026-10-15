@@ -4,6 +4,7 @@
 pub mod rdp;
 pub mod rdp_embed;
 pub mod reach;
+pub mod scan;
 pub mod serial;
 pub mod sftp;
 pub mod ssh;
@@ -40,6 +41,8 @@ pub enum TermEvent {
     },
     /// Upload finished: target directory, or the error.
     UploadDone(Result<String, String>),
+    /// OS, uptime, disk and updates of the server, collected after login.
+    Facts(crate::model::HostFacts),
     Closed(Option<String>),
 }
 

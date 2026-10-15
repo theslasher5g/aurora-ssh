@@ -54,6 +54,8 @@ pub struct TermTab {
     pub last_output: Instant,
     /// File upload from a drop onto the terminal: (file, done, total).
     pub upload: Option<(String, u64, u64)>,
+    /// Command typed once after the first login (not on reconnect).
+    pub run_once: Option<String>,
 }
 
 pub struct Transfer {
@@ -189,6 +191,8 @@ pub struct Tab {
     pub notes_open: bool,
     /// Quick-connect target that isn't saved as a host yet.
     pub unsaved: Option<Host>,
+    /// Saved host behind this session.
+    pub host_id: Option<Uuid>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -209,6 +213,31 @@ pub struct SnippetRun {
     pub snippet: Snippet,
     pub values: Vec<(String, String)>,
     pub all: bool,
+}
+
+/// "SSH-Key einrichten" dialog.
+pub struct KeySetup {
+    pub host: Uuid,
+    /// Existing identity with a private key, or `None` = generate a new Ed25519 key.
+    pub identity: Option<Uuid>,
+    pub password: String,
+    pub running: bool,
+    pub error: Option<String>,
+    /// Key generated for this run: (private, public).
+    pub generated: Option<(String, String)>,
+}
+
+/// "Netz durchsuchen" dialog.
+pub struct ScanState {
+    pub range: String,
+    pub ports: String,
+    pub running: bool,
+    pub progress: (usize, usize),
+    /// Found machines and whether they are ticked for import.
+    pub results: Vec<(crate::backend::scan::Found, bool)>,
+    pub rx: Option<UnboundedReceiver<crate::backend::scan::ScanEvent>>,
+    pub error: Option<String>,
+    pub new_group: bool,
 }
 
 pub struct HostEditor {
@@ -295,6 +324,14 @@ pub struct App {
     pub tour_step: usize,
     /// Terminal that gets the keyboard focus on the next frame.
     pub focus_term: Option<u64>,
+    /// Hosts whose last connection attempt failed (red LED).
+    pub failed: std::collections::HashSet<Uuid>,
+    /// Command for the next session of this host (e.g. "install updates").
+    pub pending_command: Option<(Uuid, String)>,
+    pub key_setup: Option<KeySetup>,
+    pub key_sink: Sink<Result<(), String>>,
+    pub key_rx: UnboundedReceiver<Result<(), String>>,
+    pub scan: Option<ScanState>,
     pub next_id: u64,
 
     pub search: String,
@@ -372,6 +409,14 @@ pub enum Action {
     /// New host with this hostname (from a search without results).
     NewHostNamed(String),
     ImportSshConfig,
+    RenameHost(Uuid, String),
+    /// Put all loose hosts of `a.b.c.x` into a new group.
+    GroupSubnet(String),
+    DismissSubnet(String),
+    OpenScan,
+    SetupKey(Uuid),
+    /// Connect and run the package manager's upgrade.
+    RunUpdates(Uuid),
     /// Ask before running the inner (destructive) action.
     Confirm(String, Box<Action>),
 }
@@ -392,6 +437,7 @@ impl App {
         theme::apply(&cc.egui_ctx, &lib.settings.theme);
         let (prompts_sink, prompts_rx) = Sink::new(cc.egui_ctx.clone());
         let (update_sink, update_rx) = Sink::new(cc.egui_ctx.clone());
+        let (key_sink, key_rx) = Sink::new(cc.egui_ctx.clone());
         let mut update = UpdateState::default();
         if lib.settings.check_updates {
             update.checking = true;
@@ -423,6 +469,12 @@ impl App {
             show_shortcuts: false,
             tour_step: 0,
             focus_term: None,
+            failed: Default::default(),
+            pending_command: None,
+            key_setup: None,
+            key_sink,
+            key_rx,
+            scan: None,
             next_id: 1,
             search: String::new(),
             host_filter: 0,
@@ -590,7 +642,15 @@ impl App {
                     .and_then(|s| self.lib.snippet(s))
                     .filter(|s| s.variables().is_empty())
                     .map(|s| s.script.clone());
-                TabKind::Term(Box::new(self.spawn_term(spec, startup, ctx)))
+                let mut term = self.spawn_term(spec, startup, ctx);
+                if let Some((h, cmd)) = self.pending_command.take() {
+                    if h == host.id {
+                        term.run_once = Some(cmd);
+                    } else {
+                        self.pending_command = Some((h, cmd));
+                    }
+                }
+                TabKind::Term(Box::new(term))
             }
             (Protocol::Serial, _) => {
                 let spec = ConnectSpec::Serial(host.serial.clone());
@@ -651,6 +711,7 @@ impl App {
             notes_open: !host.notes.trim().is_empty(),
             unsaved: (self.lib.host(host.id).is_none() && host.protocol == Protocol::Ssh)
                 .then(|| host.clone()),
+            host_id: self.lib.host(host.id).map(|h| h.id),
         });
         if self.group_split.contains(&host.id) {
             self.group_split.retain(|h| *h != host.id);
@@ -705,6 +766,7 @@ impl App {
             notes: String::new(),
             notes_open: false,
             unsaved: None,
+            host_id: None,
             kind: TabKind::Sftp(Box::new(SftpTab {
                 panes: [
                     crate::ui::sftp::local_pane(home.clone()),
@@ -788,6 +850,7 @@ impl App {
             cmd_started: None,
             last_output: Instant::now(),
             upload: None,
+            run_once: None,
         }
     }
 
@@ -860,6 +923,177 @@ impl App {
         if self.split.len() < 2 {
             self.split.clear();
         }
+    }
+
+    /// Starts the key installation for the open "SSH-Key einrichten" dialog.
+    pub fn start_key_setup(&mut self) {
+        let Some(ks) = self.key_setup.as_mut() else {
+            return;
+        };
+        let Some(host) = self.lib.host(ks.host).cloned() else {
+            return;
+        };
+        let (private, public) = match ks
+            .identity
+            .and_then(|id| self.keychain.identities.iter().find(|i| i.id == id))
+        {
+            Some(i) => match crate::keygen::public_info(&i.private_key, &i.passphrase) {
+                Ok((public, _)) => (i.private_key.clone(), public),
+                Err(e) => {
+                    ks.error = Some(format!("Schlüssel nicht lesbar: {e:#}"));
+                    return;
+                }
+            },
+            None => {
+                let comment = format!("aurora@{}", host.display_name().replace(' ', "-"));
+                let comment: String = comment
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-'))
+                    .collect();
+                match crate::keygen::generate_ed25519(&comment) {
+                    Ok(pair) => {
+                        ks.generated = Some(pair.clone());
+                        pair
+                    }
+                    Err(e) => {
+                        ks.error = Some(format!("{e:#}"));
+                        return;
+                    }
+                }
+            }
+        };
+        ks.running = true;
+        ks.error = None;
+        let password = (!ks.password.is_empty()).then(|| ks.password.clone());
+        let (user, ident) = self.credentials(&host);
+        // Log in with the password only for the installation.
+        let mut params = self.ssh_params(&host, &user, &password, &ident);
+        params.private_key = None;
+        params.passphrase = None;
+        let (sink, prompts) = (self.key_sink.clone(), self.prompts_sink.clone());
+        self.rt.spawn(async move {
+            let r = crate::backend::ssh::install_key(params, public, private, prompts).await;
+            sink.send(r.map_err(|e| format!("{e:#}")));
+        });
+    }
+
+    fn finish_key_setup(&mut self, r: Result<(), String>) {
+        let Some(ks) = self.key_setup.as_mut() else {
+            return;
+        };
+        ks.running = false;
+        if let Err(e) = r {
+            ks.error = Some(e);
+            return;
+        }
+        let ks = self.key_setup.take().expect("checked above");
+        let Some(host) = self.lib.host(ks.host).cloned() else {
+            return;
+        };
+        let (user, _) = self.credentials(&host);
+        let ident_id = match (ks.identity, ks.generated) {
+            (Some(id), _) => id,
+            (None, Some((private, _))) => {
+                let mut ident = Identity::new();
+                ident.label = format!("Key {}", host.display_name());
+                ident.username = user;
+                ident.private_key = private;
+                let id = ident.id;
+                self.keychain.identities.push(ident);
+                self.save_keychain();
+                id
+            }
+            (None, None) => return,
+        };
+        if let Some(h) = self.lib.hosts.iter_mut().find(|h| h.id == host.id) {
+            h.identity_id = Some(ident_id);
+        }
+        self.save_library();
+        self.toast(
+            format!("{}: Anmeldung jetzt per SSH-Key", host.display_name()),
+            theme::green(),
+        );
+    }
+
+    pub fn start_scan(&mut self, ctx: &egui::Context) {
+        let Some(scan) = self.scan.as_mut() else {
+            return;
+        };
+        let parsed = crate::backend::scan::parse_range(&scan.range)
+            .and_then(|ips| crate::backend::scan::parse_ports(&scan.ports).map(|p| (ips, p)));
+        match parsed {
+            Ok((ips, ports)) => {
+                let (sink, rx) = Sink::new(ctx.clone());
+                scan.progress = (0, ips.len());
+                scan.results.clear();
+                scan.error = None;
+                scan.running = true;
+                scan.rx = Some(rx);
+                crate::backend::scan::spawn(&self.rt, ips, ports, sink);
+            }
+            Err(e) => scan.error = Some(format!("{e:#}")),
+        }
+    }
+
+    /// Adds the ticked scan results as hosts.
+    pub fn import_scan(&mut self) {
+        let Some(scan) = self.scan.take() else {
+            return;
+        };
+        let picked: Vec<_> = scan
+            .results
+            .into_iter()
+            .filter(|(_, t)| *t)
+            .map(|(f, _)| f)
+            .collect();
+        if picked.is_empty() {
+            return;
+        }
+        let group = if scan.new_group {
+            let prefix = crate::model::subnet24(&picked[0].ip.to_string()).unwrap_or_default();
+            let g = Group {
+                name: format!("LAN {prefix}"),
+                color: [96, 165, 250],
+                ..Default::default()
+            };
+            let id = g.id;
+            if let Some(existing) = self.lib.groups.iter().find(|x| x.name == g.name) {
+                Some(existing.id)
+            } else {
+                self.lib.groups.push(g);
+                Some(id)
+            }
+        } else {
+            None
+        };
+        let n = picked.len();
+        for f in picked {
+            let ssh_port = f
+                .ports
+                .iter()
+                .copied()
+                .find(|p| *p != 3389 && (f.banner.is_some() || *p == 22));
+            let (protocol, port) = match ssh_port {
+                Some(p) => (Protocol::Ssh, p),
+                None => (Protocol::Rdp, 3389),
+            };
+            self.lib.hosts.push(Host {
+                hostname: f.ip.to_string(),
+                port,
+                protocol,
+                group_id: group,
+                ..Default::default()
+            });
+        }
+        self.save_library();
+        self.toast(
+            if n == 1 {
+                "1 Host hinzugefügt – der Name kommt beim ersten Login".to_string()
+            } else {
+                format!("{n} Hosts hinzugefügt – Namen kommen beim ersten Login")
+            },
+            theme::green(),
+        );
     }
 
     /// Coloured frame around PROD / STAGING sessions.
@@ -1177,6 +1411,8 @@ impl App {
         let visible = self.visible_tabs();
         let focused = ctx.input(|i| i.focused);
         let mut notify = false;
+        let mut learned: Vec<(Uuid, crate::model::HostFacts)> = Vec::new();
+        let mut outcome: Vec<(Uuid, bool)> = Vec::new();
         for tab in &mut self.tabs {
             let seen = focused && visible.contains(&tab.id);
             match &mut tab.kind {
@@ -1196,10 +1432,22 @@ impl App {
                                 );
                                 t.state = ConnState::Connecting(s);
                             }
+                            TermEvent::Facts(f) => {
+                                if let Some(h) = tab.host_id {
+                                    learned.push((h, f));
+                                }
+                            }
                             TermEvent::Connected => {
                                 t.state = ConnState::Connected;
+                                if let Some(h) = tab.host_id {
+                                    outcome.push((h, true));
+                                }
                                 let (cols, rows) = t.term.size();
                                 let _ = t.tx.send(TermCmd::Resize { cols, rows });
+                                if let Some(cmd) = t.run_once.take() {
+                                    let _ =
+                                        t.tx.send(TermCmd::Input(format!("{cmd}\r").into_bytes()));
+                                }
                                 if let Some(s) = &t.startup {
                                     let mut s = s.replace('\n', "\r");
                                     s.push('\r');
@@ -1236,6 +1484,12 @@ impl App {
                                         ),
                                         theme::amber(),
                                     ));
+                                }
+                                if err.is_some()
+                                    && !matches!(t.state, ConnState::Connected)
+                                    && let Some(h) = tab.host_id
+                                {
+                                    outcome.push((h, false));
                                 }
                                 t.state = ConnState::Closed(err);
                                 t.cmd_started = None;
@@ -1304,6 +1558,59 @@ impl App {
             }
         }
         self.hostkey_queue.extend(prompts);
+        for (h, ok) in outcome {
+            if ok {
+                self.failed.remove(&h);
+            } else {
+                self.failed.insert(h);
+            }
+        }
+        if !learned.is_empty() {
+            for (h, f) in learned {
+                // Hosts saved under their IP get the server's own name.
+                if let Some(host) = self.lib.hosts.iter_mut().find(|x| x.id == h)
+                    && host.label.trim().is_empty()
+                    && !f.hostname.is_empty()
+                    && f.hostname != host.hostname
+                    && f.hostname != "localhost"
+                {
+                    toasts.push((
+                        format!("{} heißt jetzt „{}“", host.hostname, f.hostname),
+                        theme::accent(),
+                    ));
+                    host.label = f.hostname.clone();
+                }
+                self.lib.facts.insert(h, f);
+            }
+            self.save_library();
+        }
+        while let Ok(r) = self.key_rx.try_recv() {
+            self.finish_key_setup(r);
+        }
+        if let Some(scan) = self.scan.as_mut()
+            && let Some(rx) = scan.rx.as_mut()
+        {
+            use crate::backend::scan::ScanEvent;
+            while let Ok(ev) = rx.try_recv() {
+                match ev {
+                    ScanEvent::Progress(d, t) => scan.progress = (d, t),
+                    ScanEvent::Found(f) => {
+                        let known = self
+                            .lib
+                            .hosts
+                            .iter()
+                            .any(|h| h.hostname.trim() == f.ip.to_string());
+                        scan.results.push((f, !known));
+                        scan.results.sort_by_key(|(f, _)| f.ip);
+                    }
+                    ScanEvent::Done => {
+                        scan.running = false;
+                        scan.rx = None;
+                        break;
+                    }
+                }
+            }
+        }
         if notify && !focused {
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                 egui::UserAttentionType::Informational,
@@ -1590,6 +1897,79 @@ impl App {
                     },
                     theme::green(),
                 );
+            }
+            Action::RenameHost(id, name) => {
+                if let Some(h) = self.lib.hosts.iter_mut().find(|h| h.id == id) {
+                    h.label = name.trim().to_string();
+                }
+                self.save_library();
+            }
+            Action::GroupSubnet(prefix) => {
+                let group = Group {
+                    name: format!("LAN {prefix}"),
+                    color: [96, 165, 250],
+                    ..Default::default()
+                };
+                let gid = group.id;
+                self.lib.groups.push(group);
+                let mut n = 0;
+                for h in self.lib.hosts.iter_mut() {
+                    let loose = h.group_id.is_none();
+                    if loose && crate::model::subnet24(&h.hostname).as_deref() == Some(&prefix) {
+                        h.group_id = Some(gid);
+                        n += 1;
+                    }
+                }
+                self.save_library();
+                self.toast(format!("{n} Hosts in „LAN {prefix}“"), theme::green());
+            }
+            Action::DismissSubnet(prefix) => {
+                self.lib.settings.dismissed_subnets.push(prefix);
+                self.save_library();
+            }
+            Action::OpenScan => {
+                self.scan = Some(ScanState {
+                    range: crate::backend::scan::local_subnet()
+                        .unwrap_or_else(|| "192.168.0.0/24".into()),
+                    ports: "22, 3389".into(),
+                    running: false,
+                    progress: (0, 0),
+                    results: Vec::new(),
+                    rx: None,
+                    error: None,
+                    new_group: true,
+                });
+                self.start_scan(ctx);
+            }
+            Action::SetupKey(id) => {
+                let host = self.lib.host(id).cloned();
+                if let Some(host) = host {
+                    let (_, ident) = self.credentials(&host);
+                    self.key_setup = Some(KeySetup {
+                        host: id,
+                        identity: None,
+                        password: ident.map(|i| i.password).unwrap_or_default(),
+                        running: false,
+                        error: None,
+                        generated: None,
+                    });
+                }
+            }
+            Action::RunUpdates(id) => {
+                let os = self
+                    .lib
+                    .facts
+                    .get(&id)
+                    .map(|f| f.os_id.clone())
+                    .unwrap_or_default();
+                let cmd = match os.as_str() {
+                    "fedora" | "rhel" | "centos" | "rocky" | "almalinux" => "sudo dnf upgrade",
+                    _ => "sudo apt-get update && sudo apt-get upgrade",
+                };
+                if let Some(h) = self.lib.host(id).cloned() {
+                    self.pending_command = Some((id, cmd.to_string()));
+                    self.connect_host(h, Purpose::Terminal, ctx);
+                }
             }
             Action::Lock => {
                 self.vault = None;

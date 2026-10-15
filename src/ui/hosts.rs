@@ -55,7 +55,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     actions.push(Action::NewGroup(None));
                     ui.close();
                 }
+                if ui.button("Netz durchsuchen…").clicked() {
+                    actions.push(Action::OpenScan);
+                    ui.close();
+                }
             });
+            if ui
+                .button("Netz scannen")
+                .on_hover_text("Geräte mit SSH/RDP im lokalen Netz finden und übernehmen")
+                .clicked()
+            {
+                actions.push(Action::OpenScan);
+            }
             let search = ui.add(
                 egui::TextEdit::singleline(&mut app.search)
                     .hint_text("Suchen oder user@host verbinden")
@@ -143,6 +154,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 .filter(|h| passes_filter(app.host_filter, h))
                 .cloned()
                 .collect();
+            subnet_hint(app, ui, &loose, actions);
             if !loose.is_empty() {
                 if !app.lib.groups.is_empty() {
                     ui.add_space(14.0);
@@ -165,7 +177,12 @@ fn live_hosts(app: &App) -> Vec<String> {
             TabKind::Sftp(t) => matches!(t.state(), ConnState::Connected),
             TabKind::Rdp(t) => t.is_live(),
         })
-        .map(|t| t.title.clone())
+        .flat_map(|t| {
+            [
+                t.title.clone(),
+                t.host_id.map(|h| h.to_string()).unwrap_or_default(),
+            ]
+        })
         .collect()
 }
 
@@ -212,6 +229,16 @@ fn empty_state(ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     actions.push(Action::NewHostOf(Protocol::Serial, None));
                 }
             });
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("Oder such dein Netz nach SSH-/RDP-Geräten ab:")
+                        .color(theme::text_dim()),
+                );
+                if ui.button("Netz scannen").clicked() {
+                    actions.push(Action::OpenScan);
+                }
+            });
             let found = crate::app::ssh_config_hosts().len();
             if found > 0 {
                 ui.add_space(14.0);
@@ -227,6 +254,60 @@ fn empty_state(ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             }
         });
     });
+}
+
+/// "5 Hosts im Netz 192.168.0.x – als Gruppe anlegen?" for loose hosts sharing a /24.
+fn subnet_hint(app: &App, ui: &mut egui::Ui, loose: &[Host], actions: &mut Vec<Action>) {
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for h in loose {
+        if let Some(net) = crate::model::subnet24(&h.hostname) {
+            match counts.iter_mut().find(|(n, _)| *n == net) {
+                Some((_, c)) => *c += 1,
+                None => counts.push((net, 1)),
+            }
+        }
+    }
+    let Some((net, n)) = counts
+        .into_iter()
+        .filter(|(net, c)| *c >= 3 && !app.lib.settings.dismissed_subnets.contains(net))
+        .max_by_key(|(_, c)| *c)
+    else {
+        return;
+    };
+    ui.add_space(16.0);
+    egui::Frame::NONE
+        .fill(theme::accent().gamma_multiply(0.08))
+        .stroke(Stroke::new(1.0, theme::accent().gamma_multiply(0.35)))
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(14, 10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{n} Hosts liegen im Netz {net}.x"))
+                        .size(13.5)
+                        .color(theme::text()),
+                );
+                ui.label(
+                    RichText::new("– zusammen als Gruppe ablegen?")
+                        .size(13.5)
+                        .color(theme::text_dim()),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .small_button("×")
+                        .on_hover_text("Nicht mehr vorschlagen")
+                        .clicked()
+                    {
+                        actions.push(Action::DismissSubnet(net.clone()));
+                    }
+                    if theme::primary_button(ui, &format!("Gruppe „LAN {net}“ anlegen")).clicked()
+                    {
+                        actions.push(Action::GroupSubnet(net.clone()));
+                    }
+                });
+            });
+        });
 }
 
 fn quick_row(ui: &mut egui::Ui, target: &str, actions: &mut Vec<Action>, query: &str) {
@@ -344,13 +425,35 @@ fn group_tree(
             .iter()
             .filter(|h| h.group_id.is_some_and(|hg| app.lib.is_descendant(hg, g.id)))
             .count();
-        ui.add_space(if depth == 0 { 14.0 } else { 6.0 });
+        ui.add_space(if depth == 0 { 16.0 } else { 6.0 });
         let indent = depth as f32 * 16.0;
-        let (rect, resp) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::click());
+        let (full, resp) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::click());
+        let rect = Rect::from_min_max(full.min + Vec2::new(indent, 0.0), full.max);
         let p = ui.painter();
-        let x = rect.left() + indent;
-        let c = Pos2::new(x + 4.0, rect.center().y);
+        let cy = rect.center().y;
+        // Band with the group colour as a bar on the left.
+        p.rect_filled(
+            rect,
+            CornerRadius::same(6),
+            if resp.hovered() {
+                theme::bg_hover()
+            } else {
+                theme::bg_panel()
+            },
+        );
+        p.rect_filled(
+            Rect::from_min_size(rect.left_top(), Vec2::new(3.0, rect.height())),
+            CornerRadius {
+                nw: 6,
+                sw: 6,
+                ne: 0,
+                se: 0,
+            },
+            theme::rgb(g.color),
+        );
+        let x = rect.left() + 12.0;
+        let c = Pos2::new(x + 4.0, cy);
         let tri = if g.collapsed {
             vec![
                 c + Vec2::new(-2.0, -4.0),
@@ -369,26 +472,29 @@ fn group_tree(
             theme::text_dim(),
             Stroke::NONE,
         ));
-        p.rect_filled(
-            Rect::from_center_size(Pos2::new(x + 18.0, rect.center().y), Vec2::splat(8.0)),
-            CornerRadius::same(2),
-            theme::rgb(g.color),
-        );
-        let label = theme::spaced(&g.name.to_uppercase());
-        let galley = p.layout_no_wrap(label, FontId::monospace(11.0), theme::text());
+        let galley = p.layout_no_wrap(g.name.clone(), theme::semibold(14.0), theme::text());
         let w = galley.size().x;
         p.galley(
-            Pos2::new(x + 30.0, rect.center().y - galley.size().y / 2.0),
+            Pos2::new(x + 16.0, cy - galley.size().y / 2.0),
             galley,
             theme::text(),
         );
-        p.text(
-            Pos2::new(x + 40.0 + w, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            total.to_string(),
-            FontId::monospace(11.0),
-            theme::text_dim(),
-        );
+        let mut tx = x + 16.0 + w + 10.0;
+        // "3/5 online" from the reachability probe.
+        let members = app.lib.hosts_in_group(g.id);
+        let up = members
+            .iter()
+            .filter(|h| matches!(app.reach.get(h.id), Some(Reach::Up(_))))
+            .count();
+        let count = if app.lib.settings.reachability && total > 0 {
+            format!("{up}/{total} online")
+        } else {
+            total.to_string()
+        };
+        let cg = p.layout_no_wrap(count, FontId::monospace(11.0), theme::text_dim());
+        let cw = cg.size().x;
+        p.galley(Pos2::new(tx, cy - cg.size().y / 2.0), cg, theme::text_dim());
+        tx += cw + 10.0;
         if g.env != crate::model::Env::None {
             let color = theme::env_color(g.env);
             let gl = p.layout_no_wrap(
@@ -396,11 +502,7 @@ fn group_tree(
                 FontId::monospace(9.5),
                 theme::bg_deep(),
             );
-            let tx = x + 40.0 + w + 24.0;
-            let r = Rect::from_min_size(
-                Pos2::new(tx, rect.center().y - 8.0),
-                gl.size() + Vec2::new(8.0, 4.0),
-            );
+            let r = Rect::from_min_size(Pos2::new(tx, cy - 8.0), gl.size() + Vec2::new(8.0, 4.0));
             p.rect_filled(r, CornerRadius::same(3), color);
             p.galley(r.min + Vec2::new(4.0, 2.0), gl, theme::bg_deep());
         }
@@ -410,19 +512,17 @@ fn group_tree(
             rect.right_top() - Vec2::new(170.0, 0.0),
             rect.right_bottom() - Vec2::new(76.0, 0.0),
         );
-        if resp.hovered() {
+        {
+            // Actions stay visible; they light up under the pointer.
             let pointer = ui.input(|i| i.pointer.hover_pos());
-            let hot = |r: Rect| pointer.is_some_and(|p| r.contains(p));
+            let hot = |r: Rect| resp.hovered() && pointer.is_some_and(|p| r.contains(p));
+            let dim = theme::text_dim().linear_multiply(if resp.hovered() { 1.0 } else { 0.7 });
             p.text(
-                rect.right_center() - Vec2::new(8.0, 0.0),
+                rect.right_center() - Vec2::new(12.0, 0.0),
                 egui::Align2::RIGHT_CENTER,
                 "+ Host",
                 FontId::proportional(12.0),
-                if hot(plus_rect) {
-                    theme::accent()
-                } else {
-                    theme::text_dim()
-                },
+                if hot(plus_rect) { theme::accent() } else { dim },
             );
             if total > 0 {
                 p.text(
@@ -430,14 +530,11 @@ fn group_tree(
                     egui::Align2::RIGHT_CENTER,
                     "▶ Alle öffnen",
                     FontId::proportional(12.0),
-                    if hot(all_rect) {
-                        theme::accent()
-                    } else {
-                        theme::text_dim()
-                    },
+                    if hot(all_rect) { theme::accent() } else { dim },
                 );
             }
         }
+        ui.add_space(2.0);
         let click_pos = ui.input(|i| i.pointer.interact_pos());
         let clicked_in = |r: Rect| resp.clicked() && click_pos.is_some_and(|p| r.contains(p));
         if clicked_in(plus_rect) {
@@ -493,6 +590,52 @@ fn group_tree(
     }
 }
 
+/// Brand-ish colour for an OS id from os-release.
+fn os_color(id: &str) -> Color32 {
+    match id {
+        "ubuntu" => Color32::from_rgb(233, 84, 32),
+        "debian" | "raspbian" => Color32::from_rgb(215, 10, 83),
+        "fedora" | "rhel" | "centos" => Color32::from_rgb(81, 162, 218),
+        "rocky" | "almalinux" => Color32::from_rgb(16, 185, 129),
+        "arch" | "alpine" => Color32::from_rgb(23, 147, 209),
+        "windows" => Color32::from_rgb(0, 120, 212),
+        "freebsd" | "opnsense" | "pfsense" => Color32::from_rgb(171, 43, 40),
+        _ => theme::text_dim(),
+    }
+}
+
+fn uptime_text(secs: u64) -> String {
+    let d = secs / 86_400;
+    match (d, secs / 3600) {
+        (d, _) if d > 0 => format!("up {d} d"),
+        (_, h) if h > 0 => format!("up {h} h"),
+        _ => format!("up {} min", secs / 60),
+    }
+}
+
+/// Small outlined (or filled) mono label at `x`, advancing `x`.
+fn chip(p: &egui::Painter, x: &mut f32, cy: f32, label: String, color: Color32, filled: bool) {
+    let fg = if filled { theme::bg_deep() } else { color };
+    let g = p.layout_no_wrap(label, FontId::monospace(10.5), fg);
+    let r = Rect::from_min_size(Pos2::new(*x, cy - 9.0), g.size() + Vec2::new(10.0, 6.0));
+    if filled {
+        p.rect_filled(r, CornerRadius::same(3), color);
+    } else {
+        p.rect_stroke(
+            r,
+            CornerRadius::same(3),
+            Stroke::new(1.0, color.linear_multiply(0.4)),
+            egui::StrokeKind::Inside,
+        );
+    }
+    p.galley(r.min + Vec2::new(5.0, 3.0), g, fg);
+    *x = r.right() + 6.0;
+}
+
+pub fn rename_id() -> egui::Id {
+    egui::Id::new("aurora-rename")
+}
+
 fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &mut Vec<Action>) {
     let (rect, resp) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::click());
@@ -508,30 +651,45 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
             rect.right_bottom(),
         ),
         CornerRadius::ZERO,
-        theme::border().linear_multiply(0.6),
+        theme::border().linear_multiply(0.45),
     );
 
     let cy = rect.center().y;
-    // LED: lit = open session, green = reachable, red = no answer, grey = unknown.
-    let is_live = live.iter().any(|t| t == h.display_name());
+    // LED: lit green = open session, green = reachable, hollow = no answer (probably off),
+    // red = the last connection attempt failed.
+    let id = h.id.to_string();
+    let is_live = live.iter().any(|t| *t == id || t == h.display_name());
     let reach = app
         .lib
         .settings
         .reachability
         .then(|| app.reach.get(h.id))
         .flatten();
-    let led_color = match (is_live, reach) {
-        (true, _) | (false, Some(Reach::Up(_))) => theme::green(),
-        (false, Some(Reach::Down)) => theme::red(),
-        (false, None) => theme::text_dim(),
-    };
     let led_pos = Pos2::new(rect.left() + 14.0, cy);
-    theme::led(&p, led_pos, led_color, is_live);
-    if let Some(r) = reach {
+    if app.failed.contains(&h.id) && !is_live {
+        theme::led(&p, led_pos, theme::red(), true);
+    } else {
+        match (is_live, reach) {
+            (true, _) => theme::led(&p, led_pos, theme::green(), true),
+            (false, Some(Reach::Up(_))) => theme::led(&p, led_pos, theme::green(), false),
+            (false, Some(Reach::Down)) => {
+                p.circle_stroke(led_pos, 3.2, Stroke::new(1.2, theme::text_dim()));
+            }
+            (false, None) => theme::led(&p, led_pos, theme::text_dim(), false),
+        }
+    }
+    {
         let tip_rect = Rect::from_center_size(led_pos, Vec2::splat(18.0));
-        let tip = match r {
-            Reach::Up(ms) => format!("erreichbar · {ms} ms"),
-            Reach::Down => "keine Antwort auf Port".to_string(),
+        let tip = if app.failed.contains(&h.id) && !is_live {
+            "letzte Verbindung fehlgeschlagen".to_string()
+        } else if is_live {
+            "Session offen".to_string()
+        } else {
+            match reach {
+                Some(Reach::Up(ms)) => format!("erreichbar · {ms} ms"),
+                Some(Reach::Down) => "keine Antwort – vermutlich aus".to_string(),
+                None => "noch nicht geprüft".to_string(),
+            }
         };
         ui.interact(tip_rect, ui.id().with(("reach", h.id)), Sense::hover())
             .on_hover_text(tip);
@@ -539,20 +697,57 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
 
     let w = rect.width();
     let col_name = rect.left() + 30.0;
-    let col_addr = rect.left() + (w * 0.30).max(200.0);
-    let col_proto = rect.left() + (w * 0.62).max(470.0);
-    let name_galley = p.layout_no_wrap(
-        h.display_name().to_string(),
-        theme::semibold(14.0),
-        theme::text(),
-    );
-    let name_w = name_galley.size().x;
-    p.galley(
-        Pos2::new(col_name, cy - name_galley.size().y / 2.0),
-        name_galley,
-        theme::text(),
-    );
-    let mut nx = col_name + name_w + 8.0;
+    let col_addr = rect.left() + (w * 0.27).max(190.0);
+    let col_info = rect.left() + (w * 0.47).max(360.0);
+
+    // --- name (or inline rename)
+    let renaming: Option<(Uuid, String)> = ui.ctx().data(|d| d.get_temp(rename_id()));
+    let mut nx;
+    if let Some((rid, mut text)) = renaming.filter(|(rid, _)| *rid == h.id) {
+        let _ = rid;
+        let r = Rect::from_min_size(
+            Pos2::new(col_name - 4.0, cy - 13.0),
+            Vec2::new((col_addr - col_name - 16.0).max(120.0), 26.0),
+        );
+        let edit = ui.put(
+            r,
+            egui::TextEdit::singleline(&mut text)
+                .font(theme::semibold(14.0))
+                .hint_text(h.hostname.as_str()),
+        );
+        edit.request_focus();
+        let (enter, esc) = ui.input(|i| {
+            (
+                i.key_pressed(egui::Key::Enter),
+                i.key_pressed(egui::Key::Escape),
+            )
+        });
+        if enter || (edit.lost_focus() && !esc) {
+            actions.push(Action::RenameHost(h.id, text));
+            ui.ctx()
+                .data_mut(|d| d.remove::<(Uuid, String)>(rename_id()));
+        } else if esc {
+            ui.ctx()
+                .data_mut(|d| d.remove::<(Uuid, String)>(rename_id()));
+        } else {
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(rename_id(), (h.id, text)));
+        }
+        nx = r.right() + 8.0;
+    } else {
+        let name_galley = p.layout_no_wrap(
+            h.display_name().to_string(),
+            theme::semibold(14.0),
+            theme::text(),
+        );
+        let name_w = name_galley.size().x;
+        p.galley(
+            Pos2::new(col_name, cy - name_galley.size().y / 2.0),
+            name_galley,
+            theme::text(),
+        );
+        nx = col_name + name_w + 8.0;
+    }
     if h.favorite {
         p.text(
             Pos2::new(nx, cy),
@@ -585,63 +780,118 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
             .on_hover_text(h.notes.trim());
     }
 
-    // Address: user@host in dim, port in accent.
-    let (addr, port) = match h.protocol {
+    // --- address: only what the name doesn't already say; default ports are hidden.
+    let named = !h.label.trim().is_empty();
+    let (user, host_part, port) = match h.protocol {
         Protocol::Serial => (
+            String::new(),
             h.serial.port_name.clone(),
-            format!("{} Bd", h.serial.baud_rate),
+            format!(" {} Bd", h.serial.baud_rate),
         ),
-        _ => {
-            let user = if h.username.is_empty() {
+        _ => (
+            h.username.clone(),
+            if named {
+                h.hostname.clone()
+            } else {
+                String::new()
+            },
+            if h.port == h.protocol.default_port() {
                 String::new()
             } else {
-                format!("{}@", h.username)
-            };
-            (format!("{user}{}", h.hostname), format!(":{}", h.port))
-        }
-    };
-    let addr_g = p.layout_no_wrap(addr, FontId::monospace(12.5), theme::text_dim());
-    let aw = addr_g.size().x;
-    p.galley(
-        Pos2::new(col_addr, cy - addr_g.size().y / 2.0),
-        addr_g,
-        theme::text_dim(),
-    );
-    p.text(
-        Pos2::new(
-            col_addr
-                + aw
-                + if h.protocol == Protocol::Serial {
-                    8.0
-                } else {
-                    0.0
-                },
-            cy,
+                format!(":{}", h.port)
+            },
         ),
-        egui::Align2::LEFT_CENTER,
-        port,
-        FontId::monospace(12.5),
-        protocol_color(h.protocol).linear_multiply(0.9),
-    );
+    };
+    let mut ax = col_addr;
+    let mut addr_part = |text: String, color: Color32| {
+        if text.is_empty() {
+            return;
+        }
+        let g = p.layout_no_wrap(text, FontId::monospace(12.5), color);
+        let gw = g.size().x;
+        p.galley(Pos2::new(ax, cy - g.size().y / 2.0), g, color);
+        ax += gw;
+    };
+    let user_text = match (user.is_empty(), host_part.is_empty()) {
+        (false, false) => format!("{user}@"),
+        (false, true) => user,
+        _ => String::new(),
+    };
+    addr_part(user_text, theme::text_dim());
+    addr_part(host_part, theme::text_dim().linear_multiply(1.15));
+    addr_part(port, protocol_color(h.protocol).linear_multiply(0.9));
 
-    // Protocol + tags.
-    let mut x = col_proto;
-    let pc = protocol_color(h.protocol);
-    for (i, label) in std::iter::once(protocol_tag(h.protocol).to_string())
-        .chain(h.tags.iter().take(2).cloned())
-        .enumerate()
-    {
-        let color = if i == 0 { pc } else { theme::text_dim() };
-        let g = p.layout_no_wrap(label, FontId::monospace(10.5), color);
-        let r = Rect::from_min_size(Pos2::new(x, cy - 9.0), g.size() + Vec2::new(10.0, 6.0));
-        p.rect_stroke(
-            r,
-            CornerRadius::same(3),
-            Stroke::new(1.0, color.linear_multiply(0.4)),
-            egui::StrokeKind::Inside,
+    // --- info: protocol (if not SSH), tags, then what the server told us.
+    let mut x = col_info;
+    if h.protocol != Protocol::Ssh {
+        chip(
+            &p,
+            &mut x,
+            cy,
+            protocol_tag(h.protocol).to_string(),
+            protocol_color(h.protocol),
+            false,
         );
-        p.galley(r.min + Vec2::new(5.0, 3.0), g, color);
-        x = r.right() + 6.0;
+    }
+    for t in h.tags.iter().take(2) {
+        chip(&p, &mut x, cy, t.clone(), theme::text_dim(), false);
+    }
+    let facts = app.lib.facts.get(&h.id);
+    if let Some(f) = facts {
+        let os = f.short_os();
+        let start = x;
+        if !os.is_empty() {
+            p.circle_filled(Pos2::new(x + 4.0, cy), 3.5, os_color(&f.os_id));
+            let g = p.layout_no_wrap(os, FontId::proportional(12.5), theme::text());
+            let gw = g.size().x;
+            p.galley(Pos2::new(x + 13.0, cy - g.size().y / 2.0), g, theme::text());
+            x += 13.0 + gw + 10.0;
+        }
+        let mut detail = Vec::new();
+        if f.uptime_secs > 0 {
+            detail.push((uptime_text(f.uptime_secs), theme::text_dim()));
+        }
+        if let Some(d) = f.disk_used_pct {
+            let c = if d >= 90 {
+                theme::red()
+            } else if d >= 80 {
+                theme::amber()
+            } else {
+                theme::text_dim()
+            };
+            detail.push((format!("/ {d} %"), c));
+        }
+        for (text, color) in detail {
+            let g = p.layout_no_wrap(text, FontId::monospace(11.5), color);
+            let gw = g.size().x;
+            p.galley(Pos2::new(x, cy - g.size().y / 2.0), g, color);
+            x += gw + 10.0;
+        }
+        if let Some(n) = f.updates.filter(|n| *n > 0) {
+            chip(
+                &p,
+                &mut x,
+                cy,
+                format!("{n} Update{}", if n == 1 { "" } else { "s" }),
+                theme::amber(),
+                true,
+            );
+        }
+        let info_rect =
+            Rect::from_min_max(Pos2::new(start, rect.top()), Pos2::new(x, rect.bottom()));
+        let mut tip = format!("{}\nHostname: {}", f.os_name, f.hostname);
+        if let Some(t) = f.collected {
+            tip.push_str(&format!("\nStand: {}", relative_time(t)));
+        }
+        if f.updates.is_some_and(|n| n > 0) {
+            tip.push_str("\nRechtsklick → Updates installieren");
+        }
+        ui.interact(info_rect, ui.id().with(("facts", h.id)), Sense::hover())
+            .on_hover_text(tip);
+    }
+    if hovered && ui.input(|i| i.key_pressed(egui::Key::F2)) {
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(rename_id(), (h.id, h.label.clone())));
     }
 
     // Right side: last used, or actions on hover.
@@ -716,11 +966,18 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
             Action::EditHost(h.id),
             false,
         );
-    } else if let Some(t) = h.last_connected {
+    } else {
+        let mut parts = Vec::new();
+        if let Some(Reach::Up(ms)) = reach {
+            parts.push(format!("{ms} ms"));
+        }
+        if let Some(t) = h.last_connected {
+            parts.push(relative_time(t));
+        }
         p.text(
             rect.right_center() - Vec2::new(14.0, 0.0),
             egui::Align2::RIGHT_CENTER,
-            relative_time(t),
+            parts.join("  ·  "),
             FontId::monospace(11.5),
             theme::text_dim(),
         );
@@ -755,6 +1012,34 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
         if ui.button("Bearbeiten").clicked() {
             actions.push(Action::EditHost(h.id));
             ui.close();
+        }
+        if ui.button("Umbenennen  (F2)").clicked() {
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(rename_id(), (h.id, h.label.clone())));
+            ui.close();
+        }
+        if h.protocol == Protocol::Ssh {
+            if ui
+                .button("SSH-Key einrichten…")
+                .on_hover_text(
+                    "Schlüssel auf dem Server hinterlegen – danach ohne Passwort anmelden",
+                )
+                .clicked()
+            {
+                actions.push(Action::SetupKey(h.id));
+                ui.close();
+            }
+            if let Some(n) = app
+                .lib
+                .facts
+                .get(&h.id)
+                .and_then(|f| f.updates)
+                .filter(|n| *n > 0)
+                && ui.button(format!("{n} Updates installieren")).clicked()
+            {
+                actions.push(Action::RunUpdates(h.id));
+                ui.close();
+            }
         }
         if ui.button("Duplizieren").clicked() {
             actions.push(Action::DuplicateHost(h.id));

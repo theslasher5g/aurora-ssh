@@ -12,6 +12,8 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     snippet_vars(app, ctx);
     confirm(app, ctx);
     danger(app, ctx);
+    key_setup(app, ctx);
+    scan(app, ctx);
     shortcuts(app, ctx);
     tour(app, ctx);
 }
@@ -484,5 +486,231 @@ fn confirm(app: &mut App, ctx: &egui::Context) {
         && yes
     {
         app.apply(action, ctx);
+    }
+}
+
+/// "SSH-Key einrichten": installs a key on the server and switches the host to it.
+fn key_setup(app: &mut App, ctx: &egui::Context) {
+    let Some(ks) = app.key_setup.as_ref() else {
+        return;
+    };
+    let host = app
+        .lib
+        .host(ks.host)
+        .map(|h| h.display_name().to_string())
+        .unwrap_or_default();
+    let keys: Vec<(uuid::Uuid, String)> = app
+        .keychain
+        .identities
+        .iter()
+        .filter(|i| !i.private_key.trim().is_empty())
+        .map(|i| (i.id, i.label.clone()))
+        .collect();
+    let mut start = false;
+    let mut close = false;
+    let ks = app.key_setup.as_mut().expect("checked above");
+    egui::Modal::new(egui::Id::new("key-setup")).show(ctx, |ui| {
+        ui.set_width(460.0);
+        ui.label(theme::heading(format!("SSH-Key für {host}"), 20.0));
+        ui.label(
+            RichText::new(
+                "Aurora meldet sich einmal mit Passwort an, legt den öffentlichen Schlüssel in \
+                 ~/.ssh/authorized_keys ab und prüft danach die Anmeldung per Key.",
+            )
+            .color(theme::text_dim()),
+        );
+        ui.add_space(10.0);
+        ui.add_enabled_ui(!ks.running, |ui| {
+            ui.radio_value(
+                &mut ks.identity,
+                None,
+                "Neuen Ed25519-Schlüssel erzeugen (empfohlen)",
+            );
+            for (id, label) in &keys {
+                let label = if label.is_empty() {
+                    "(ohne Namen)"
+                } else {
+                    label
+                };
+                ui.radio_value(
+                    &mut ks.identity,
+                    Some(*id),
+                    format!("Vorhandenen Schlüssel: {label}"),
+                );
+            }
+            ui.add_space(8.0);
+            ui.label(RichText::new("Passwort für diese eine Anmeldung").size(12.5));
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut ks.password)
+                    .password(true)
+                    .desired_width(f32::INFINITY),
+            );
+            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                start = true;
+            }
+        });
+        if let Some(e) = &ks.error {
+            ui.add_space(6.0);
+            ui.label(RichText::new(e).color(theme::red()));
+        }
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            if ks.running {
+                ui.spinner();
+                ui.label(RichText::new("Richte ein…").color(theme::text_dim()));
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(
+                        !ks.running,
+                        egui::Button::new(RichText::new("Einrichten").strong()),
+                    )
+                    .clicked()
+                {
+                    start = true;
+                }
+                if ui.button("Abbrechen").clicked() {
+                    close = true;
+                }
+            });
+        });
+    });
+    if close {
+        app.key_setup = None;
+    } else if start && !app.key_setup.as_ref().is_some_and(|k| k.running) {
+        app.start_key_setup();
+    }
+}
+
+/// "Netz durchsuchen": find SSH/RDP machines in the local network and add them.
+fn scan(app: &mut App, ctx: &egui::Context) {
+    if app.scan.is_none() {
+        return;
+    }
+    let known: Vec<String> = app
+        .lib
+        .hosts
+        .iter()
+        .map(|h| h.hostname.trim().to_string())
+        .collect();
+    let mut start = false;
+    let mut close = false;
+    let mut import = false;
+    let sc = app.scan.as_mut().expect("checked above");
+    let modal = egui::Modal::new(egui::Id::new("scan")).show(ctx, |ui| {
+        ui.set_width(560.0);
+        ui.label(theme::heading("Netz durchsuchen", 20.0));
+        ui.label(
+            RichText::new("Findet Geräte mit offenem SSH- oder RDP-Port. Es wird nur eine Verbindung aufgebaut, nichts angemeldet.")
+                .color(theme::text_dim()),
+        );
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            ui.label("Bereich");
+            ui.add_enabled(
+                !sc.running,
+                egui::TextEdit::singleline(&mut sc.range)
+                    .desired_width(170.0)
+                    .font(egui::FontId::monospace(13.0)),
+            );
+            ui.label("Ports");
+            ui.add_enabled(
+                !sc.running,
+                egui::TextEdit::singleline(&mut sc.ports)
+                    .desired_width(90.0)
+                    .font(egui::FontId::monospace(13.0)),
+            );
+            if ui
+                .add_enabled(!sc.running, egui::Button::new(RichText::new("Scannen").strong()))
+                .clicked()
+            {
+                start = true;
+            }
+        });
+        if let Some(e) = &sc.error {
+            ui.label(RichText::new(e).color(theme::red()));
+        }
+        let (done, total) = sc.progress;
+        if sc.running || total > 0 {
+            ui.add_space(6.0);
+            let frac = if total > 0 { done as f32 / total as f32 } else { 0.0 };
+            ui.add(
+                egui::ProgressBar::new(frac)
+                    .desired_height(4.0)
+                    .fill(theme::accent()),
+            );
+            ui.label(
+                RichText::new(if sc.running {
+                    format!("{done} / {total} Adressen geprüft · {} gefunden", sc.results.len())
+                } else {
+                    format!("Fertig · {} Geräte gefunden", sc.results.len())
+                })
+                .size(12.0)
+                .color(theme::text_dim()),
+            );
+        }
+        ui.add_space(6.0);
+        egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+            for (f, ticked) in sc.results.iter_mut() {
+                let ip = f.ip.to_string();
+                let is_known = known.contains(&ip);
+                ui.horizontal(|ui| {
+                    ui.add_enabled(!is_known, egui::Checkbox::without_text(ticked));
+                    ui.add_sized(
+                        [130.0, 20.0],
+                        egui::Label::new(theme::mono(&ip, 13.0).color(theme::text())),
+                    );
+                    for p in &f.ports {
+                        let name = match p {
+                            22 => "SSH".to_string(),
+                            3389 => "RDP".to_string(),
+                            p => p.to_string(),
+                        };
+                        ui.label(theme::mono(name, 11.0).color(theme::accent()));
+                    }
+                    if let Some(b) = &f.banner {
+                        ui.label(
+                            RichText::new(crate::backend::scan::banner_hint(b))
+                                .size(12.0)
+                                .color(theme::text_dim()),
+                        );
+                    }
+                    if is_known {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(RichText::new("schon angelegt").size(12.0).color(theme::text_dim()));
+                        });
+                    }
+                });
+            }
+        });
+        let picked = sc.results.iter().filter(|(_, t)| *t).count();
+        ui.add_space(8.0);
+        if !sc.results.is_empty() {
+            ui.checkbox(&mut sc.new_group, "In eine eigene Gruppe „LAN …“ legen");
+        }
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(
+                        picked > 0 && !sc.running,
+                        egui::Button::new(RichText::new(format!("{picked} hinzufügen")).strong()),
+                    )
+                    .clicked()
+                {
+                    import = true;
+                }
+                if ui.button("Schließen").clicked() {
+                    close = true;
+                }
+            });
+        });
+    });
+    if start {
+        app.start_scan(ctx);
+    }
+    if import {
+        app.import_scan();
+    } else if close || (modal.should_close() && !app.scan.as_ref().is_some_and(|s| s.running)) {
+        app.scan = None;
     }
 }

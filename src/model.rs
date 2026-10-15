@@ -376,6 +376,8 @@ pub struct Settings {
     pub warn_everywhere: bool,
     /// The first-start tour was shown.
     pub onboarded: bool,
+    /// Subnets for which "group these hosts" was dismissed.
+    pub dismissed_subnets: Vec<String>,
 }
 
 impl Default for Settings {
@@ -390,6 +392,7 @@ impl Default for Settings {
             auto_lock_minutes: 15,
             warn_everywhere: false,
             onboarded: false,
+            dismissed_subnets: Vec::new(),
         }
     }
 }
@@ -403,6 +406,106 @@ pub struct Library {
     pub settings: Settings,
     /// `host:port` -> `SHA256:...` fingerprint of the accepted server key.
     pub known_hosts: HashMap<String, String>,
+    /// What Aurora learned about each host on the last SSH login.
+    pub facts: HashMap<Uuid, HostFacts>,
+}
+
+/// System facts collected after an SSH login (read-only commands).
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct HostFacts {
+    /// os-release `ID` (`ubuntu`, `debian` …) or `windows`.
+    pub os_id: String,
+    pub os_name: String,
+    pub hostname: String,
+    pub uptime_secs: u64,
+    pub disk_used_pct: Option<u8>,
+    /// Pending package updates, if the package manager was recognised.
+    pub updates: Option<u32>,
+    pub proxmox: bool,
+    pub collected: Option<DateTime<Utc>>,
+}
+
+impl HostFacts {
+    /// Parses the `key=value` lines printed by the facts script.
+    pub fn parse(text: &str) -> Option<Self> {
+        let mut f = HostFacts::default();
+        let clean = |v: &str| -> String {
+            v.trim()
+                .trim_matches('"')
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(80)
+                .collect()
+        };
+        for line in text.lines() {
+            let Some((k, v)) = line.split_once('=') else {
+                continue;
+            };
+            match k.trim() {
+                "id" => f.os_id = clean(v).to_lowercase(),
+                "name" => f.os_name = clean(v),
+                "host" => f.hostname = clean(v),
+                "up" => f.uptime_secs = v.trim().parse().unwrap_or(0),
+                "disk" => f.disk_used_pct = v.trim().trim_end_matches('%').parse().ok(),
+                "upd" => f.updates = v.trim().parse().ok(),
+                "pve" => f.proxmox = v.trim() == "1",
+                _ => {}
+            }
+        }
+        (!f.os_id.is_empty() || !f.hostname.is_empty()).then_some(f)
+    }
+
+    /// Output of `ver & hostname` on Windows.
+    pub fn parse_windows(text: &str) -> Option<Self> {
+        let ver = text.lines().find(|l| l.contains("Windows"))?;
+        let version = ver
+            .split("Version")
+            .nth(1)
+            .map(|v| v.trim().trim_end_matches(']').trim().to_string())
+            .unwrap_or_default();
+        let hostname = text
+            .lines()
+            .map(str::trim)
+            .rfind(|l| !l.is_empty() && !l.contains("Windows"))
+            .unwrap_or_default()
+            .to_string();
+        Some(HostFacts {
+            os_id: "windows".into(),
+            os_name: if version.is_empty() {
+                "Windows".into()
+            } else {
+                format!("Windows {version}")
+            },
+            hostname,
+            ..Default::default()
+        })
+    }
+
+    /// Short label for the host list, e.g. `Ubuntu 24.04`.
+    pub fn short_os(&self) -> String {
+        if self.proxmox {
+            return "Proxmox VE".into();
+        }
+        let name = self
+            .os_name
+            .replace("GNU/Linux", "")
+            .replace(" LTS", "")
+            .replace("(", "")
+            .replace(")", "");
+        let words: Vec<&str> = name.split_whitespace().collect();
+        // "Ubuntu 24.04.1" -> "Ubuntu 24.04", "Debian 12 bookworm" -> "Debian 12"
+        let mut out: Vec<String> = Vec::new();
+        for w in words.iter().take(3) {
+            if out.len() == 1 {
+                let v: Vec<&str> = w.split('.').collect();
+                out.push(v.iter().take(2).cloned().collect::<Vec<_>>().join("."));
+                break;
+            }
+            out.push(w.to_string());
+        }
+        out.join(" ")
+    }
 }
 
 impl Library {
@@ -484,6 +587,13 @@ impl Library {
         }
         false
     }
+}
+
+/// IPv4 network prefix `a.b.c` of a host address, for "same subnet" grouping.
+pub fn subnet24(addr: &str) -> Option<String> {
+    let ip: std::net::Ipv4Addr = addr.trim().parse().ok()?;
+    let o = ip.octets();
+    Some(format!("{}.{}.{}", o[0], o[1], o[2]))
 }
 
 /// Commands that deserve a second look before they run (on PROD).
@@ -579,6 +689,33 @@ pub fn parse_ssh_config(text: &str) -> Vec<Host> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_facts() {
+        let f = HostFacts::parse(
+            "id=ubuntu\nname=\"Ubuntu 24.04.1 LTS\"\nhost=pihole\nup=86400\ndisk=71%\nupd=12\n",
+        )
+        .unwrap();
+        assert_eq!(f.short_os(), "Ubuntu 24.04");
+        assert_eq!(
+            (f.uptime_secs, f.disk_used_pct, f.updates),
+            (86400, Some(71), Some(12))
+        );
+        assert_eq!(f.hostname, "pihole");
+        let d = HostFacts::parse("id=debian\nname=Debian GNU/Linux 12 (bookworm)\n").unwrap();
+        assert_eq!(d.short_os(), "Debian 12");
+        let w = HostFacts::parse_windows(
+            "\r\nMicrosoft Windows [Version 10.0.20348.2340]\r\nSRV-DC01\r\n",
+        )
+        .unwrap();
+        assert_eq!(
+            (w.os_id.as_str(), w.hostname.as_str()),
+            ("windows", "SRV-DC01")
+        );
+        assert!(HostFacts::parse("garbage").is_none());
+        assert_eq!(subnet24("192.168.0.44").as_deref(), Some("192.168.0"));
+        assert_eq!(subnet24("web-01.example.com"), None);
+    }
 
     #[test]
     fn dangerous_commands() {
