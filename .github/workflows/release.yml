@@ -40,6 +40,9 @@ jobs:
             . -> target
             crates/aurora-rdp -> target
 
+      # aws-lc-sys (TLS/crypto) needs NASM on MSVC.
+      - uses: ilammy/setup-nasm@v1
+
       - name: Test
         run: cargo test --release --locked
 
