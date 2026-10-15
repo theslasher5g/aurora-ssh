@@ -1,7 +1,7 @@
 # Aurora
 
 Moderner Client für **SSH, SFTP, RDP und serielle Konsolen** – in Rust, schlicht, schnell, mit
-verschlüsselter Keychain, Snippets, Host-Gruppen und umschaltbaren Themes.
+verschlüsselter Keychain, Snippets, Host-Gruppen und umschaltbaren Themes
 
 ![Hosts](docs/screenshots/hosts.png)
 
