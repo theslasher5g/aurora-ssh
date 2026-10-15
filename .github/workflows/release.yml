@@ -66,9 +66,10 @@ jobs:
             $env:PATH += ";C:\Program Files (x86)\Inno Setup 6"
           }
           iscc /DAppVersion=$version packaging/windows/aurora.iss
-          Get-ChildItem dist -File | ForEach-Object {
+          $sums = Get-ChildItem -Path dist/* -File -Include *.exe, *.zip | ForEach-Object {
             "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
-          } | Out-File -Encoding ascii dist/SHA256SUMS-windows.txt
+          }
+          $sums | Out-File -Encoding ascii dist/SHA256SUMS-windows.txt
           Get-ChildItem dist
 
       - name: Publish release
