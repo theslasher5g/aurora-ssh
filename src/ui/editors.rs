@@ -314,6 +314,12 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                      Der Jump-Host braucht gespeicherte Zugangsdaten (Identität)."
                                 ));
                         });
+                        f.switch(ui, t!("Dauerhafte Session (tmux)"), &mut h.persistent)
+                            .on_hover_text(t!(
+                                "Die Shell läuft in tmux (sonst screen) auf dem Server weiter: \
+                                 nach einem Abbruch landet das Neu-Verbinden in derselben Session \
+                                 mit allen laufenden Programmen."
+                            ));
                     });
                     theme::form_caption(ui, t!("Tunnel (Port-Weiterleitung)"));
                     theme::form(ui, 92.0, |ui, f| {

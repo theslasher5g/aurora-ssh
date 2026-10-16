@@ -306,6 +306,14 @@ fn log_picker(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         .and_then(|h| app.lib.host(h))
         .map(|h| h.display_name().to_string())
         .unwrap_or_else(|| t!("Dieser PC").to_string());
+    // The user's own sources for this host (only SSH hosts run them, not this PC).
+    let own: Vec<(String, String)> = app
+        .lib
+        .log_commands
+        .iter()
+        .filter(|c| host.is_some() && (c.host.is_none() || c.host == host))
+        .map(|c| (c.name.clone(), c.command.clone()))
+        .collect();
     let Some(p) = app.log_picker.as_mut() else {
         return;
     };
@@ -335,19 +343,29 @@ fn log_picker(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                 open = true;
             }
             ui.add_space(6.0);
+            if !own.is_empty() {
+                ui.label(
+                    RichText::new(t!("Eigene Befehle"))
+                        .size(12.0)
+                        .color(theme::text_dim()),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    for (name, cmd) in &own {
+                        if ui
+                            .selectable_label(p.source == *cmd, theme::mono(name, 12.0))
+                            .on_hover_text(cmd)
+                            .clicked()
+                        {
+                            p.source = cmd.clone();
+                        }
+                    }
+                });
+                ui.add_space(4.0);
+            }
             ui.horizontal_wrapped(|ui| {
-                for preset in [
-                    "journalctl -f",
-                    "journalctl -f -p warning",
-                    "/var/log/syslog",
-                    "/var/log/messages",
-                    "/var/log/auth.log",
-                    "/var/log/nginx/error.log",
-                    "/var/log/nginx/access.log",
-                    "/var/log/apache2/error.log",
-                ] {
+                for (_, preset) in crate::model::LOG_PRESETS {
                     if ui
-                        .selectable_label(p.source == preset, theme::mono(preset, 12.0))
+                        .selectable_label(p.source == *preset, theme::mono(*preset, 12.0))
                         .clicked()
                     {
                         p.source = preset.to_string();

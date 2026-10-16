@@ -48,6 +48,10 @@ const GROUPS: &[(&str, Entries)] = &[
         "Terminal",
         &[
             ("Im Terminal suchen", &[Key("Ctrl"), Key("Shift"), Key("F")]),
+            (
+                "Logs neben dem Terminal",
+                &[Key("Ctrl"), Key("Shift"), Key("L")],
+            ),
             ("Schriftgröße ändern", &[Key("Ctrl"), G("Mausrad")]),
             (
                 "Kopieren / Einfügen",

@@ -38,6 +38,8 @@ pub enum ConnectSpec {
     Telnet(crate::backend::telnet::TelnetParams),
     /// A program on this PC in a pseudo terminal (container shell).
     Local(Vec<String>),
+    /// Plays a recorded session (`.cast` file).
+    Replay(std::path::PathBuf),
 }
 
 pub enum ConnState {
@@ -64,6 +66,25 @@ pub struct TermTab {
     pub run_once: Option<String>,
     /// Colors and font of this host's terminal.
     pub profile: crate::model::TermProfile,
+    /// Shell command for a persistent (tmux) session; reused on reconnect.
+    pub persist: Option<String>,
+    /// Log viewer docked at the right.
+    pub side_log: Option<SideLog>,
+    /// Running recording of this session.
+    pub recorder: Option<backend::record::Recorder>,
+}
+
+/// State of the log panel at the right of a terminal.
+#[derive(Default)]
+pub struct SideLog {
+    /// The followed source; `None` shows the source list.
+    pub log: Option<Box<LogTab>>,
+    pub input: String,
+    pub save_name: String,
+    /// Copy the shown lines this frame.
+    pub copy: bool,
+    /// Panel width; 0 = default.
+    pub width: f32,
 }
 
 /// Log viewer tab: follows a file or command and shows it filtered and highlighted.
@@ -87,6 +108,68 @@ pub struct LogTab {
     pub paused_at: usize,
     pub follow: bool,
     pub wrap: bool,
+}
+
+/// The log of a log tab or of a terminal's side panel.
+fn log_in(tabs: &mut [Tab], tab_id: u64) -> Option<&mut LogTab> {
+    match &mut tabs.iter_mut().find(|t| t.id == tab_id)?.kind {
+        TabKind::Log(t) => Some(t),
+        TabKind::Term(t) => t.side_log.as_mut()?.log.as_deref_mut(),
+        _ => None,
+    }
+}
+
+impl LogTab {
+    pub fn new(source: backend::logs::LogSource, target_host: Option<Uuid>) -> Self {
+        Self {
+            source,
+            target_host,
+            lines: VecDeque::new(),
+            dropped: 0,
+            state: ConnState::Connecting(t!("Verbinde…").into()),
+            rx: None,
+            stop: None,
+            filter: String::new(),
+            only_matches: true,
+            level: 0,
+            paused: false,
+            paused_at: 0,
+            follow: true,
+            wrap: false,
+        }
+    }
+
+    /// Takes the events that arrived from the source.
+    pub fn pump(&mut self, title: &str, toasts: &mut Vec<(String, Color32)>) {
+        use backend::logs::LogEvent;
+        while let Some(ev) = self.rx.as_mut().and_then(|rx| rx.try_recv().ok()) {
+            match ev {
+                LogEvent::Status(s) => self.state = ConnState::Connecting(s),
+                LogEvent::Connected => self.state = ConnState::Connected,
+                LogEvent::Lines(lines) => {
+                    if self.paused {
+                        self.paused_at += lines.len();
+                    }
+                    self.lines.extend(lines);
+                    let over = self
+                        .lines
+                        .len()
+                        .saturating_sub(crate::ui::logview::MAX_LINES);
+                    if over > 0 {
+                        self.lines.drain(..over);
+                        self.dropped += over;
+                    }
+                }
+                LogEvent::Closed(err) => {
+                    if let Some(e) = &err {
+                        toasts.push((format!("{title}: {e}"), theme::red()));
+                    }
+                    self.state = ConnState::Closed(err);
+                    self.stop = None;
+                }
+            }
+        }
+    }
 }
 
 pub struct VncTab {
@@ -145,6 +228,23 @@ pub struct SftpTab {
     pub dialog: Option<(usize, FsDialog)>,
     /// Remote files opened in a local editor; saved changes are uploaded back.
     pub edits: Vec<EditFile>,
+    /// Folder a pane opens in once its server is connected.
+    pub start_dir: [Option<String>; 2],
+}
+
+/// The terminal's folder as an SFTP path: `~` is the home folder, which SFTP paths
+/// are relative to.
+fn sftp_start_dir(dir: &str) -> String {
+    match dir.strip_prefix('~') {
+        Some("") => ".".into(),
+        Some(rest) => match rest.strip_prefix('/') {
+            Some(r) if !r.is_empty() => r.to_string(),
+            Some(_) => ".".into(),
+            // `~user/…` – let the server resolve it like a normal path.
+            None => dir.to_string(),
+        },
+        None => dir.to_string(),
+    }
 }
 
 pub struct EditFile {
@@ -493,6 +593,8 @@ pub struct App {
 #[derive(Clone, Debug)]
 pub enum Action {
     Connect(Uuid),
+    /// Replay a `.cast` recording in a terminal tab.
+    PlayRecording(PathBuf),
     OpenSftp(Uuid),
     /// New file tab; `None` = local disk.
     OpenFiles(Option<Uuid>, Option<Uuid>),
@@ -889,12 +991,15 @@ impl App {
             }
             (Protocol::Ssh, _) => {
                 let spec = ConnectSpec::Ssh(ssh_params());
+                let persist = host
+                    .persistent
+                    .then(|| crate::model::persistent_shell(host.id));
                 let startup = host
                     .startup_snippet
                     .and_then(|s| self.lib.snippet(s))
                     .filter(|s| s.variables().is_empty())
                     .map(|s| s.script.clone());
-                let mut term = self.spawn_term(spec, startup, ctx);
+                let mut term = self.spawn_term_with(spec, startup, persist, ctx);
                 term.profile = host.term.clone();
                 if let Some((h, cmd)) = self.pending_command.take() {
                     if h == host.id {
@@ -1087,6 +1192,7 @@ impl App {
                 ],
                 transfers: Vec::new(),
                 dialog: None,
+                start_dir: [None, None],
             })),
         });
         self.active = Some(id);
@@ -1111,9 +1217,11 @@ impl App {
         if let Some(old) = t.panes[idx].remote.take() {
             let _ = old.tx.send(SftpCmd::Close);
         }
+        let start = t.start_dir[idx].take().unwrap_or_default();
         t.panes[idx] = match conn {
             Some(c) => FilePane {
                 remote: Some(c),
+                path: start,
                 ..Default::default()
             },
             None => crate::ui::sftp::local_pane(crate::ui::sftp::home_dir()),
@@ -1139,12 +1247,23 @@ impl App {
         startup: Option<String>,
         ctx: &egui::Context,
     ) -> TermTab {
+        self.spawn_term_with(spec, startup, None, ctx)
+    }
+
+    /// `persist`: run this command instead of the login shell (tmux session).
+    fn spawn_term_with(
+        &self,
+        spec: ConnectSpec,
+        startup: Option<String>,
+        persist: Option<String>,
+        ctx: &egui::Context,
+    ) -> TermTab {
         let (sink, rx) = Sink::new(ctx.clone());
         let tx = match &spec {
             ConnectSpec::Ssh(p) => backend::ssh::spawn_shell(
                 &self.rt,
                 p.clone(),
-                None,
+                persist.clone(),
                 80,
                 24,
                 sink,
@@ -1162,6 +1281,7 @@ impl App {
             ConnectSpec::Serial(s) => backend::serial::spawn(s.clone(), sink),
             ConnectSpec::Telnet(p) => backend::telnet::spawn(&self.rt, p.clone(), 80, 24, sink),
             ConnectSpec::Local(argv) => backend::local::spawn(argv.clone(), 80, 24, sink),
+            ConnectSpec::Replay(path) => backend::record::spawn_replay(path.clone(), sink),
         };
         TermTab {
             spec,
@@ -1177,6 +1297,9 @@ impl App {
             upload: None,
             run_once: None,
             profile: Default::default(),
+            persist,
+            side_log: None,
+            recorder: None,
         }
     }
 
@@ -1185,10 +1308,17 @@ impl App {
             return;
         };
         if let TabKind::Term(t) = &self.tabs[idx].kind {
-            let mut fresh = self.spawn_term(t.spec.clone(), t.startup.clone(), ctx);
+            let mut fresh =
+                self.spawn_term_with(t.spec.clone(), t.startup.clone(), t.persist.clone(), ctx);
             fresh.show_snippets = t.show_snippets;
             fresh.profile = t.profile.clone();
-            fresh.term.feed(b"\r\n\x1b[2m--- reconnect ---\x1b[0m\r\n");
+            if !matches!(t.spec, ConnectSpec::Replay(_)) {
+                fresh.term.feed(b"\r\n\x1b[2m--- reconnect ---\x1b[0m\r\n");
+            }
+            if let TabKind::Term(old) = &mut self.tabs[idx].kind {
+                fresh.side_log = old.side_log.take();
+                fresh.recorder = old.recorder.take();
+            }
             self.tabs[idx].kind = TabKind::Term(Box::new(fresh));
         } else if let TabKind::Vnc(t) = &mut self.tabs[idx].kind {
             t.view.start(&self.rt, ctx);
@@ -1245,22 +1375,7 @@ impl App {
             notes_open: false,
             unsaved: None,
             host_id: h.as_ref().map(|h| h.id),
-            kind: TabKind::Log(Box::new(LogTab {
-                source,
-                target_host: h.map(|h| h.id),
-                lines: VecDeque::new(),
-                dropped: 0,
-                state: ConnState::Connecting(t!("Verbinde…").into()),
-                rx: None,
-                stop: None,
-                filter: String::new(),
-                only_matches: true,
-                level: 0,
-                paused: false,
-                paused_at: 0,
-                follow: true,
-                wrap: false,
-            })),
+            kind: TabKind::Log(Box::new(LogTab::new(source, h.map(|h| h.id)))),
         });
         self.active = Some(id);
         self.reopen_log(id, ctx);
@@ -1268,12 +1383,21 @@ impl App {
 
     /// (Re)starts the source of a log tab.
     fn reopen_log(&mut self, tab_id: u64, ctx: &egui::Context) {
-        let Some(TabKind::Log(t)) = self
+        // A quick-connect host that is not saved lives only in its terminal tab.
+        let unsaved: Vec<Host> = self.tabs.iter().filter_map(|t| t.unsaved.clone()).collect();
+        // The log panel of an SSH terminal uses the session's login (no second prompt).
+        let session = self
             .tabs
-            .iter_mut()
+            .iter()
             .find(|t| t.id == tab_id)
-            .map(|t| &mut t.kind)
-        else {
+            .and_then(|t| match &t.kind {
+                TabKind::Term(term) => match &term.spec {
+                    ConnectSpec::Ssh(p) => Some(p.clone()),
+                    _ => None,
+                },
+                _ => None,
+            });
+        let Some(t) = log_in(&mut self.tabs, tab_id) else {
             return;
         };
         t.stop = None;
@@ -1283,7 +1407,17 @@ impl App {
                 .push_back(format!("──── {} ────", t!("neu verbunden")));
         }
         t.state = ConnState::Connecting(t!("Verbinde…").into());
-        match t.target_host.and_then(|h| self.lib.host(h).cloned()) {
+        if let Some(p) = session {
+            self.start_log(tab_id, backend::container::Target::Ssh(p), ctx);
+            return;
+        }
+        let host = t.target_host.and_then(|h| {
+            self.lib
+                .host(h)
+                .cloned()
+                .or_else(|| unsaved.into_iter().find(|u| u.id == h))
+        });
+        match host {
             Some(h) => self.connect_host(h, Purpose::Log(tab_id), ctx),
             None if t.target_host.is_some() => {
                 t.state = ConnState::Closed(Some(t!("Host nicht mehr vorhanden").into()));
@@ -1292,14 +1426,29 @@ impl App {
         }
     }
 
+    /// Starts following `source` in the log panel of terminal `tab_id` (on its host).
+    pub fn open_side_log(&mut self, tab_id: u64, source: &str, ctx: &egui::Context) {
+        let source = backend::logs::LogSource::parse(source);
+        if source.text().is_empty() {
+            return;
+        }
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            return;
+        };
+        let host = tab.host_id;
+        let TabKind::Term(t) = &mut tab.kind else {
+            return;
+        };
+        let side = t.side_log.get_or_insert_with(SideLog::default);
+        side.input = source.text().to_string();
+        side.log = Some(Box::new(LogTab::new(source, host)));
+        self.reopen_log(tab_id, ctx);
+    }
+
     fn start_log(&mut self, tab_id: u64, target: backend::container::Target, ctx: &egui::Context) {
         let (sink, rx) = Sink::new(ctx.clone());
-        let Some(TabKind::Log(t)) = self
-            .tabs
-            .iter_mut()
-            .find(|t| t.id == tab_id)
-            .map(|t| &mut t.kind)
-        else {
+        let prompts = self.prompts_sink.clone();
+        let Some(t) = log_in(&mut self.tabs, tab_id) else {
             return;
         };
         t.rx = Some(rx);
@@ -1308,7 +1457,7 @@ impl App {
             target,
             t.source.clone(),
             sink,
-            self.prompts_sink.clone(),
+            prompts,
         ));
     }
 
@@ -1601,7 +1750,13 @@ impl App {
             .filter_map(|t| {
                 let mut source = String::new();
                 let (host, kind) = match &t.kind {
-                    TabKind::Term(_) => (t.host_id?, "term"),
+                    TabKind::Term(term) => {
+                        // The followed source of the log panel, reopened with the session.
+                        if let Some(l) = term.side_log.as_ref().and_then(|s| s.log.as_ref()) {
+                            source = l.source.text().to_string();
+                        }
+                        (t.host_id?, "term")
+                    }
                     TabKind::Rdp(_) => (t.host_id?, "rdp"),
                     TabKind::Vnc(_) => (t.host_id?, "vnc"),
                     TabKind::Log(l) => {
@@ -1664,7 +1819,17 @@ impl App {
             if s.kind == "files" {
                 self.open_files(None, Some(h.id), ctx);
             } else {
-                self.connect_host(h, Purpose::Terminal, ctx);
+                let before = self.tabs.len();
+                self.connect_host(h.clone(), Purpose::Terminal, ctx);
+                if s.kind == "term"
+                    && !s.source.is_empty()
+                    && self.tabs.len() > before
+                    && let Some(tab) = self.tabs.last()
+                    && tab.host_id == Some(h.id)
+                {
+                    let id = tab.id;
+                    self.open_side_log(id, &s.source, ctx);
+                }
             }
         }
         if n > 0 {
@@ -2133,10 +2298,14 @@ impl App {
         let mut notify = false;
         let mut learned: Vec<(Uuid, crate::model::HostFacts)> = Vec::new();
         let mut outcome: Vec<(Uuid, bool)> = Vec::new();
+        let record_all = self.lib.settings.record_sessions;
         for tab in &mut self.tabs {
             let seen = focused && visible.contains(&tab.id);
             match &mut tab.kind {
                 TabKind::Term(t) => {
+                    if let Some(log) = t.side_log.as_mut().and_then(|s| s.log.as_mut()) {
+                        log.pump(&tab.title, &mut toasts);
+                    }
                     while let Ok(ev) = t.rx.try_recv() {
                         match ev {
                             TermEvent::Status(s) => {
@@ -2159,6 +2328,19 @@ impl App {
                             }
                             TermEvent::Connected => {
                                 t.state = ConnState::Connected;
+                                if record_all
+                                    && t.recorder.is_none()
+                                    && matches!(t.spec, ConnectSpec::Ssh(_))
+                                {
+                                    let (cols, rows) = t.term.size();
+                                    match backend::record::Recorder::start(&tab.title, cols, rows) {
+                                        Ok(r) => t.recorder = Some(r),
+                                        Err(e) => toasts.push((
+                                            t!("Aufnahme fehlgeschlagen: {}", e),
+                                            theme::red(),
+                                        )),
+                                    }
+                                }
                                 if let Some(h) = tab.host_id {
                                     outcome.push((h, true));
                                 }
@@ -2175,6 +2357,9 @@ impl App {
                                 }
                             }
                             TermEvent::Output(b) => {
+                                if let Some(r) = t.recorder.as_mut() {
+                                    r.output(&b);
+                                }
                                 t.term.feed(&b);
                                 t.last_output = Instant::now();
                             }
@@ -2189,8 +2374,13 @@ impl App {
                                 });
                             }
                             TermEvent::Closed(err) => {
+                                let replay = matches!(t.spec, ConnectSpec::Replay(_));
                                 let msg = match &err {
                                     Some(e) => format!("\r\n\x1b[31m✖ {e}\x1b[0m\r\n"),
+                                    None if replay => format!(
+                                        "\r\n\x1b[2m{}\x1b[0m\r\n",
+                                        t!("Ende der Aufnahme.")
+                                    ),
                                     None => format!(
                                         "\r\n\x1b[2m{}\x1b[0m\r\n",
                                         t!("Verbindung beendet.")
@@ -2199,7 +2389,7 @@ impl App {
                                 t.term.feed(msg.as_bytes());
                                 if let Some(e) = &err {
                                     toasts.push((format!("{}: {e}", tab.title), theme::red()));
-                                } else if !seen {
+                                } else if !seen && !replay {
                                     toasts.push((
                                         t!(
                                             "{} getrennt – Klick auf die Kachel verbindet neu",
@@ -2288,34 +2478,7 @@ impl App {
                         _ => {}
                     }
                 }
-                TabKind::Log(t) => {
-                    use backend::logs::LogEvent;
-                    while let Some(ev) = t.rx.as_mut().and_then(|rx| rx.try_recv().ok()) {
-                        match ev {
-                            LogEvent::Status(s) => t.state = ConnState::Connecting(s),
-                            LogEvent::Connected => t.state = ConnState::Connected,
-                            LogEvent::Lines(lines) => {
-                                if t.paused {
-                                    t.paused_at += lines.len();
-                                }
-                                t.lines.extend(lines);
-                                let over =
-                                    t.lines.len().saturating_sub(crate::ui::logview::MAX_LINES);
-                                if over > 0 {
-                                    t.lines.drain(..over);
-                                    t.dropped += over;
-                                }
-                            }
-                            LogEvent::Closed(err) => {
-                                if let Some(e) = &err {
-                                    toasts.push((format!("{}: {e}", tab.title), theme::red()));
-                                }
-                                t.state = ConnState::Closed(err);
-                                t.stop = None;
-                            }
-                        }
-                    }
-                }
+                TabKind::Log(t) => t.pump(&tab.title, &mut toasts),
                 TabKind::Rdp(t) => {
                     if let Some(v) = t.embedded.as_mut() {
                         let host_id = format!("rdp://{}:{}", t.launch.host, t.launch.port);
@@ -2496,6 +2659,7 @@ impl App {
                     });
                 }
             }
+            Action::PlayRecording(path) => self.play_recording(path, ctx),
             Action::OpenLog(host, source) => {
                 self.log_picker = None;
                 self.open_log(host, &source, ctx);
@@ -3001,9 +3165,30 @@ impl App {
         let mut toggle_notes = false;
         let mut save_host = false;
         let mut search = false;
+        let host_id = tab.host_id;
+        let host_name = tab
+            .title
+            .split(" · ")
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        let log_commands: Vec<(Uuid, String, String)> = self
+            .lib
+            .log_commands
+            .iter()
+            .filter(|c| c.host.is_none() || c.host == host_id)
+            .map(|c| (c.id, c.name.clone(), c.command.clone()))
+            .collect();
+        let mut toggle_log = false;
+        let mut toggle_record = false;
+        let mut open_files = false;
+        let mut side_action = None;
         let TabKind::Term(t) = &mut tab.kind else {
             return;
         };
+        let ssh_session = matches!(t.spec, ConnectSpec::Ssh(_)) && host_id.is_some();
+        let log_open = t.side_log.is_some();
+        let recording = t.recorder.is_some();
 
         let state = crate::ui::chrome::state_pair(&t.state);
         let closed = matches!(t.state, ConnState::Closed(_));
@@ -3026,6 +3211,47 @@ impl App {
                 if has_notes && theme::icon_button(ui, "📝", t!("Notizen zum Host")).clicked() {
                     toggle_notes = true;
                 }
+                if ssh_session {
+                    if theme::icon_toggle(
+                        ui,
+                        crate::ui::icons::Icon::Logs,
+                        t!("Logs rechts neben dem Terminal (Ctrl+Shift+L)"),
+                        log_open,
+                    )
+                    .clicked()
+                    {
+                        toggle_log = true;
+                    }
+                    if theme::icon_btn(
+                        ui,
+                        crate::ui::icons::Icon::Folder,
+                        t!("Dateien im aktuellen Ordner des Terminals öffnen"),
+                    )
+                    .clicked()
+                    {
+                        open_files = true;
+                    }
+                }
+                if !matches!(t.spec, ConnectSpec::Replay(_)) {
+                    let tip = if recording {
+                        t!("Aufnahme beenden")
+                    } else {
+                        t!("Session aufzeichnen (asciinema)")
+                    };
+                    let r = theme::icon_toggle(ui, crate::ui::icons::Icon::Record, tip, recording);
+                    if recording {
+                        // Red while recording, like a camera.
+                        crate::ui::icons::paint(
+                            ui.painter(),
+                            egui::Rect::from_center_size(r.rect.center(), Vec2::splat(17.0)),
+                            crate::ui::icons::Icon::Record,
+                            theme::red(),
+                        );
+                    }
+                    if r.clicked() {
+                        toggle_record = true;
+                    }
+                }
                 if unsaved
                     && ui
                         .button(t!("Als Host speichern"))
@@ -3041,6 +3267,20 @@ impl App {
         );
         if toggle_snippets {
             t.show_snippets = !t.show_snippets;
+        }
+        if ssh_session
+            && drop_target
+            && ctx.input_mut(|i| {
+                i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::L)
+            })
+        {
+            toggle_log = true;
+        }
+        if toggle_log {
+            t.side_log = match t.side_log.take() {
+                Some(_) => None,
+                None => Some(SideLog::default()),
+            };
         }
         if search {
             t.term.open_search();
@@ -3155,6 +3395,49 @@ impl App {
                 });
         }
 
+        if let Some(side) = t.side_log.as_mut() {
+            // Fixed width with an own drag handle: the log content must not widen the panel.
+            let room = ui.available_width();
+            let max = (room - 260.0).max(280.0);
+            if side.width <= 0.0 {
+                side.width = (room * 0.42).clamp(320.0, 620.0);
+            }
+            side.width = side.width.clamp(280.0, max);
+            let panel = egui::Panel::right(egui::Id::new(("term-log", tab_id)))
+                .resizable(false)
+                .exact_size(side.width)
+                .frame(egui::Frame::NONE.fill(theme::bg_panel()))
+                .show(ui, |ui| {
+                    side_action = crate::ui::logview::side_panel(
+                        ui,
+                        egui::Id::new(("side-log", tab_id)),
+                        side,
+                        &host_name,
+                        &log_commands,
+                    );
+                });
+            let r = panel.response.rect;
+            let grip = egui::Rect::from_x_y_ranges(r.left() - 4.0..=r.left() + 4.0, r.y_range());
+            let drag = ui.interact(
+                grip,
+                egui::Id::new(("term-log-grip", tab_id)),
+                egui::Sense::drag(),
+            );
+            if drag.dragged() {
+                side.width -= drag.drag_delta().x;
+            }
+            if drag.hovered() || drag.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            }
+            let line = if drag.hovered() || drag.dragged() {
+                theme::accent()
+            } else {
+                theme::line()
+            };
+            ui.painter()
+                .vline(r.left(), r.y_range(), egui::Stroke::new(1.0, line));
+        }
+
         // Host terminal profile over the app settings.
         let font_name = if t.profile.font.trim().is_empty() {
             settings.term_font.clone()
@@ -3241,12 +3524,15 @@ impl App {
                 focused_now = ui.memory(|m| m.has_focus(egui::Id::new(("term", tab_id))));
                 if let Some((cols, rows)) = out.resize {
                     let _ = t.tx.send(TermCmd::Resize { cols, rows });
+                    if let Some(r) = t.recorder.as_mut() {
+                        r.resize(cols, rows);
+                    }
                 }
                 if let Some((name, done, total)) = &t.upload {
                     upload_badge(ui, name, *done, *total);
                 }
                 if matches!(t.state, ConnState::Closed(_)) {
-                    closed_badge(ui);
+                    closed_badge(ui, matches!(t.spec, ConnectSpec::Replay(_)));
                 }
                 if !out.input.is_empty() {
                     if matches!(t.state, ConnState::Closed(_)) {
@@ -3268,14 +3554,50 @@ impl App {
                     actions.push(Action::SnippetFromText(text));
                 }
             });
+        let cwd = t.term.cwd();
+        let session_params = match &t.spec {
+            ConnectSpec::Ssh(p) => Some(p.clone()),
+            _ => None,
+        };
+        let mut record_note = None;
+        if toggle_record {
+            if let Some(r) = t.recorder.take() {
+                let path = r.path.clone();
+                drop(r);
+                record_note = Some((
+                    t!("Aufnahme gespeichert: {}", path.display()),
+                    theme::green(),
+                ));
+            } else {
+                let (cols, rows) = t.term.size();
+                match backend::record::Recorder::start(&title, cols, rows) {
+                    Ok(mut r) => {
+                        r.output(&t.term.snapshot());
+                        t.recorder = Some(r);
+                    }
+                    Err(e) => {
+                        record_note = Some((t!("Aufnahme fehlgeschlagen: {}", e), theme::red()))
+                    }
+                }
+            }
+        }
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
             tab.notes_open = notes_open;
+        }
+        if let Some((text, color)) = record_note {
+            self.toast(text, color);
         }
         if let Some((cmd, why)) = danger {
             self.danger = Some((tab_id, cmd, why));
         }
         if refocus && focused_now {
             self.focus_term = None;
+        }
+        if open_files && let (Some(h), Some(p)) = (host_id, session_params) {
+            self.open_files_at(h, p, cwd, &ctx);
+        }
+        if let Some(a) = side_action {
+            self.side_log_action(tab_id, a, host_id, &ctx);
         }
 
         if let Some(bytes) = input {
@@ -3284,6 +3606,119 @@ impl App {
         if reconnect {
             self.reconnect(tab_id, &ctx);
         }
+    }
+
+    fn side_log_action(
+        &mut self,
+        tab_id: u64,
+        a: crate::ui::logview::SideAction,
+        host: Option<Uuid>,
+        ctx: &egui::Context,
+    ) {
+        use crate::ui::logview::SideAction;
+        fn side(app: &mut App, tab_id: u64) -> Option<&mut SideLog> {
+            match &mut app.tabs.iter_mut().find(|t| t.id == tab_id)?.kind {
+                TabKind::Term(t) => t.side_log.as_mut(),
+                _ => None,
+            }
+        }
+        match a {
+            SideAction::Close => {
+                if let Some(TabKind::Term(t)) = self
+                    .tabs
+                    .iter_mut()
+                    .find(|t| t.id == tab_id)
+                    .map(|t| &mut t.kind)
+                {
+                    t.side_log = None;
+                }
+            }
+            SideAction::Back => {
+                if let Some(s) = side(self, tab_id) {
+                    s.log = None;
+                }
+            }
+            SideAction::Reconnect => self.reopen_log(tab_id, ctx),
+            SideAction::Start(cmd) => self.open_side_log(tab_id, &cmd, ctx),
+            SideAction::Save(name, command) => {
+                // Saved for this host only when it is in the host list.
+                let host = host.filter(|h| self.lib.host(*h).is_some());
+                self.lib.log_commands.push(crate::model::LogCommand {
+                    name,
+                    command,
+                    host,
+                    ..Default::default()
+                });
+                self.save_library();
+                self.toast(t!("Log-Befehl gespeichert"), theme::green());
+            }
+            SideAction::Delete(id) => {
+                self.lib.log_commands.retain(|c| c.id != id);
+                self.save_library();
+            }
+        }
+    }
+
+    /// Replays a recording in a new terminal tab (Space pauses, reconnect starts over).
+    fn play_recording(&mut self, path: PathBuf, ctx: &egui::Context) {
+        let name = path
+            .file_stem()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let term = self.spawn_term(ConnectSpec::Replay(path), None, ctx);
+        let id = self.alloc_id();
+        self.tabs.push(Tab {
+            id,
+            title: t!("Aufnahme · {}", name),
+            subtitle: t!("Leertaste pausiert").to_string(),
+            color: theme::accent(),
+            attention: false,
+            env: Env::None,
+            notes: String::new(),
+            notes_open: false,
+            unsaved: None,
+            host_id: None,
+            kind: TabKind::Term(Box::new(term)),
+        });
+        self.active = Some(id);
+    }
+
+    /// Opens the file browser for `host` in `dir` (the terminal's folder, may start with `~`).
+    fn open_files_at(
+        &mut self,
+        host: Uuid,
+        params: SshParams,
+        dir: Option<String>,
+        ctx: &egui::Context,
+    ) {
+        if dir.is_none() {
+            self.toast(
+                t!("Ordner unbekannt – die Shell meldet ihn nicht, öffne den Home-Ordner"),
+                theme::amber(),
+            );
+        }
+        self.open_files(None, None, ctx);
+        let Some(tab) = self.tabs.last_mut() else {
+            return;
+        };
+        let tab_id = tab.id;
+        if let TabKind::Sftp(t) = &mut tab.kind {
+            t.start_dir[1] = dir.map(|d| sftp_start_dir(&d));
+        }
+        // Same login as the terminal: no second password prompt.
+        let (label, color) = match self.lib.host(host) {
+            Some(h) => (h.display_name().to_string(), self.host_color(h)),
+            None => (params.host.clone(), theme::accent()),
+        };
+        let conn = crate::ui::sftp::spawn_conn(
+            &self.rt,
+            params,
+            label,
+            Some(host),
+            ctx,
+            self.prompts_sink.clone(),
+        );
+        self.set_pane(tab_id, 1, Some(conn), color);
     }
 
     fn vnc_tab(&mut self, ui: &mut egui::Ui, tab_id: u64) {
@@ -3907,14 +4342,15 @@ fn upload_badge(ui: &egui::Ui, name: &str, done: u64, total: u64) {
 }
 
 /// Hint on a dead session.
-fn closed_badge(ui: &egui::Ui) {
+fn closed_badge(ui: &egui::Ui, replay: bool) {
     let r = ui.max_rect();
     let painter = ui.painter();
-    let g = painter.layout_no_wrap(
-        t!("Getrennt · Enter verbindet neu").into(),
-        egui::FontId::proportional(12.5),
-        theme::text(),
-    );
+    let text = if replay {
+        t!("Aufnahme zu Ende · Enter spielt erneut ab")
+    } else {
+        t!("Getrennt · Enter verbindet neu")
+    };
+    let g = painter.layout_no_wrap(text.into(), egui::FontId::proportional(12.5), theme::text());
     let size = g.size() + Vec2::new(32.0, 16.0);
     let pill = egui::Rect::from_min_size(
         egui::pos2(r.center().x - size.x / 2.0, r.bottom() - size.y - 16.0),

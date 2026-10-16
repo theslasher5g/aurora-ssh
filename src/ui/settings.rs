@@ -28,7 +28,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             let mut changed = false;
             match app.settings_tab {
                 0 => appearance(app, ui, &mut changed),
-                1 => terminal(app, ui, &mut changed),
+                1 => terminal(app, ui, actions, &mut changed),
                 2 => general(app, ui, actions, &mut changed),
                 3 => security(app, ui, actions, &mut changed),
                 _ => data(app, ui, &mut changed),
@@ -98,7 +98,7 @@ fn appearance(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
     });
 }
 
-fn terminal(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
+fn terminal(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>, changed: &mut bool) {
     caption(ui, "Terminal");
     let family = theme::term_font(ui.ctx(), &app.lib.settings.term_font);
     let size = app.lib.settings.font_size;
@@ -193,6 +193,156 @@ fn terminal(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
                 *changed |= theme::toggle(ui, &mut app.lib.settings.copy_on_select).changed();
             },
         );
+    });
+    ui.add_space(22.0);
+    log_commands(app, ui, changed);
+    ui.add_space(22.0);
+    recordings(app, ui, actions, changed);
+}
+
+/// The user's own log viewer sources.
+fn log_commands(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
+    caption(ui, t!("Eigene Log-Befehle"));
+    let hosts: Vec<(uuid::Uuid, String)> = app
+        .lib
+        .hosts
+        .iter()
+        .filter(|h| h.protocol == crate::model::Protocol::Ssh)
+        .map(|h| (h.id, h.display_name().to_string()))
+        .collect();
+    let mut remove = None;
+    theme::settings_card(ui, |ui, rows| {
+        rows.full(ui, |ui| {
+            ui.label(
+                RichText::new(t!(
+                    "Erscheinen in der Log-Leiste einer SSH-Session (Ctrl+Shift+L) und unter „Log ansehen“. Eine Datei wird mit tail -F verfolgt, alles andere als Befehl ausgeführt."
+                ))
+                .size(12.5)
+                .color(theme::text_dim()),
+            );
+        });
+        for (i, c) in app.lib.log_commands.iter_mut().enumerate() {
+            rows.full(ui, |ui| {
+                ui.horizontal(|ui| {
+                    *changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut c.name)
+                                .hint_text(t!("Name"))
+                                .desired_width(150.0),
+                        )
+                        .changed();
+                    let host_label = c
+                        .host
+                        .and_then(|h| hosts.iter().find(|(id, _)| *id == h))
+                        .map(|(_, n)| n.clone())
+                        .unwrap_or_else(|| t!("Alle Hosts").to_string());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if theme::icon_btn(ui, crate::ui::icons::Icon::Trash, t!("Löschen"))
+                            .clicked()
+                        {
+                            remove = Some(i);
+                        }
+                        egui::ComboBox::from_id_salt(("log-cmd-host", c.id))
+                            .selected_text(host_label)
+                            .width(140.0)
+                            .show_ui(ui, |ui| {
+                                *changed |= ui
+                                    .selectable_value(&mut c.host, None, t!("Alle Hosts"))
+                                    .changed();
+                                for (id, name) in &hosts {
+                                    *changed |=
+                                        ui.selectable_value(&mut c.host, Some(*id), name).changed();
+                                }
+                            });
+                        *changed |= ui
+                            .add(
+                                egui::TextEdit::singleline(&mut c.command)
+                                    .hint_text("journalctl -f -u nginx")
+                                    .font(egui::FontId::monospace(13.0))
+                                    .desired_width(ui.available_width()),
+                            )
+                            .changed();
+                    });
+                });
+            });
+        }
+        rows.full(ui, |ui| {
+            if theme::btn(
+                ui,
+                theme::Btn::Small,
+                Some(crate::ui::icons::Icon::Plus),
+                t!("Neuer Log-Befehl"),
+            )
+            .clicked()
+            {
+                app.lib
+                    .log_commands
+                    .push(crate::model::LogCommand::default());
+                *changed = true;
+            }
+        });
+    });
+    if let Some(i) = remove {
+        app.lib.log_commands.remove(i);
+        *changed = true;
+    }
+}
+
+/// Session recordings: auto-record switch, folder and the latest files.
+fn recordings(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>, changed: &mut bool) {
+    caption(ui, t!("Aufnahmen"));
+    theme::settings_card(ui, |ui, rows| {
+        rows.setting(
+            ui,
+            t!("Alle SSH-Sessions aufzeichnen"),
+            Some(t!(
+                "Sonst über den Aufnahme-Knopf in der Session. Aufgezeichnet wird, was das Terminal zeigt (asciinema-Format)."
+            )),
+            |ui| {
+                *changed |= theme::toggle(ui, &mut app.lib.settings.record_sessions).changed();
+            },
+        );
+        let dir = crate::backend::record::dir();
+        rows.setting(ui, t!("Ordner"), Some(&dir.display().to_string()), |ui| {
+            if theme::btn(ui, theme::Btn::Small, None, t!("Ordner öffnen")).clicked()
+                && let Err(e) = crate::backend::record::open_folder()
+            {
+                app.toast(e.to_string(), theme::red());
+            }
+        });
+        let files = crate::backend::record::list();
+        if files.is_empty() {
+            rows.full(ui, |ui| {
+                ui.label(RichText::new(t!("Noch keine Aufnahmen")).color(theme::text_dim()));
+            });
+        }
+        for (path, size, modified) in files.into_iter().take(12) {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let when: chrono::DateTime<chrono::Local> = modified.into();
+            let help = format!(
+                "{} · {:.1} KB",
+                when.format("%d.%m.%Y %H:%M"),
+                size as f64 / 1024.0
+            );
+            rows.setting(ui, &name, Some(&help), |ui| {
+                if theme::icon_btn(ui, crate::ui::icons::Icon::Trash, t!("Löschen")).clicked() {
+                    let _ = std::fs::remove_file(&path);
+                }
+                if theme::btn(
+                    ui,
+                    theme::Btn::Small,
+                    Some(crate::ui::icons::Icon::Play),
+                    t!("Abspielen"),
+                )
+                .clicked()
+                {
+                    actions.push(Action::PlayRecording(path.clone()));
+                }
+            });
+        }
     });
 }
 

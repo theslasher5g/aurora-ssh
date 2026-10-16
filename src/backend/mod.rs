@@ -7,6 +7,7 @@ pub mod logs;
 pub mod rdp;
 pub mod rdp_embed;
 pub mod reach;
+pub mod record;
 pub mod scan;
 pub mod serial;
 pub mod sftp;

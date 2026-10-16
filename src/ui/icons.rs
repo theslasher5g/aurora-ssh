@@ -42,6 +42,8 @@ pub enum Icon {
     Pause,
     Play,
     Stop,
+    Logs,
+    Record,
 }
 
 enum Prim {
@@ -143,12 +145,14 @@ fn prims(icon: Icon) -> &'static [Prim] {
         Icon::Pause => &[Path("M9 5v14M15 5v14")],
         Icon::Play => &[Path("M7 4l13 8-13 8z")],
         Icon::Stop => &[R(6.0, 6.0, 12.0, 12.0, 2.0)],
+        Icon::Logs => &[R(4.0, 4.0, 16.0, 16.0, 2.5), Path("M8 9h8M8 12h5M8 15h7")],
+        Icon::Record => &[Circle(12.0, 12.0, 6.0)],
     }
 }
 
 /// Filled shapes (the favourite star is solid).
 fn filled(icon: Icon) -> bool {
-    matches!(icon, Icon::Star | Icon::Play)
+    matches!(icon, Icon::Star | Icon::Play | Icon::Record)
 }
 
 /// Default stroke width on the 24 grid, as in the design.

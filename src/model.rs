@@ -325,6 +325,9 @@ pub struct Host {
     pub vnc: VncSettings,
     /// Terminal colors and font for this host.
     pub term: TermProfile,
+    /// SSH: open the shell inside `tmux` (or `screen`) so a reconnect lands in the same
+    /// session with its running jobs.
+    pub persistent: bool,
 }
 
 impl Default for Host {
@@ -352,6 +355,7 @@ impl Default for Host {
             container: ContainerSettings::default(),
             vnc: VncSettings::default(),
             term: TermProfile::default(),
+            persistent: false,
         }
     }
 }
@@ -554,6 +558,8 @@ pub struct Settings {
     pub editor: String,
     /// "de" or "en".
     pub language: String,
+    /// Record every SSH terminal session (asciinema files in the recordings folder).
+    pub record_sessions: bool,
 }
 
 impl Default for Settings {
@@ -576,8 +582,55 @@ impl Default for Settings {
             last_session: Vec::new(),
             editor: String::new(),
             language: String::new(),
+            record_sessions: false,
         }
     }
+}
+
+/// A log source saved by the user for the log viewer.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[serde(default)]
+pub struct LogCommand {
+    pub id: Uuid,
+    pub name: String,
+    /// A file (`/var/log/app.log`, followed with `tail -F`) or a command that keeps printing.
+    pub command: String,
+    /// Only offered for this host; `None` = every SSH host.
+    pub host: Option<Uuid>,
+}
+
+impl Default for LogCommand {
+    fn default() -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: String::new(),
+            command: String::new(),
+            host: None,
+        }
+    }
+}
+
+/// Built-in log sources offered next to the user's own.
+pub const LOG_PRESETS: &[(&str, &str)] = &[
+    ("Journal", "journalctl -f"),
+    ("Journal (Warnungen)", "journalctl -f -p warning"),
+    ("Syslog", "/var/log/syslog"),
+    ("Messages", "/var/log/messages"),
+    ("Auth", "/var/log/auth.log"),
+    ("nginx error", "/var/log/nginx/error.log"),
+    ("nginx access", "/var/log/nginx/access.log"),
+    ("Apache error", "/var/log/apache2/error.log"),
+];
+
+/// Shell command for a persistent session: attach to (or create) a tmux session, fall back
+/// to screen and then to a plain login shell.
+pub fn persistent_shell(host: Uuid) -> String {
+    let name = format!("aurora-{}", &host.simple().to_string()[..8]);
+    format!(
+        "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s {name}; \
+         elif command -v screen >/dev/null 2>&1; then exec screen -D -RR {name}; \
+         else exec \"${{SHELL:-/bin/sh}}\" -l; fi"
+    )
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
@@ -591,6 +644,8 @@ pub struct Library {
     pub known_hosts: HashMap<String, String>,
     /// What Aurora learned about each host on the last SSH login.
     pub facts: HashMap<Uuid, HostFacts>,
+    /// The user's own log viewer sources.
+    pub log_commands: Vec<LogCommand>,
 }
 
 /// System facts collected after an SSH login (read-only commands).

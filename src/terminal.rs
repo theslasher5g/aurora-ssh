@@ -288,6 +288,11 @@ impl Terminal {
         self.parser.screen().contents()
     }
 
+    /// Escape sequences that redraw the current screen (start of a recording).
+    pub fn snapshot(&self) -> Vec<u8> {
+        self.parser.screen().contents_formatted()
+    }
+
     pub fn bracketed_paste(&self) -> bool {
         self.parser.screen().bracketed_paste()
     }
