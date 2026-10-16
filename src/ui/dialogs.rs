@@ -420,24 +420,30 @@ fn snippet_vars(app: &mut App, ctx: &egui::Context) {
 }
 
 fn confirm(app: &mut App, ctx: &egui::Context) {
-    let Some((text, _)) = app.confirm_delete.as_ref() else {
+    let Some((text, inner)) = app.confirm_delete.as_ref() else {
         return;
     };
     let text = text.clone();
+    // Proxmox power actions confirm with their own wording.
+    let (title, button) = match inner {
+        crate::app::Action::Pve(a) => a.confirm_labels(),
+        _ => None,
+    }
+    .unwrap_or((t!("Wirklich löschen?"), t!("Löschen")));
     let mut answer = None;
     egui::Modal::new(egui::Id::new("confirm"))
         .frame(crate::theme::dialog_frame())
         .backdrop_color(crate::theme::backdrop())
         .show(ctx, |ui| {
             ui.set_width(380.0);
-            ui.label(theme::heading(t!("Wirklich löschen?"), 20.0));
+            ui.label(theme::heading(title, 20.0));
             ui.label(RichText::new(text).color(theme::text_dim()));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .add(
-                            egui::Button::new(RichText::new(t!("Löschen")).color(theme::bg_deep()))
+                            egui::Button::new(RichText::new(button).color(theme::bg_deep()))
                                 .fill(theme::red()),
                         )
                         .clicked()

@@ -262,6 +262,7 @@ dependencies = [
  "rand 0.8.8",
  "russh",
  "russh-sftp",
+ "rustls",
  "serde",
  "serde_json",
  "serialport",

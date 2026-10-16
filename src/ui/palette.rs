@@ -71,6 +71,17 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             });
         }
     }
+    for (icon, title, subtitle, action) in crate::ui::proxmox::palette_items(app) {
+        if let Some(score) = fuzzy(&q, &format!("{title} proxmox {subtitle}")) {
+            items.push(Item {
+                icon,
+                title,
+                subtitle,
+                action,
+                score: score + 10,
+            });
+        }
+    }
     let commands = [
         ("CMD", "Neuer Host", Action::NewHost(None)),
         ("CMD", "Neue Gruppe", Action::NewGroup(None)),
@@ -87,6 +98,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             Action::Navigate(View::Keychain),
         ),
         ("CMD", "Snippets anzeigen", Action::Navigate(View::Snippets)),
+        ("CMD", "Proxmox anzeigen", Action::Navigate(View::Proxmox)),
         ("CMD", "Einstellungen", Action::Navigate(View::Settings)),
         ("CMD", "Tresor sperren", Action::Lock),
     ];
