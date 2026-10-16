@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+- Terminal settings show a live preview of font, size and colours; the host editor's terminal
+  profile has the same preview.
+- Scrollback is picked from a list (1,000 to 100,000 lines); the font size has a slider with a
+  value field.
+
 ## 0.6.0
 
 ### New design

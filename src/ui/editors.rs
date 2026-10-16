@@ -169,6 +169,8 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
     let mut new_identity = false;
     let mut browse = None;
     let fonts = theme::term_fonts();
+    let app_font = app.lib.settings.term_font.clone();
+    let app_size = app.lib.settings.font_size;
 
     let title = if ed.is_new {
         t!("Neuer Host")
@@ -579,7 +581,7 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             }
             if h.protocol.is_terminal() {
                 theme::form_caption(ui, t!("Terminal-Profil"));
-                term_profile(ui, &mut h.term, &fonts);
+                term_profile(ui, &mut h.term, &fonts, &app_font, app_size);
             }
             theme::form_caption(ui, t!("Notizen"));
             theme::form(ui, 92.0, |ui, f| {
@@ -629,8 +631,32 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
 }
 
 /// Theme, font and size of a host's terminal; empty = like the settings.
-fn term_profile(ui: &mut egui::Ui, p: &mut crate::model::TermProfile, fonts: &[String]) {
+fn term_profile(
+    ui: &mut egui::Ui,
+    p: &mut crate::model::TermProfile,
+    fonts: &[String],
+    app_font: &str,
+    app_size: f32,
+) {
+    // Preview with the profile, falling back to the app settings like the session does.
+    let palette = if p.theme.is_empty() {
+        theme::palette()
+    } else {
+        theme::find(&p.theme)
+    };
+    let font = if p.font.trim().is_empty() {
+        app_font
+    } else {
+        p.font.as_str()
+    };
+    let family = theme::term_font(ui.ctx(), font);
+    let size = if p.font_size >= 6.0 {
+        p.font_size
+    } else {
+        app_size
+    };
     theme::form(ui, 92.0, |ui, f| {
+        crate::ui::settings::terminal_preview(ui, &palette, family, size);
         f.field(ui, t!("Farben"), |ui| {
             let current = if p.theme.is_empty() {
                 t!("— wie die App —").to_string()

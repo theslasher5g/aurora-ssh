@@ -100,7 +100,10 @@ fn appearance(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
 
 fn terminal(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
     caption(ui, "Terminal");
+    let family = theme::term_font(ui.ctx(), &app.lib.settings.term_font);
+    let size = app.lib.settings.font_size;
     theme::settings_card(ui, |ui, rows| {
+        terminal_preview(ui, &theme::palette(), family, size);
         rows.setting(
             ui,
             t!("Schrift"),
@@ -131,23 +134,55 @@ fn terminal(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
             },
         );
         rows.setting(ui, t!("Schriftgröße"), None, |ui| {
+            // Right to left: value box, then the slider with an accent-filled track.
+            ui.spacing_mut().item_spacing.x = 16.0;
             *changed |= ui
-                .add(egui::Slider::new(&mut app.lib.settings.font_size, 9.0..=28.0).step_by(0.5))
+                .add(
+                    egui::DragValue::new(&mut app.lib.settings.font_size)
+                        .range(9.0..=28.0)
+                        .speed(0.1)
+                        .fixed_decimals(1),
+                )
                 .changed();
+            ui.scope(|ui| {
+                let v = ui.visuals_mut();
+                v.selection.bg_fill = theme::accent();
+                v.widgets.inactive.bg_fill = egui::Color32::WHITE;
+                v.widgets.hovered.bg_fill = egui::Color32::WHITE;
+                v.widgets.active.bg_fill = egui::Color32::WHITE;
+                v.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, theme::line());
+                ui.spacing_mut().slider_width = 220.0;
+                *changed |= ui
+                    .add(
+                        egui::Slider::new(&mut app.lib.settings.font_size, 9.0..=28.0)
+                            .step_by(0.5)
+                            .show_value(false)
+                            .trailing_fill(true),
+                    )
+                    .changed();
+            });
         });
         rows.setting(
             ui,
             "Scrollback",
             Some(t!("Wie viele Zeilen pro Terminal im Speicher bleiben")),
             |ui| {
-                *changed |= ui
-                    .add(
-                        egui::DragValue::new(&mut app.lib.settings.scrollback)
-                            .range(100..=100_000)
-                            .speed(100)
-                            .suffix(t!(" Zeilen")),
-                    )
-                    .changed();
+                let lines = |n: usize| t!("{} Zeilen", n);
+                let mut options = vec![1_000, 5_000, 10_000, 50_000, 100_000];
+                if !options.contains(&app.lib.settings.scrollback) {
+                    options.push(app.lib.settings.scrollback);
+                    options.sort_unstable();
+                }
+                egui::ComboBox::from_id_salt("scrollback")
+                    .selected_text(lines(app.lib.settings.scrollback))
+                    .width(140.0)
+                    .show_ui(ui, |ui| {
+                        for n in options {
+                            *changed |= ui
+                                .selectable_value(&mut app.lib.settings.scrollback, n, lines(n))
+                                .changed();
+                        }
+                    });
             },
         );
         rows.setting(
@@ -549,4 +584,52 @@ fn known_hosts(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             });
         }
     });
+}
+
+/// A prompt line drawn with the given terminal colours, font and size, so font and theme
+/// changes can be judged before opening a session.
+pub fn terminal_preview(
+    ui: &mut egui::Ui,
+    p: &theme::Palette,
+    family: egui::FontFamily,
+    size: f32,
+) {
+    let font = egui::FontId::new(size, family);
+    let h = (size * 1.4 + 40.0).max(56.0);
+    let (rect, _) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), h), egui::Sense::hover());
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    painter.rect_filled(rect, CornerRadius::ZERO, p.term_bg);
+    let mut job = egui::text::LayoutJob::default();
+    let part = |job: &mut egui::text::LayoutJob, text: &str, color: egui::Color32| {
+        job.append(
+            text,
+            0.0,
+            egui::TextFormat {
+                font_id: font.clone(),
+                color,
+                ..Default::default()
+            },
+        );
+    };
+    part(&mut job, "root@pve00", p.ansi[10]);
+    part(&mut job, ":", p.term_fg);
+    part(&mut job, "~", p.ansi[12]);
+    part(&mut job, "# ls -la ", p.term_fg);
+    let galley = painter.layout_job(job);
+    let pos = egui::pos2(rect.left() + 24.0, rect.center().y - galley.size().y / 2.0);
+    let w = galley.size().x;
+    let gh = galley.size().y;
+    painter.galley(pos, galley, p.term_fg);
+    // Block cursor as in the terminal.
+    let cw = size * 0.6;
+    painter.rect_filled(
+        egui::Rect::from_min_size(egui::pos2(pos.x + w, pos.y), Vec2::new(cw, gh)),
+        CornerRadius::same(1),
+        p.accent,
+    );
+    painter.line_segment(
+        [rect.left_bottom(), rect.right_bottom()],
+        egui::Stroke::new(1.0, theme::line()),
+    );
 }

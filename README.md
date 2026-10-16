@@ -21,7 +21,7 @@ Every [release](../../releases) contains Windows, Linux and macOS:
 The macOS app is not notarized: on first start right-click Aurora → *Open*
 (or `xattr -cr /Applications/Aurora.app`). Language: *Settings → Sprache / Language*.
 
-What's new in each version: [CHANGELOG.md](CHANGELOG.md).
+What's new in each version: [CHANGELOG.md](CHANGELOG.md) · planned: [ROADMAP.md](ROADMAP.md).
 
 ## Features
 
