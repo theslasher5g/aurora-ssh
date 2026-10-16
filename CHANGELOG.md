@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.6.1
+
+### New features
+- **Logs next to the terminal:** the log viewer docks at the right of an SSH session
+  (header button or `Ctrl+Shift+L`), uses the session's login (no second password prompt)
+  and can be resized at its edge. Pick a preset, type a file or command, or one of your own.
+  The followed source is reopened with the session on the next start.
+- **Own log commands:** save a log source with a name from the panel, or manage them under
+  Settings → Terminal (for all hosts or one host). They also appear under "View log".
+- **Session recording:** record a terminal with the record button (red while recording) or
+  every SSH session automatically. Recordings are asciinema files (`.cast`, only what the
+  screen shows) in `Documents/Aurora/Recordings`; Settings → Terminal lists them with
+  *Play* (replay in a tab, Space pauses) and *Delete*.
+- **Persistent sessions:** host editor switch "Persistent session (tmux)": the shell runs in
+  tmux (or screen) on the server, a reconnect lands in the same session with its jobs.
+- **Open files at the terminal's folder:** a header button opens the file browser in the
+  shell's current directory on the same login.
 - Terminal settings show a live preview of font, size and colours; the host editor's terminal
   profile has the same preview.
 - Scrollback is picked from a list (1,000 to 100,000 lines); the font size has a slider with a
