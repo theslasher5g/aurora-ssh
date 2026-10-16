@@ -2,7 +2,9 @@ pub mod chrome;
 pub mod containers;
 pub mod dialogs;
 pub mod editors;
+pub mod help;
 pub mod hosts;
+pub mod icons;
 pub mod keychain;
 pub mod lock;
 pub mod logview;
@@ -80,69 +82,53 @@ pub fn page_header(
     hint: &str,
     add: &str,
 ) -> bool {
+    use crate::theme;
     let mut clicked = false;
     ui.horizontal(|ui| {
-        ui.label(crate::theme::heading(title, 24.0));
-        ui.label(crate::theme::mono(count.to_string(), 13.0).color(crate::theme::text_dim()));
+        theme::page_title(ui, title, Some(count));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            clicked = crate::theme::primary_button(ui, add).clicked();
-            ui.add(
-                egui::TextEdit::singleline(search)
-                    .hint_text(hint)
-                    .desired_width(260.0)
-                    .margin(egui::Margin::symmetric(10, 6)),
+            ui.spacing_mut().item_spacing.x = 10.0;
+            clicked = theme::btn(ui, theme::Btn::Primary, Some(icons::Icon::Plus), add).clicked();
+            theme::search_field(
+                ui,
+                search,
+                hint,
+                260.0,
+                ui.id().with(("page-search", title)),
             );
         });
     });
-    ui.add_space(14.0);
-    crate::theme::hairline(ui);
-    ui.add_space(6.0);
+    ui.add_space(22.0);
     clicked
 }
 
-/// Text buttons drawn right-aligned inside a list row on hover; returns the clicked index.
+/// Buttons drawn right-aligned inside a list row on hover; returns the clicked index.
 pub fn row_buttons(
     ui: &mut egui::Ui,
     rect: egui::Rect,
     id: impl std::hash::Hash + std::fmt::Debug + Copy,
     labels: &[&str],
 ) -> Option<usize> {
-    use egui::{CornerRadius, Rect, Sense, Stroke, Vec2};
-    let theme = crate::theme::palette();
+    use crate::theme;
     let mut clicked = None;
-    let mut x = rect.right() - 8.0;
-    let cy = rect.center().y;
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(("row-buttons", id))
+            .max_rect(egui::Rect::from_min_max(
+                egui::pos2(rect.left(), rect.top()),
+                rect.right_bottom() - egui::vec2(16.0, 0.0),
+            ))
+            .layout(egui::Layout::right_to_left(egui::Align::Center)),
+    );
+    child.spacing_mut().item_spacing.x = 6.0;
     for (i, label) in labels.iter().enumerate().rev() {
-        let danger = label.starts_with("Löschen") || label.starts_with(t!("Löschen"));
-        let g = ui.painter().layout_no_wrap(
-            label.to_string(),
-            egui::FontId::proportional(12.5),
-            theme.text,
-        );
-        let r = Rect::from_min_size(
-            egui::pos2(x - g.size().x - 20.0, cy - 13.0),
-            Vec2::new(g.size().x + 20.0, 26.0),
-        );
-        x = r.left() - 6.0;
-        let b = ui.interact(r, ui.id().with((id, i)), Sense::click());
-        let fill = if b.hovered() {
-            theme.bg_card
+        // The first action is the main one.
+        let kind = if i == 0 {
+            theme::Btn::SmallPrimary
         } else {
-            egui::Color32::TRANSPARENT
+            theme::Btn::Small
         };
-        ui.painter().rect(
-            r,
-            CornerRadius::same(5),
-            fill,
-            Stroke::new(1.0, theme.border),
-            egui::StrokeKind::Inside,
-        );
-        ui.painter().galley(
-            r.center() - g.size() / 2.0,
-            g,
-            if danger { theme.red } else { theme.text },
-        );
-        if b.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+        if theme::btn(&mut child, kind, None, label).clicked() {
             clicked = Some(i);
         }
     }
@@ -151,11 +137,21 @@ pub fn row_buttons(
 
 /// Empty list placeholder with one action.
 pub fn empty_list(ui: &mut egui::Ui, title: &str, body: &str, action: &str) -> bool {
-    ui.add_space(40.0);
-    ui.label(crate::theme::heading(title, 18.0));
-    ui.label(egui::RichText::new(body).color(crate::theme::text_dim()));
-    ui.add_space(12.0);
-    crate::theme::primary_button(ui, action).clicked()
+    use crate::theme;
+    let mut clicked = false;
+    theme::card(ui, theme::bg_deep(), |ui| {
+        egui::Frame::NONE
+            .inner_margin(egui::Margin::symmetric(24, 24))
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                ui.label(theme::heading(title, 18.0));
+                ui.label(egui::RichText::new(body).color(theme::text_dim()));
+                ui.add_space(10.0);
+                clicked =
+                    theme::btn(ui, theme::Btn::Primary, Some(icons::Icon::Plus), action).clicked();
+            });
+    });
+    clicked
 }
 
 #[cfg(test)]

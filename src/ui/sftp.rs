@@ -439,20 +439,32 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
         .frame(
             egui::Frame::NONE
                 .fill(theme::bg_deep())
-                .inner_margin(Margin::symmetric(18, 14)),
+                .inner_margin(Margin {
+                    left: 14,
+                    right: 14,
+                    top: 14,
+                    bottom: 0,
+                }),
         )
         .show(ui, |ui| {
-            let mid = ui.max_rect().center().x;
-            ui.painter().vline(
-                mid,
-                ui.max_rect().y_range(),
-                egui::Stroke::new(1.0, theme::border()),
-            );
-            ui.spacing_mut().item_spacing.x = 36.0;
+            ui.spacing_mut().item_spacing.x = 12.0;
             ui.columns(2, |cols| {
                 for (i, col) in cols.iter_mut().enumerate() {
                     pane_rects[i] = col.max_rect();
-                    acts[i] = pane_ui(col, tab_id, i, &mut t.panes[i], &hosts, accent);
+                    let h = col.available_height();
+                    theme::card(col, theme::bg_deep(), |ui| {
+                        ui.set_min_height(h - 2.0);
+                        egui::Frame::NONE
+                            .inner_margin(Margin {
+                                left: 12,
+                                right: 12,
+                                top: 12,
+                                bottom: 0,
+                            })
+                            .show(ui, |ui| {
+                                acts[i] = pane_ui(ui, tab_id, i, &mut t.panes[i], &hosts, accent);
+                            });
+                    });
                 }
             });
         });
@@ -694,14 +706,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
 fn transfers_panel(ui: &mut egui::Ui, tab_id: u64, t: &mut SftpTab, accent: Color32) {
     egui::Panel::bottom(egui::Id::new(("sftp-transfers", tab_id)))
         .resizable(true)
-        .default_size(120.0)
+        .default_size(110.0)
+        .show_separator_line(false)
         .frame(
             egui::Frame::NONE
-                .fill(theme::bg_panel())
-                .stroke(egui::Stroke::new(1.0, theme::border()))
-                .inner_margin(Margin::symmetric(18, 12)),
+                .fill(theme::bg_deep())
+                .inner_margin(Margin::same(14)),
         )
         .show(ui, |ui| {
+            let h = ui.available_height();
+            theme::card(ui, theme::bg_deep(), |ui| {
+            ui.set_min_height(h - 2.0);
+            egui::Frame::NONE.inner_margin(Margin::symmetric(18, 14)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 6.0;
             ui.horizontal(|ui| {
                 theme::section_title(ui, t!("Übertragungen"));
                 if t.transfers.iter().any(|x| x.finished) && text_button(ui, t!("aufräumen")).clicked()
@@ -807,12 +825,12 @@ fn transfers_panel(ui: &mut egui::Ui, tab_id: u64, t: &mut SftpTab, accent: Colo
                         };
                         let (r, _) = ui.allocate_exact_size(Vec2::new(160.0, 12.0), Sense::hover());
                         let line =
-                            egui::Rect::from_center_size(r.center(), Vec2::new(r.width(), 2.0));
+                            egui::Rect::from_center_size(r.center(), Vec2::new(r.width(), 4.0));
                         ui.painter()
-                            .rect_filled(line, CornerRadius::ZERO, theme::border());
+                            .rect_filled(line, CornerRadius::same(2), theme::fill_strong());
                         let mut done = line;
                         done.set_width(line.width() * frac.clamp(0.0, 1.0));
-                        ui.painter().rect_filled(done, CornerRadius::ZERO, color);
+                        ui.painter().rect_filled(done, CornerRadius::same(2), color);
                         ui.label(theme::mono(&text, 11.5).color(if tr.error.is_some() {
                             theme::red()
                         } else {
@@ -820,6 +838,8 @@ fn transfers_panel(ui: &mut egui::Ui, tab_id: u64, t: &mut SftpTab, accent: Colo
                         }));
                     });
                 }
+            });
+            });
             });
         });
 }
@@ -844,7 +864,7 @@ fn pane_ui(
     // Source picker; actions next to it, or in their own row when the pane is narrow.
     let narrow = ui.available_width() < 520.0;
     let actions_row = |ui: &mut egui::Ui, action: &mut Option<PaneAction>| {
-        ui.spacing_mut().item_spacing.x = 14.0;
+        ui.spacing_mut().item_spacing.x = 4.0;
         let sel = pane.selected.clone();
         ui.add_enabled_ui(pane.connected() && !pane.path.is_empty(), |ui| {
             if text_button(ui, t!("+ Ordner")).clicked() {
@@ -863,18 +883,14 @@ fn pane_ui(
                 let is_dir = pane.entries.iter().any(|e| &e.name == s && e.is_dir);
                 *action = Some(PaneAction::Delete(s.clone(), is_dir));
             }
-            let color = if sel.is_some() {
-                accent
-            } else {
-                theme::text_dim()
-            };
-            if ui
-                .add(
-                    egui::Button::new(RichText::new(transfer_label).size(12.5).color(color))
-                        .frame(false),
-                )
-                .clicked()
-                && let Some(s) = &sel
+        });
+    };
+    let sel_now = pane.selected.clone();
+    let can_copy = sel_now.is_some() && pane.connected();
+    let copy_button = |ui: &mut egui::Ui, action: &mut Option<PaneAction>| {
+        ui.add_enabled_ui(can_copy, |ui| {
+            if accent_link(ui, transfer_label, can_copy, accent).clicked()
+                && let Some(s) = &sel_now
             {
                 *action = Some(PaneAction::Transfer(s.clone()));
             }
@@ -886,7 +902,7 @@ fn pane_ui(
             .width(if narrow {
                 ui.available_width() - 8.0
             } else {
-                200.0
+                150.0
             })
             .show_ui(ui, |ui| {
                 if ui.selectable_label(!is_remote, t!("Lokal")).clicked() && is_remote {
@@ -904,13 +920,12 @@ fn pane_ui(
                 }
             });
         if !narrow {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.add_space((ui.available_width() - 330.0).max(0.0));
-                    actions_row(ui, &mut action);
-                });
-            });
+            ui.add_space(6.0);
+            actions_row(ui, &mut action);
         }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            copy_button(ui, &mut action);
+        });
     });
     if narrow {
         ui.horizontal(|ui| actions_row(ui, &mut action));
@@ -939,10 +954,10 @@ fn pane_ui(
 
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        if theme::icon_button(ui, "↑", t!("Übergeordneter Ordner")).clicked() {
+        if theme::icon_btn(ui, crate::ui::icons::Icon::Up, t!("Übergeordneter Ordner")).clicked() {
             action = Some(PaneAction::Up);
         }
-        if theme::icon_button(ui, "⟳", t!("Aktualisieren")).clicked() {
+        if theme::icon_btn(ui, crate::ui::icons::Icon::Refresh, t!("Aktualisieren")).clicked() {
             action = Some(PaneAction::Refresh);
         }
         ui.add_space(4.0);
@@ -956,7 +971,7 @@ fn pane_ui(
                 .id(egui::Id::new(("pane-path", tab_id, idx)))
                 .hint_text(hint)
                 .font(egui::FontId::monospace(12.5))
-                .margin(Margin::symmetric(8, 6))
+                .margin(Margin::symmetric(12, 8))
                 .desired_width(f32::INFINITY),
         );
         if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -966,13 +981,13 @@ fn pane_ui(
     if let Some(e) = &pane.error {
         ui.label(RichText::new(e).color(theme::red()).size(12.0));
     }
-    ui.add_space(8.0);
-    theme::hairline(ui);
+    ui.add_space(10.0);
 
     egui::ScrollArea::vertical()
         .id_salt(("pane-scroll", tab_id, idx))
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
             if pane.entries.is_empty() && pane.error.is_none() {
                 ui.add_space(10.0);
                 ui.label(
@@ -1005,82 +1020,67 @@ fn entry_row(
     transfer_label: &str,
     remote: bool,
 ) -> Option<PaneAction> {
+    use crate::ui::icons::{self, Icon};
     let mut action = None;
     let is_sel = selected == Some(e.name.as_str());
+    // Rows reach the card edges; the card keeps 12 px of padding around the list.
+    let full = ui.available_rect_before_wrap();
     let (rect, resp) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
-    let p = ui.painter();
-    if is_sel {
-        p.rect_filled(rect, CornerRadius::ZERO, accent.linear_multiply(0.10));
-        p.rect_filled(
-            egui::Rect::from_min_size(rect.min, Vec2::new(2.0, rect.height())),
-            CornerRadius::ZERO,
-            accent,
-        );
-    } else if resp.hovered() {
-        p.rect_filled(rect, CornerRadius::ZERO, theme::bg_hover());
-    }
-    // Glyph: filled block for folders, outline for files, arrow for links.
-    let g = egui::Rect::from_center_size(
-        rect.left_center() + Vec2::new(16.0, 0.0),
-        Vec2::new(10.0, 8.0),
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), Sense::click());
+    let row = egui::Rect::from_min_max(
+        egui::pos2(full.left() - 12.0, rect.top()),
+        egui::pos2(full.right() + 12.0, rect.bottom()),
     );
-    if e.is_dir {
-        p.rect_filled(
-            g,
-            CornerRadius::same(1),
-            theme::accent2().linear_multiply(0.8),
-        );
-    } else if e.is_link {
-        p.text(
-            g.center(),
-            egui::Align2::CENTER_CENTER,
-            "↗",
-            egui::FontId::monospace(12.0),
-            theme::text_dim(),
-        );
-    } else {
-        p.rect_stroke(
-            g,
-            CornerRadius::same(1),
-            egui::Stroke::new(1.0, theme::text_dim()),
-            egui::StrokeKind::Inside,
-        );
+    let p = ui
+        .painter()
+        .with_clip_rect(row.intersect(ui.clip_rect().expand2(Vec2::new(12.0, 0.0))));
+    if is_sel {
+        p.rect_filled(row, CornerRadius::ZERO, theme::soft(accent));
+    } else if resp.hovered() {
+        p.rect_filled(row, CornerRadius::ZERO, theme::hover());
     }
-    let font = if e.is_dir {
-        theme::semibold(13.0)
+    p.line_segment(
+        [
+            egui::pos2(row.left() + 12.0, row.top()),
+            egui::pos2(row.right(), row.top()),
+        ],
+        egui::Stroke::new(1.0, theme::line()),
+    );
+    let icon_rect =
+        egui::Rect::from_center_size(rect.left_center() + Vec2::new(10.0, 0.0), Vec2::splat(19.0));
+    if e.is_dir {
+        icons::paint(&p, icon_rect, Icon::Folder, theme::accent());
+    } else if e.is_link {
+        icons::paint(&p, icon_rect, Icon::External, theme::text_dim());
     } else {
-        egui::FontId::proportional(13.0)
-    };
-    let name_color = if e.is_dir || is_sel {
-        theme::text()
-    } else {
-        theme::text_dim().linear_multiply(1.3)
-    };
+        icons::paint(&p, icon_rect, Icon::File, theme::text_dim());
+    }
     let name_rect = egui::Rect::from_min_max(
         rect.left_top() + Vec2::new(32.0, 0.0),
-        rect.right_bottom() - Vec2::new(190.0, 0.0),
+        rect.right_bottom() - Vec2::new(200.0, 0.0),
     );
     p.with_clip_rect(name_rect).text(
         name_rect.left_center(),
         egui::Align2::LEFT_CENTER,
         &e.name,
-        font,
-        name_color,
+        egui::FontId::proportional(14.0),
+        theme::text(),
     );
-    let meta = egui::FontId::monospace(11.5);
-    if !e.is_dir {
-        p.text(
-            rect.right_center() - Vec2::new(116.0, 0.0),
-            egui::Align2::RIGHT_CENTER,
-            human_size(e.size),
-            meta.clone(),
-            theme::text_dim(),
-        );
-    }
+    let meta = egui::FontId::proportional(12.5);
+    p.text(
+        rect.right_center() - Vec2::new(124.0, 0.0),
+        egui::Align2::RIGHT_CENTER,
+        if e.is_dir {
+            "—".to_string()
+        } else {
+            human_size(e.size)
+        },
+        meta.clone(),
+        theme::text_dim(),
+    );
     if let Some(m) = e.modified {
         p.text(
-            rect.right_center() - Vec2::new(8.0, 0.0),
+            rect.right_center(),
             egui::Align2::RIGHT_CENTER,
             short_date(m),
             meta,
@@ -1195,12 +1195,30 @@ fn open_in_editor(editor: &str, path: &std::path::Path) -> std::io::Result<()> {
 }
 
 fn text_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
-    let color = if ui.is_enabled() {
-        theme::text_dim()
+    theme::btn(ui, theme::Btn::Link, None, label)
+}
+
+/// "Kopieren →": accent text while something is selected.
+fn accent_link(ui: &mut egui::Ui, label: &str, on: bool, accent: Color32) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_string(),
+        theme::semibold(13.0),
+        Color32::PLACEHOLDER,
+    );
+    let (rect, resp) =
+        ui.allocate_exact_size(Vec2::new(galley.size().x + 16.0, 28.0), Sense::click());
+    if resp.hovered() && on {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(7), theme::soft(accent));
+    }
+    let color = if on && ui.is_enabled() {
+        accent
     } else {
-        theme::text_dim().linear_multiply(0.45)
+        accent.gamma_multiply(0.45)
     };
-    ui.add(egui::Button::new(RichText::new(label).size(12.5).color(color)).frame(false))
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, color);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn short_date(t: SystemTime) -> String {
@@ -1213,40 +1231,43 @@ fn fs_dialog(ctx: &egui::Context, t: &mut SftpTab) {
         return;
     };
     let mut done: Option<bool> = None;
-    egui::Modal::new(egui::Id::new("fs-dialog")).show(ctx, |ui| {
-        ui.set_width(380.0);
-        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-        match dialog {
-            FsDialog::Mkdir { name } => {
-                ui.label(theme::heading(t!("Neuer Ordner"), 18.0));
-                ui.text_edit_singleline(name).request_focus();
+    egui::Modal::new(egui::Id::new("fs-dialog"))
+        .frame(crate::theme::dialog_frame())
+        .backdrop_color(crate::theme::backdrop())
+        .show(ctx, |ui| {
+            ui.set_width(380.0);
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            match dialog {
+                FsDialog::Mkdir { name } => {
+                    ui.label(theme::heading(t!("Neuer Ordner"), 18.0));
+                    ui.text_edit_singleline(name).request_focus();
+                }
+                FsDialog::Rename { to, from } => {
+                    ui.label(theme::heading(t!("„{}“ umbenennen", from), 18.0));
+                    ui.text_edit_singleline(to).request_focus();
+                }
+                FsDialog::Delete { name, is_dir } => {
+                    ui.label(theme::heading(t!("Löschen?"), 18.0));
+                    ui.label(if *is_dir {
+                        t!("Ordner „{}“ inklusive Inhalt löschen?", name)
+                    } else {
+                        t!("Datei „{}“ löschen?", name)
+                    });
+                }
             }
-            FsDialog::Rename { to, from } => {
-                ui.label(theme::heading(t!("„{}“ umbenennen", from), 18.0));
-                ui.text_edit_singleline(to).request_focus();
-            }
-            FsDialog::Delete { name, is_dir } => {
-                ui.label(theme::heading(t!("Löschen?"), 18.0));
-                ui.label(if *is_dir {
-                    t!("Ordner „{}“ inklusive Inhalt löschen?", name)
-                } else {
-                    t!("Datei „{}“ löschen?", name)
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if theme::primary_button(ui, "OK").clicked() || enter {
+                        done = Some(true);
+                    }
+                    if ui.button(t!("Abbrechen")).clicked()
+                        || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                    {
+                        done = Some(false);
+                    }
                 });
-            }
-        }
-        ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if theme::primary_button(ui, "OK").clicked() || enter {
-                    done = Some(true);
-                }
-                if ui.button(t!("Abbrechen")).clicked()
-                    || ui.input(|i| i.key_pressed(egui::Key::Escape))
-                {
-                    done = Some(false);
-                }
             });
         });
-    });
     let Some(ok) = done else { return };
     let Some((idx, dialog)) = t.dialog.take() else {
         return;
@@ -1306,36 +1327,44 @@ fn fs_dialog(ctx: &egui::Context, t: &mut SftpTab) {
 
 /// "Dateien" page in the rail: pick two sources, see open file tabs, one-click hosts.
 pub fn page(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+    use crate::ui::icons::Icon;
     let hosts = sftp_hosts(app);
-    ui.label(theme::heading(t!("Dateien"), 24.0));
-    ui.add_space(14.0);
-    theme::hairline(ui);
-    ui.add_space(18.0);
+    theme::page_title(ui, t!("Dateien"), None);
+    ui.add_space(22.0);
 
     egui::ScrollArea::vertical()
+        .id_salt("files-page")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            theme::section_title(ui, t!("Neue Ansicht"));
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 12.0;
-                source_combo(ui, "files-left", &mut app.files_left, &hosts);
-                ui.label(theme::mono("⇄", 16.0).color(theme::accent()));
-                source_combo(ui, "files-right", &mut app.files_right, &hosts);
-                if theme::primary_button(ui, t!("Öffnen")).clicked() {
-                    actions.push(Action::OpenFiles(app.files_left, app.files_right));
-                }
+            ui.set_max_width(ui.available_width() - 14.0);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            caption(ui, t!("Neue Ansicht"));
+            theme::settings_card(ui, |ui, rows| {
+                rows.full(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 12.0;
+                        source_combo(ui, "files-left", &mut app.files_left, &hosts);
+                        ui.label(theme::mono("⇄", 16.0).color(theme::accent()));
+                        source_combo(ui, "files-right", &mut app.files_right, &hosts);
+                        if theme::btn(ui, theme::Btn::Primary, None, t!("Öffnen")).clicked() {
+                            actions.push(Action::OpenFiles(app.files_left, app.files_right));
+                        }
+                    });
+                    ui.add_space(8.0);
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(t!(
+                                "Jede Seite kann lokal oder ein Server sein. Server ⇄ Server wird über Aurora \
+                                 gestreamt – die Server müssen sich dafür nicht gegenseitig erreichen. \
+                                 Windows-Server mit OpenSSH funktionieren ebenfalls."
+                            ))
+                            .size(12.5)
+                            .color(theme::text_dim()),
+                        )
+                        .wrap(),
+                    );
+                });
             });
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new(t!(
-                    "Jede Seite kann lokal oder ein Server sein. Server ⇄ Server wird über Aurora \
-                     gestreamt – die Server müssen sich dafür nicht gegenseitig erreichen. \
-                     Windows-Server mit OpenSSH funktionieren ebenfalls."
-                ))
-                .size(12.5)
-                .color(theme::text_dim()),
-            );
 
             let open: Vec<(u64, String, String, usize)> = app
                 .tabs
@@ -1351,123 +1380,140 @@ pub fn page(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 })
                 .collect();
             if !open.is_empty() {
-                ui.add_space(26.0);
-                theme::section_title(ui, t!("Offen"));
-                ui.add_space(4.0);
-                for (id, title, route, running) in open {
-                    let (rect, resp) = ui
-                        .allocate_exact_size(Vec2::new(ui.available_width(), 44.0), Sense::click());
-                    if resp.hovered() {
-                        ui.painter()
-                            .rect_filled(rect, CornerRadius::same(4), theme::bg_hover());
+                ui.add_space(22.0);
+                caption(ui, t!("Offen"));
+                theme::card(ui, theme::bg_deep(), |ui| {
+                    for (i, (id, title, route, running)) in open.into_iter().enumerate() {
+                        let resp = list_row(ui, i > 0, Icon::Folder, &title, &route, None);
+                        if running > 0 {
+                            ui.painter().text(
+                                resp.rect.right_center() - Vec2::new(18.0, 0.0),
+                                egui::Align2::RIGHT_CENTER,
+                                t!("{} aktiv", running),
+                                theme::medium(12.5),
+                                theme::accent(),
+                            );
+                        }
+                        if resp.clicked() {
+                            app.active = Some(id);
+                        }
                     }
-                    let p = ui.painter();
-                    p.text(
-                        rect.left_center() + Vec2::new(12.0, 0.0),
-                        egui::Align2::LEFT_CENTER,
-                        &title,
-                        theme::semibold(14.0),
-                        theme::text(),
+                });
+            }
+
+            ui.add_space(22.0);
+            caption(ui, "Server");
+            if hosts.is_empty() {
+                if crate::ui::empty_list(
+                    ui,
+                    t!("Noch keine Server"),
+                    t!("Leg einen SSH-Host an – Windows-Server mit OpenSSH gehen auch."),
+                    t!("SSH-Host anlegen"),
+                ) {
+                    actions.push(Action::NewHostOf(Protocol::Ssh, None));
+                }
+                return;
+            }
+            theme::card(ui, theme::bg_deep(), |ui| {
+                for (i, h) in app
+                    .lib
+                    .hosts
+                    .iter()
+                    .filter(|h| matches!(h.protocol, Protocol::Ssh | Protocol::Rdp))
+                    .enumerate()
+                {
+                    let port = if h.protocol == Protocol::Rdp {
+                        h.rdp.sftp_port
+                    } else {
+                        h.port
+                    };
+                    let addr = format!("{}:{port}", h.hostname.trim());
+                    let resp = list_row(
+                        ui,
+                        i > 0,
+                        Icon::Folder,
+                        h.display_name(),
+                        &addr,
+                        (h.protocol == Protocol::Rdp).then_some("Windows"),
                     );
-                    p.text(
-                        rect.left_center() + Vec2::new(300.0, 0.0),
-                        egui::Align2::LEFT_CENTER,
-                        route,
-                        egui::FontId::monospace(12.0),
-                        theme::text_dim(),
-                    );
-                    if running > 0 {
-                        p.text(
-                            rect.right_center() - Vec2::new(12.0, 0.0),
+                    if resp.hovered() {
+                        ui.painter().text(
+                            resp.rect.right_center() - Vec2::new(18.0, 0.0),
                             egui::Align2::RIGHT_CENTER,
-                            t!("{} aktiv", running),
-                            egui::FontId::monospace(11.5),
+                            t!("Lokal ⇄ öffnen"),
+                            theme::semibold(13.0),
                             theme::accent(),
                         );
                     }
-                    if resp
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
-                    {
-                        app.active = Some(id);
+                    if resp.clicked() {
+                        actions.push(Action::OpenFiles(None, Some(h.id)));
                     }
                 }
-            }
-
-            ui.add_space(26.0);
-            theme::section_title(ui, "Server");
-            ui.add_space(4.0);
-            if hosts.is_empty() {
-                ui.label(
-                    RichText::new(t!("Noch keine Server. Leg einen SSH-Host an – Windows-Server mit OpenSSH gehen auch."))
-                        .color(theme::text_dim()),
-                );
-                ui.add_space(8.0);
-                if theme::primary_button(ui, t!("SSH-Host anlegen")).clicked() {
-                    actions.push(Action::NewHostOf(Protocol::Ssh, None));
-                }
-            }
-            for h in app
-                .lib
-                .hosts
-                .iter()
-                .filter(|h| matches!(h.protocol, Protocol::Ssh | Protocol::Rdp))
-            {
-                let (rect, resp) =
-                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), Sense::click());
-                if resp.hovered() {
-                    ui.painter()
-                        .rect_filled(rect, CornerRadius::same(4), theme::bg_hover());
-                }
-                let p = ui.painter();
-                p.text(
-                    rect.left_center() + Vec2::new(12.0, 0.0),
-                    egui::Align2::LEFT_CENTER,
-                    h.display_name(),
-                    theme::semibold(13.5),
-                    theme::text(),
-                );
-                let port = if h.protocol == Protocol::Rdp {
-                    h.rdp.sftp_port
-                } else {
-                    h.port
-                };
-                p.text(
-                    rect.left_center() + Vec2::new(300.0, 0.0),
-                    egui::Align2::LEFT_CENTER,
-                    format!("{}:{port}", h.hostname.trim()),
-                    egui::FontId::monospace(12.0),
-                    theme::text_dim(),
-                );
-                if h.protocol == Protocol::Rdp {
-                    p.text(
-                        rect.left_center() + Vec2::new(560.0, 0.0),
-                        egui::Align2::LEFT_CENTER,
-                        "Windows",
-                        egui::FontId::monospace(11.5),
-                        theme::accent2(),
-                    );
-                }
-                p.text(
-                    rect.right_center() - Vec2::new(12.0, 0.0),
-                    egui::Align2::RIGHT_CENTER,
-                    if resp.hovered() {
-                        t!("Lokal ⇄ öffnen")
-                    } else {
-                        ""
-                    },
-                    egui::FontId::proportional(12.5),
-                    theme::accent(),
-                );
-                if resp
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .clicked()
-                {
-                    actions.push(Action::OpenFiles(None, Some(h.id)));
-                }
-                theme::hairline(ui);
-            }
+            });
+            ui.add_space(40.0);
         });
+}
+
+fn caption(ui: &mut egui::Ui, text: &str) {
+    ui.horizontal(|ui| {
+        ui.add_space(18.0);
+        theme::section_title(ui, text);
+    });
+    ui.add_space(8.0);
+}
+
+/// Two-line row in a card: icon, title, mono detail, optional tag.
+fn list_row(
+    ui: &mut egui::Ui,
+    divider: bool,
+    icon: crate::ui::icons::Icon,
+    title: &str,
+    detail: &str,
+    tag: Option<&str>,
+) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 60.0), Sense::click());
+    let p = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    if resp.hovered() {
+        p.rect_filled(rect, CornerRadius::ZERO, theme::hover());
+    }
+    if divider {
+        p.line_segment(
+            [egui::pos2(rect.left() + 52.0, rect.top()), rect.right_top()],
+            egui::Stroke::new(1.0, theme::line()),
+        );
+    }
+    crate::ui::icons::paint(
+        &p,
+        egui::Rect::from_center_size(rect.left_center() + Vec2::new(28.0, 0.0), Vec2::splat(20.0)),
+        icon,
+        theme::accent(),
+    );
+    let g = p.layout_no_wrap(title.to_string(), theme::semibold(15.0), theme::text());
+    let tw = g.size().x;
+    p.galley(
+        egui::pos2(rect.left() + 52.0, rect.top() + 11.0),
+        g,
+        theme::text(),
+    );
+    p.text(
+        egui::pos2(rect.left() + 52.0, rect.top() + 42.0),
+        egui::Align2::LEFT_CENTER,
+        detail,
+        egui::FontId::monospace(12.0),
+        theme::text_dim(),
+    );
+    if let Some(tag) = tag {
+        let color = theme::accent2();
+        let g = p.layout_no_wrap(tag.to_string(), theme::medium(12.0), color);
+        let r = egui::Rect::from_min_size(
+            egui::pos2(rect.left() + 52.0 + tw + 10.0, rect.top() + 9.0),
+            Vec2::new(g.size().x + 18.0, 22.0),
+        );
+        p.rect_filled(r, CornerRadius::same(11), theme::soft(color));
+        p.galley(r.center() - g.size() / 2.0, g, color);
+    }
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn source_combo(ui: &mut egui::Ui, id: &str, value: &mut Option<Uuid>, hosts: &[(Uuid, String)]) {

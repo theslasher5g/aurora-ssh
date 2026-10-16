@@ -1,6 +1,6 @@
 //! Command palette (Ctrl/Cmd+K): fuzzy search across hosts, snippets and actions.
 
-use egui::{CornerRadius, Margin, RichText, Stroke, Vec2};
+use egui::{CornerRadius, Margin, RichText, Vec2};
 
 use crate::app::{Action, App, View};
 use crate::model::Protocol;
@@ -154,66 +154,84 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
     }
 
     let modal = egui::Modal::new(egui::Id::new("palette"))
-        .frame(
-            egui::Frame::NONE
-                .fill(theme::bg_card())
-                .stroke(Stroke::new(1.0, theme::border()))
-                .corner_radius(CornerRadius::same(10))
-                .inner_margin(Margin::same(10)),
-        )
+        .frame(theme::dialog_frame().inner_margin(Margin::same(10)))
+        .backdrop_color(theme::backdrop())
         .show(ctx, |ui| {
-            ui.set_width(560.0);
-            let r = ui.add(
-                egui::TextEdit::singleline(&mut app.palette.query)
-                    .hint_text(t!("Host, Snippet, Befehl oder user@host"))
-                    .frame(egui::Frame::NONE)
-                    .font(theme::semibold(18.0))
-                    .margin(egui::Margin::symmetric(6, 8))
-                    .desired_width(f32::INFINITY),
-            );
+            ui.set_width(600.0);
+            let r = ui
+                .horizontal(|ui| {
+                    ui.add_space(8.0);
+                    crate::ui::icons::show(
+                        ui,
+                        crate::ui::icons::Icon::Search,
+                        18.0,
+                        theme::text_dim(),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app.palette.query)
+                            .hint_text(t!("Host, Snippet, Befehl oder user@host"))
+                            .frame(egui::Frame::NONE)
+                            .font(theme::medium(18.0))
+                            .margin(egui::Margin::symmetric(6, 10))
+                            .desired_width(f32::INFINITY),
+                    )
+                })
+                .inner;
             r.request_focus();
             if r.changed() {
                 app.palette.selected = 0;
             }
             theme::hairline(ui);
-            ui.add_space(4.0);
+            ui.add_space(6.0);
             if items.is_empty() {
                 ui.label(RichText::new(t!("Keine Treffer")).color(theme::text_dim()));
             }
             for (i, item) in items.iter().enumerate() {
                 let selected = i == app.palette.selected;
                 let (rect, resp) = ui.allocate_exact_size(
-                    Vec2::new(ui.available_width(), 38.0),
+                    Vec2::new(ui.available_width(), 42.0),
                     egui::Sense::click(),
                 );
                 if selected || resp.hovered() {
                     ui.painter().rect_filled(
                         rect,
-                        CornerRadius::same(6),
+                        CornerRadius::same(10),
                         if selected {
-                            theme::bg_hover()
+                            theme::accent_soft()
                         } else {
-                            theme::bg_panel()
+                            theme::hover()
                         },
                     );
                 }
                 let p = ui.painter();
-                p.text(
-                    rect.left_center() + Vec2::new(12.0, 0.0),
-                    egui::Align2::LEFT_CENTER,
-                    &item.icon,
-                    egui::FontId::monospace(10.5),
+                let kind = p.layout_no_wrap(
+                    item.icon.clone(),
+                    theme::bold(10.0),
                     if selected {
                         theme::accent()
                     } else {
                         theme::text_dim()
                     },
                 );
+                let chip = egui::Rect::from_min_size(
+                    rect.left_center() + Vec2::new(10.0, -10.0),
+                    Vec2::new(48.0, 20.0),
+                );
+                p.rect_filled(
+                    chip,
+                    CornerRadius::same(6),
+                    if selected {
+                        theme::accent_soft()
+                    } else {
+                        theme::fill()
+                    },
+                );
+                p.galley(chip.center() - kind.size() / 2.0, kind, theme::text_dim());
                 p.text(
                     rect.left_center() + Vec2::new(70.0, 0.0),
                     egui::Align2::LEFT_CENTER,
                     &item.title,
-                    theme::semibold(14.0),
+                    theme::semibold(14.5),
                     theme::text(),
                 );
                 p.with_clip_rect(rect).text(
@@ -228,12 +246,21 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                 }
             }
             ui.add_space(4.0);
-            ui.label(
-                RichText::new(t!("↑↓ auswählen   Enter ausführen   Esc schließen"))
-                    .font(egui::FontId::monospace(10.5))
-                    .size(11.0)
-                    .color(theme::text_dim()),
-            );
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                ui.spacing_mut().item_spacing.x = 5.0;
+                for (keys, what) in [
+                    (&["↑", "↓"][..], t!("auswählen")),
+                    (&["Enter"][..], t!("ausführen")),
+                    (&["Esc"][..], t!("schließen")),
+                ] {
+                    for k in keys {
+                        theme::kbd(ui, k);
+                    }
+                    ui.label(RichText::new(what).size(12.0).color(theme::text_dim()));
+                    ui.add_space(10.0);
+                }
+            });
         });
 
     if let Some(i) = chosen {

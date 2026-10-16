@@ -40,7 +40,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         .collect();
     list.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.name.cmp(&b.1.name)));
 
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+    egui::ScrollArea::vertical().id_salt("snippets-page").auto_shrink([false, false]).show(ui, |ui| {
+            // Room for the scroll bar next to the cards.
+            ui.set_max_width(ui.available_width() - 14.0);
         if count == 0 {
             if empty_list(
                 ui,
@@ -63,72 +65,95 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             }
             return;
         }
-        for (_, s) in list {
-            let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 58.0), Sense::click());
-            let hovered = ui.rect_contains_pointer(rect);
-            let p = ui.painter().with_clip_rect(rect);
-            if hovered {
-                p.rect_filled(rect, CornerRadius::same(6), theme::bg_hover());
-            }
-            p.rect_filled(
-                Rect::from_min_max(Pos2::new(rect.left() + 10.0, rect.bottom() - 1.0), rect.right_bottom()),
-                CornerRadius::ZERO,
-                theme::border().linear_multiply(0.6),
-            );
-            let left = rect.left() + 12.0;
-            let name_g = p.layout_no_wrap(s.name.clone(), theme::semibold(14.0), theme::text());
-            let nw = name_g.size().x;
-            p.galley(Pos2::new(left, rect.top() + 9.0), name_g, theme::text());
-            if !s.description.is_empty() {
+        theme::card(ui, theme::bg_deep(), |ui| {
+            for (i, (_, s)) in list.into_iter().enumerate() {
+                let (rect, resp) =
+                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 68.0), Sense::click());
+                let hovered = ui.rect_contains_pointer(rect.shrink2(Vec2::new(0.0, 0.5)));
+                let p = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+                if hovered {
+                    p.rect_filled(rect, CornerRadius::ZERO, theme::hover());
+                }
+                if i > 0 {
+                    p.line_segment(
+                        [
+                            Pos2::new(rect.left() + 18.0, rect.top()),
+                            rect.right_top(),
+                        ],
+                        Stroke::new(1.0, theme::line()),
+                    );
+                }
+                let left = rect.left() + 18.0;
+                let y1 = rect.top() + 23.0;
+                let y2 = rect.top() + 46.0;
+                let name_g = p.layout_no_wrap(s.name.clone(), theme::semibold(15.0), theme::text());
+                let nw = name_g.size().x;
+                p.galley(Pos2::new(left, y1 - name_g.size().y / 2.0), name_g, theme::text());
+                if !s.description.is_empty() {
+                    p.text(
+                        Pos2::new(left + nw + 10.0, y1),
+                        egui::Align2::LEFT_CENTER,
+                        &s.description,
+                        FontId::proportional(13.0),
+                        theme::text_dim(),
+                    );
+                }
+                // Script preview: prompt glyph in accent, first line in mono.
                 p.text(
-                    Pos2::new(left + nw + 10.0, rect.top() + 18.0),
+                    Pos2::new(left, y2),
                     egui::Align2::LEFT_CENTER,
-                    &s.description,
-                    FontId::proportional(12.5),
+                    "$",
+                    theme::mono_medium(13.0),
+                    theme::accent(),
+                );
+                p.text(
+                    Pos2::new(left + 16.0, y2),
+                    egui::Align2::LEFT_CENTER,
+                    s.script.lines().next().unwrap_or_default(),
+                    FontId::monospace(13.0),
                     theme::text_dim(),
                 );
-            }
-            // Script preview: prompt glyph in accent, first line in mono.
-            p.text(Pos2::new(left, rect.top() + 39.0), egui::Align2::LEFT_CENTER, "$", FontId::monospace(12.5), theme::accent());
-            p.text(
-                Pos2::new(left + 14.0, rect.top() + 39.0),
-                egui::Align2::LEFT_CENTER,
-                s.script.lines().next().unwrap_or_default(),
-                FontId::monospace(12.5),
-                theme::text_dim(),
-            );
-            if hovered {
-                let labels = [t!("Ausführen"), t!("In allen"), t!("Bearbeiten"), t!("Löschen")];
-                match row_buttons(ui, rect, s.id, &labels) {
-                    Some(0) => actions.push(Action::RunSnippet(s.id, false)),
-                    Some(1) => actions.push(Action::RunSnippet(s.id, true)),
-                    Some(2) => actions.push(Action::EditSnippet(s.id)),
-                    Some(3) => actions.push(Action::Confirm(
-                        t!("Snippet „{}“ löschen?", s.name),
-                        Box::new(Action::DeleteSnippet(s.id)),
-                    )),
-                    _ => {}
+                if hovered {
+                    let labels = [t!("Ausführen"), t!("In allen"), t!("Bearbeiten"), t!("Löschen")];
+                    match row_buttons(ui, rect, s.id, &labels) {
+                        Some(0) => actions.push(Action::RunSnippet(s.id, false)),
+                        Some(1) => actions.push(Action::RunSnippet(s.id, true)),
+                        Some(2) => actions.push(Action::EditSnippet(s.id)),
+                        Some(3) => actions.push(Action::Confirm(
+                            t!("Snippet „{}“ löschen?", s.name),
+                            Box::new(Action::DeleteSnippet(s.id)),
+                        )),
+                        _ => {}
+                    }
+                } else {
+                    // Variables as accent chips, tags as grey ones, right aligned.
+                    let mut x = rect.right() - 18.0;
+                    let labels: Vec<(String, bool)> = s
+                        .variables()
+                        .into_iter()
+                        .map(|v| (format!("{{{{{v}}}}}"), true))
+                        .chain(s.tags.iter().map(|t| (format!("#{t}"), false)))
+                        .collect();
+                    for (label, var) in labels.into_iter().rev() {
+                        let color = if var { theme::accent() } else { theme::text_dim() };
+                        let g = p.layout_no_wrap(label, FontId::monospace(12.0), color);
+                        let r = Rect::from_min_size(
+                            Pos2::new(x - g.size().x - 18.0, rect.center().y - 11.0),
+                            Vec2::new(g.size().x + 18.0, 22.0),
+                        );
+                        p.rect_filled(
+                            r,
+                            CornerRadius::same(7),
+                            if var { theme::accent_soft() } else { theme::fill() },
+                        );
+                        p.galley(r.center() - g.size() / 2.0, g, color);
+                        x = r.left() - 6.0;
+                    }
                 }
-            } else {
-                // Variables and tags as small outlined labels, right aligned.
-                let mut x = rect.right() - 12.0;
-                let labels: Vec<(String, egui::Color32)> = s
-                    .variables()
-                    .into_iter()
-                    .map(|v| (format!("{{{{{v}}}}}"), theme::accent()))
-                    .chain(s.tags.iter().map(|t| (format!("#{t}"), theme::text_dim())))
-                    .collect();
-                for (label, color) in labels.into_iter().rev() {
-                    let g = p.layout_no_wrap(label, FontId::monospace(10.5), color);
-                    let r = Rect::from_min_size(Pos2::new(x - g.size().x - 10.0, rect.center().y - 9.0), g.size() + Vec2::new(10.0, 6.0));
-                    p.rect_stroke(r, CornerRadius::same(3), Stroke::new(1.0, color.linear_multiply(0.4)), egui::StrokeKind::Inside);
-                    p.galley(r.min + Vec2::new(5.0, 3.0), g, color);
-                    x = r.left() - 6.0;
+                if resp.double_clicked() {
+                    actions.push(Action::RunSnippet(s.id, false));
                 }
             }
-            if resp.double_clicked() {
-                actions.push(Action::RunSnippet(s.id, false));
-            }
-        }
+        });
     });
 }

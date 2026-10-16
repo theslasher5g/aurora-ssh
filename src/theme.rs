@@ -55,27 +55,27 @@ const fn ansi(h: [u32; 16]) -> [Color32; 16] {
     out
 }
 
-pub const THEMES: [Palette; 12] = [
+pub const THEMES: [Palette; 26] = [
     Palette {
         id: "phosphor",
         name: "Phosphor",
         dark: true,
-        bg_deep: c(0x141413),
-        bg_panel: c(0x0E0E0D),
-        bg_card: c(0x1C1B19),
-        bg_hover: c(0x252421),
-        border: c(0x2E2C28),
-        text: c(0xEDE9E1),
-        text_dim: c(0x8E897F),
-        accent: c(0xF2A33A),
-        on_accent: c(0x1A1206),
-        accent2: c(0x79B4E0),
-        pink: c(0xE8739E),
-        amber: c(0xF2A33A),
-        red: c(0xE5615B),
-        green: c(0x86C77E),
-        term_bg: c(0x100F0E),
-        term_fg: c(0xE8E2D6),
+        bg_deep: c(0x000000),
+        bg_panel: c(0x161618),
+        bg_card: c(0x1C1C1E),
+        bg_hover: c(0x2C2C2E),
+        border: c(0x2C2C2E),
+        text: c(0xF5F5F7),
+        text_dim: c(0xA1A1A6),
+        accent: c(0xFF9F0A),
+        on_accent: c(0x1D1D1F),
+        accent2: c(0x64B5FF),
+        pink: c(0xFF6FA8),
+        amber: c(0xFFB340),
+        red: c(0xFF6961),
+        green: c(0x32D74B),
+        term_bg: c(0x0F0F11),
+        term_fg: c(0xF0F0F2),
         ansi: ansi([
             0x2A2825, 0xE5615B, 0x86C77E, 0xF2C14E, 0x79B4E0, 0xC792D8, 0x6CC4B8, 0xD8D2C6,
             0x6B665D, 0xF0857F, 0xA6DB9E, 0xF7D37A, 0x9FCBEC, 0xDBB0E8, 0x8FDACF, 0xF6F2EA,
@@ -356,6 +356,356 @@ pub const THEMES: [Palette; 12] = [
             0x57606A, 0xA40E26, 0x1A7F37, 0x633C01, 0x218BFF, 0xA475F9, 0x3192AA, 0x8C959F,
         ]),
     },
+    Palette {
+        id: "one-dark",
+        name: "One Dark",
+        dark: true,
+        bg_deep: c(0x21252B),
+        bg_panel: c(0x1B1F24),
+        bg_card: c(0x282C34),
+        bg_hover: c(0x2F343D),
+        border: c(0x3A3F4B),
+        text: c(0xDCDFE4),
+        text_dim: c(0x8B929E),
+        accent: c(0x61AFEF),
+        on_accent: c(0x0E1620),
+        accent2: c(0xC678DD),
+        pink: c(0xE06C9F),
+        amber: c(0xE5C07B),
+        red: c(0xE06C75),
+        green: c(0x98C379),
+        term_bg: c(0x1E2227),
+        term_fg: c(0xDCDFE4),
+        ansi: ansi([
+            0x282C34, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xDCDFE4,
+            0x5C6370, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xFFFFFF,
+        ]),
+    },
+    Palette {
+        id: "monokai",
+        name: "Monokai",
+        dark: true,
+        bg_deep: c(0x221F22),
+        bg_panel: c(0x1B181B),
+        bg_card: c(0x2D2A2E),
+        bg_hover: c(0x363337),
+        border: c(0x403E41),
+        text: c(0xFCFCFA),
+        text_dim: c(0x939293),
+        accent: c(0xFFD866),
+        on_accent: c(0x221F22),
+        accent2: c(0x78DCE8),
+        pink: c(0xFF6188),
+        amber: c(0xFC9867),
+        red: c(0xFF6188),
+        green: c(0xA9DC76),
+        term_bg: c(0x1E1B1E),
+        term_fg: c(0xFCFCFA),
+        ansi: ansi([
+            0x403E41, 0xFF6188, 0xA9DC76, 0xFFD866, 0xFC9867, 0xAB9DF2, 0x78DCE8, 0xFCFCFA,
+            0x727072, 0xFF6188, 0xA9DC76, 0xFFD866, 0xFC9867, 0xAB9DF2, 0x78DCE8, 0xFFFFFF,
+        ]),
+    },
+    Palette {
+        id: "everforest",
+        name: "Everforest",
+        dark: true,
+        bg_deep: c(0x272E33),
+        bg_panel: c(0x1E2326),
+        bg_card: c(0x2E383C),
+        bg_hover: c(0x374145),
+        border: c(0x414B50),
+        text: c(0xD3C6AA),
+        text_dim: c(0x9DA9A0),
+        accent: c(0xA7C080),
+        on_accent: c(0x1E2326),
+        accent2: c(0x7FBBB3),
+        pink: c(0xD699B6),
+        amber: c(0xDBBC7F),
+        red: c(0xE67E80),
+        green: c(0xA7C080),
+        term_bg: c(0x232A2E),
+        term_fg: c(0xD3C6AA),
+        ansi: ansi([
+            0x414B50, 0xE67E80, 0xA7C080, 0xDBBC7F, 0x7FBBB3, 0xD699B6, 0x83C092, 0xD3C6AA,
+            0x5C6A72, 0xE67E80, 0xA7C080, 0xDBBC7F, 0x7FBBB3, 0xD699B6, 0x83C092, 0xF2EFDF,
+        ]),
+    },
+    Palette {
+        id: "kanagawa",
+        name: "Kanagawa",
+        dark: true,
+        bg_deep: c(0x1F1F28),
+        bg_panel: c(0x16161D),
+        bg_card: c(0x2A2A37),
+        bg_hover: c(0x363646),
+        border: c(0x3B3B4F),
+        text: c(0xDCD7BA),
+        text_dim: c(0x938AA9),
+        accent: c(0xFFA066),
+        on_accent: c(0x1F1F28),
+        accent2: c(0x7E9CD8),
+        pink: c(0xD27E99),
+        amber: c(0xE6C384),
+        red: c(0xE46876),
+        green: c(0x98BB6C),
+        term_bg: c(0x1A1A22),
+        term_fg: c(0xDCD7BA),
+        ansi: ansi([
+            0x16161D, 0xC34043, 0x76946A, 0xC0A36E, 0x7E9CD8, 0x957FB8, 0x6A9589, 0xC8C093,
+            0x727169, 0xE82424, 0x98BB6C, 0xE6C384, 0x7FB4CA, 0x938AA9, 0x7AA89F, 0xDCD7BA,
+        ]),
+    },
+    Palette {
+        id: "ayu-mirage",
+        name: "Ayu Mirage",
+        dark: true,
+        bg_deep: c(0x1F2430),
+        bg_panel: c(0x191E2A),
+        bg_card: c(0x242936),
+        bg_hover: c(0x2D3343),
+        border: c(0x343B4C),
+        text: c(0xCCCAC2),
+        text_dim: c(0x8A9199),
+        accent: c(0xFFCC66),
+        on_accent: c(0x1F2430),
+        accent2: c(0x73D0FF),
+        pink: c(0xF28779),
+        amber: c(0xFFD173),
+        red: c(0xF28779),
+        green: c(0xD5FF80),
+        term_bg: c(0x1A1F29),
+        term_fg: c(0xCCCAC2),
+        ansi: ansi([
+            0x171B24, 0xED8274, 0x87D96C, 0xFACC6E, 0x6DCBFA, 0xDABAFA, 0x90E1C6, 0xC7C7C7,
+            0x686868, 0xF28779, 0xD5FF80, 0xFFD173, 0x73D0FF, 0xDFBFFF, 0x95E6CB, 0xFFFFFF,
+        ]),
+    },
+    Palette {
+        id: "night-owl",
+        name: "Night Owl",
+        dark: true,
+        bg_deep: c(0x011627),
+        bg_panel: c(0x010E1A),
+        bg_card: c(0x0B2942),
+        bg_hover: c(0x112F4A),
+        border: c(0x1D3B53),
+        text: c(0xD6DEEB),
+        text_dim: c(0x7E97AC),
+        accent: c(0x82AAFF),
+        on_accent: c(0x011627),
+        accent2: c(0xC792EA),
+        pink: c(0xFF5874),
+        amber: c(0xECC48D),
+        red: c(0xEF5350),
+        green: c(0x22DA6E),
+        term_bg: c(0x011221),
+        term_fg: c(0xD6DEEB),
+        ansi: ansi([
+            0x011627, 0xEF5350, 0x22DA6E, 0xADDB67, 0x82AAFF, 0xC792EA, 0x21C7A8, 0xD6DEEB,
+            0x575656, 0xEF5350, 0x22DA6E, 0xFFEB95, 0x82AAFF, 0xC792EA, 0x7FDBCA, 0xFFFFFF,
+        ]),
+    },
+    Palette {
+        id: "synthwave",
+        name: "Synthwave",
+        dark: true,
+        bg_deep: c(0x241B2F),
+        bg_panel: c(0x1C1526),
+        bg_card: c(0x2A2139),
+        bg_hover: c(0x342A46),
+        border: c(0x3E3354),
+        text: c(0xF4EEE4),
+        text_dim: c(0xA599BE),
+        accent: c(0xFF7EDB),
+        on_accent: c(0x241B2F),
+        accent2: c(0x36F9F6),
+        pink: c(0xFF7EDB),
+        amber: c(0xFEDE5D),
+        red: c(0xFE4450),
+        green: c(0x72F1B8),
+        term_bg: c(0x1E1727),
+        term_fg: c(0xF4EEE4),
+        ansi: ansi([
+            0x241B2F, 0xFE4450, 0x72F1B8, 0xFEDE5D, 0x03EDF9, 0xFF7EDB, 0x36F9F6, 0xF4EEE4,
+            0x6D77B3, 0xFE4450, 0x72F1B8, 0xFFF951, 0x36F9F6, 0xFF7EDB, 0x36F9F6, 0xFFFFFF,
+        ]),
+    },
+    Palette {
+        id: "midnight",
+        name: "Midnight",
+        dark: true,
+        bg_deep: c(0x000000),
+        bg_panel: c(0x0C0D10),
+        bg_card: c(0x15171C),
+        bg_hover: c(0x1E2128),
+        border: c(0x23262E),
+        text: c(0xECEFF4),
+        text_dim: c(0x8E95A3),
+        accent: c(0x4C8DFF),
+        on_accent: c(0xFFFFFF),
+        accent2: c(0x9D7BFF),
+        pink: c(0xFF6FAE),
+        amber: c(0xFFB547),
+        red: c(0xFF5C5C),
+        green: c(0x3DDC84),
+        term_bg: c(0x07080A),
+        term_fg: c(0xE6E9EF),
+        ansi: ansi([
+            0x1E2128, 0xFF5C5C, 0x3DDC84, 0xFFB547, 0x4C8DFF, 0x9D7BFF, 0x3FC8E0, 0xD5DAE3,
+            0x5A6170, 0xFF7B7B, 0x6BE8A2, 0xFFCA75, 0x78AAFF, 0xB79CFF, 0x6EDCEF, 0xFFFFFF,
+        ]),
+    },
+    Palette {
+        id: "matrix",
+        name: "Matrix",
+        dark: true,
+        bg_deep: c(0x050A06),
+        bg_panel: c(0x030603),
+        bg_card: c(0x0B140C),
+        bg_hover: c(0x122014),
+        border: c(0x18301B),
+        text: c(0xC8F7CF),
+        text_dim: c(0x6FA978),
+        accent: c(0x39FF6A),
+        on_accent: c(0x031206),
+        accent2: c(0x7DE8FF),
+        pink: c(0xFF7AC6),
+        amber: c(0xE9F56B),
+        red: c(0xFF5A5A),
+        green: c(0x39FF6A),
+        term_bg: c(0x020502),
+        term_fg: c(0xA8F5B4),
+        ansi: ansi([
+            0x0B140C, 0xFF5A5A, 0x39FF6A, 0xE9F56B, 0x4FC3F7, 0xC792EA, 0x5EF2C4, 0xA8F5B4,
+            0x3B6B43, 0xFF7B7B, 0x7DFF9C, 0xF3FA9A, 0x7DD6FA, 0xD8B0F0, 0x8FF7D8, 0xE6FFE9,
+        ]),
+    },
+    Palette {
+        id: "catppuccin-latte",
+        name: "Catppuccin Latte",
+        dark: false,
+        bg_deep: c(0xEFF1F5),
+        bg_panel: c(0xE6E9EF),
+        bg_card: c(0xFFFFFF),
+        bg_hover: c(0xDCE0E8),
+        border: c(0xCCD0DA),
+        text: c(0x4C4F69),
+        text_dim: c(0x7C7F93),
+        accent: c(0x8839EF),
+        on_accent: c(0xFFFFFF),
+        accent2: c(0x1E66F5),
+        pink: c(0xEA76CB),
+        amber: c(0xDF8E1D),
+        red: c(0xD20F39),
+        green: c(0x40A02B),
+        term_bg: c(0xF6F7FA),
+        term_fg: c(0x4C4F69),
+        ansi: ansi([
+            0x5C5F77, 0xD20F39, 0x40A02B, 0xDF8E1D, 0x1E66F5, 0xEA76CB, 0x179299, 0xACB0BE,
+            0x6C6F85, 0xD20F39, 0x40A02B, 0xDF8E1D, 0x1E66F5, 0xEA76CB, 0x179299, 0xBCC0CC,
+        ]),
+    },
+    Palette {
+        id: "rose-pine-dawn",
+        name: "Rosé Pine Dawn",
+        dark: false,
+        bg_deep: c(0xFAF4ED),
+        bg_panel: c(0xF2E9E1),
+        bg_card: c(0xFFFAF3),
+        bg_hover: c(0xF2E9DE),
+        border: c(0xDFDAD9),
+        text: c(0x464261),
+        text_dim: c(0x797593),
+        accent: c(0xD7827E),
+        on_accent: c(0xFFFAF3),
+        accent2: c(0x286983),
+        pink: c(0xB4637A),
+        amber: c(0xEA9D34),
+        red: c(0xB4637A),
+        green: c(0x286983),
+        term_bg: c(0xFFFAF3),
+        term_fg: c(0x464261),
+        ansi: ansi([
+            0xF2E9E1, 0xB4637A, 0x286983, 0xEA9D34, 0x56949F, 0x907AA9, 0xD7827E, 0x575279,
+            0x9893A5, 0xB4637A, 0x286983, 0xEA9D34, 0x56949F, 0x907AA9, 0xD7827E, 0x575279,
+        ]),
+    },
+    Palette {
+        id: "one-light",
+        name: "One Light",
+        dark: false,
+        bg_deep: c(0xFAFAFA),
+        bg_panel: c(0xF0F0F1),
+        bg_card: c(0xFFFFFF),
+        bg_hover: c(0xEAEAEB),
+        border: c(0xDBDBDC),
+        text: c(0x383A42),
+        text_dim: c(0x696C77),
+        accent: c(0x4078F2),
+        on_accent: c(0xFFFFFF),
+        accent2: c(0xA626A4),
+        pink: c(0xCA1243),
+        amber: c(0xC18401),
+        red: c(0xE45649),
+        green: c(0x50A14F),
+        term_bg: c(0xFAFAFA),
+        term_fg: c(0x383A42),
+        ansi: ansi([
+            0x383A42, 0xE45649, 0x50A14F, 0xC18401, 0x4078F2, 0xA626A4, 0x0184BC, 0xA0A1A7,
+            0x4F525D, 0xE45649, 0x50A14F, 0x986801, 0x4078F2, 0xA626A4, 0x0997B3, 0x383A42,
+        ]),
+    },
+    Palette {
+        id: "ayu-light",
+        name: "Ayu Light",
+        dark: false,
+        bg_deep: c(0xF8F9FA),
+        bg_panel: c(0xEEF0F2),
+        bg_card: c(0xFFFFFF),
+        bg_hover: c(0xE7EAED),
+        border: c(0xD8DCE0),
+        text: c(0x3D4247),
+        text_dim: c(0x6B727A),
+        accent: c(0xFA8D3E),
+        on_accent: c(0x1F1300),
+        accent2: c(0x399EE6),
+        pink: c(0xF07171),
+        amber: c(0xF2AE49),
+        red: c(0xE65050),
+        green: c(0x6CBF43),
+        term_bg: c(0xFCFCFC),
+        term_fg: c(0x3D4247),
+        ansi: ansi([
+            0x000000, 0xEA6C6D, 0x6CBF43, 0xECA944, 0x3199E1, 0x9E75C7, 0x46BA94, 0xBABABA,
+            0x686868, 0xF07171, 0x86B300, 0xF2AE49, 0x399EE6, 0xA37ACC, 0x4CBF99, 0xD1D1D1,
+        ]),
+    },
+    Palette {
+        id: "nord-light",
+        name: "Nord Light",
+        dark: false,
+        bg_deep: c(0xECEFF4),
+        bg_panel: c(0xE5E9F0),
+        bg_card: c(0xFFFFFF),
+        bg_hover: c(0xDDE2EA),
+        border: c(0xD0D6E0),
+        text: c(0x2E3440),
+        text_dim: c(0x5E6B80),
+        accent: c(0x5E81AC),
+        on_accent: c(0xFFFFFF),
+        accent2: c(0xB48EAD),
+        pink: c(0xB48EAD),
+        amber: c(0xD08770),
+        red: c(0xBF616A),
+        green: c(0x8AA16E),
+        term_bg: c(0xF3F5F8),
+        term_fg: c(0x2E3440),
+        ansi: ansi([
+            0x3B4252, 0xBF616A, 0x6F8F55, 0xC08B30, 0x5E81AC, 0xB48EAD, 0x4C8E9E, 0x8E99AE,
+            0x4C566A, 0xBF616A, 0x8AA16E, 0xD08770, 0x81A1C1, 0xB48EAD, 0x88C0D0, 0x2E3440,
+        ]),
+    },
 ];
 
 static CURRENT: RwLock<Palette> = RwLock::new(THEMES[0]);
@@ -427,6 +777,56 @@ pub fn on_accent() -> Color32 {
     palette().on_accent
 }
 
+/// Translucent overlay of the text colour (dark) or black (light) at `alpha`.
+fn veil(alpha: f32) -> Color32 {
+    let p = palette();
+    let base = if p.dark { p.text } else { Color32::BLACK };
+    let a = if p.dark { alpha } else { alpha * 0.7 };
+    Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), (a * 255.0).round() as u8)
+}
+
+/// Sidebar background.
+pub fn side() -> Color32 {
+    palette().bg_panel
+}
+/// Cards and lists.
+pub fn surface() -> Color32 {
+    palette().bg_card
+}
+/// Fill of buttons, fields and segmented controls.
+pub fn fill() -> Color32 {
+    veil(0.09)
+}
+pub fn fill_strong() -> Color32 {
+    veil(0.15)
+}
+/// Row hover.
+pub fn hover() -> Color32 {
+    veil(0.045)
+}
+/// Hairline between rows.
+pub fn line() -> Color32 {
+    veil(0.08)
+}
+/// Selected segment.
+pub fn seg_on() -> Color32 {
+    let p = palette();
+    if p.dark {
+        lerp(p.bg_card, p.text, 0.33)
+    } else {
+        Color32::WHITE
+    }
+}
+/// Selected nav item, placeholders.
+pub fn accent_soft() -> Color32 {
+    soft(accent())
+}
+/// Tinted background for a coloured label.
+pub fn soft(c: Color32) -> Color32 {
+    let a = if palette().dark { 0.18 } else { 0.14 };
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (a * 255.0) as u8)
+}
+
 /// Group colors, picked to read on every palette.
 pub const TAG_COLORS: [[u8; 3]; 8] = [
     [242, 163, 58],
@@ -445,22 +845,33 @@ pub fn rgb(c: [u8; 3]) -> Color32 {
 
 // ------------------------------------------------------------------ type
 
-pub const SANS: &str = "plex-sans";
-pub const SANS_SEMI: &str = "plex-sans-semibold";
+pub const SANS: &str = "inter";
+pub const SANS_MEDIUM: &str = "inter-medium";
+pub const SANS_SEMI: &str = "inter-semibold";
+pub const SANS_BOLD: &str = "inter-bold";
 pub const MONO: &str = "plex-mono";
 pub const MONO_MEDIUM: &str = "plex-mono-medium";
 
-/// Registers IBM Plex (with egui's bundled fonts as fallback for symbols).
+/// Registers Inter for the UI and IBM Plex Mono for technical text (with egui's bundled
+/// fonts as fallback for symbols).
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
     for (name, bytes) in [
         (
             SANS,
-            &include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf")[..],
+            &include_bytes!("../assets/fonts/Inter-Regular.otf")[..],
+        ),
+        (
+            SANS_MEDIUM,
+            &include_bytes!("../assets/fonts/Inter-Medium.otf")[..],
         ),
         (
             SANS_SEMI,
-            &include_bytes!("../assets/fonts/IBMPlexSans-SemiBold.ttf")[..],
+            &include_bytes!("../assets/fonts/Inter-SemiBold.otf")[..],
+        ),
+        (
+            SANS_BOLD,
+            &include_bytes!("../assets/fonts/Inter-Bold.otf")[..],
         ),
         (
             MONO,
@@ -482,18 +893,21 @@ pub fn install_fonts(ctx: &egui::Context) {
         v.push("emoji-icon-font".to_owned());
         v
     };
-    fonts
-        .families
-        .insert(FontFamily::Proportional, family(&[SANS, "Ubuntu-Light"]));
+    fonts.families.insert(
+        FontFamily::Proportional,
+        family(&[SANS, "Ubuntu-Light", MONO]),
+    );
     // Hack covers box drawing and other terminal symbols Plex Mono lacks.
     fonts.families.insert(
         FontFamily::Monospace,
         family(&[MONO, "Hack", "Ubuntu-Light"]),
     );
-    fonts.families.insert(
-        FontFamily::Name(SANS_SEMI.into()),
-        family(&[SANS_SEMI, SANS, "Ubuntu-Light"]),
-    );
+    for weight in [SANS_MEDIUM, SANS_SEMI, SANS_BOLD] {
+        fonts.families.insert(
+            FontFamily::Name(weight.into()),
+            family(&[weight, SANS, "Ubuntu-Light", MONO]),
+        );
+    }
     fonts.families.insert(
         FontFamily::Name(MONO_MEDIUM.into()),
         family(&[MONO_MEDIUM, MONO, "Hack"]),
@@ -683,13 +1097,26 @@ pub fn semibold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(SANS_SEMI.into()))
 }
 
+pub fn medium(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name(SANS_MEDIUM.into()))
+}
+
+pub fn bold(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name(SANS_BOLD.into()))
+}
+
 pub fn mono_medium(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(MONO_MEDIUM.into()))
 }
 
 /// Page / dialog heading.
 pub fn heading(text: impl Into<String>, size: f32) -> RichText {
-    RichText::new(text).font(semibold(size)).color(self::text())
+    let font = if size >= 18.0 {
+        bold(size)
+    } else {
+        semibold(size)
+    };
+    RichText::new(text).font(font).color(self::text())
 }
 
 /// Technical value: address, port, fingerprint.
@@ -713,12 +1140,12 @@ pub fn apply(ctx: &egui::Context, theme_id: &str) {
     };
     v.panel_fill = p.bg_deep;
     v.window_fill = p.bg_card;
-    v.extreme_bg_color = p.bg_card;
-    v.faint_bg_color = p.bg_hover;
+    v.extreme_bg_color = fill();
+    v.faint_bg_color = hover();
     v.code_bg_color = p.term_bg;
-    v.window_stroke = Stroke::new(1.0, p.border);
-    v.window_corner_radius = CornerRadius::same(10);
-    v.menu_corner_radius = CornerRadius::same(8);
+    v.window_stroke = Stroke::new(1.0, line());
+    v.window_corner_radius = CornerRadius::same(14);
+    v.menu_corner_radius = CornerRadius::same(10);
     let shadow: u8 = if p.dark { 150 } else { 36 };
     v.window_shadow = Shadow {
         offset: [0, 16],
@@ -732,55 +1159,61 @@ pub fn apply(ctx: &egui::Context, theme_id: &str) {
         spread: 0,
         color: Color32::from_black_alpha((u16::from(shadow) * 2 / 3) as u8),
     };
-    v.selection.bg_fill = accent.linear_multiply(0.30);
-    v.selection.stroke = Stroke::new(1.0, accent);
     v.hyperlink_color = p.accent2;
     v.override_text_color = Some(p.text);
     v.text_cursor.stroke = Stroke::new(2.0, accent);
 
-    let r = CornerRadius::same(6);
+    // Filled controls without outlines, as in the design.
+    let r = CornerRadius::same(9);
     v.widgets.noninteractive.bg_fill = p.bg_card;
     v.widgets.noninteractive.weak_bg_fill = p.bg_card;
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, p.border);
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, line());
     v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, p.text);
     v.widgets.noninteractive.corner_radius = r;
-    v.widgets.inactive.bg_fill = p.bg_hover;
-    v.widgets.inactive.weak_bg_fill = p.bg_card;
-    v.widgets.inactive.bg_stroke = Stroke::new(1.0, p.border);
+    v.widgets.inactive.bg_fill = fill_strong();
+    v.widgets.inactive.weak_bg_fill = fill();
+    v.widgets.inactive.bg_stroke = Stroke::NONE;
     v.widgets.inactive.fg_stroke = Stroke::new(1.0, p.text);
     v.widgets.inactive.corner_radius = r;
-    v.widgets.hovered.bg_fill = p.bg_hover;
-    v.widgets.hovered.weak_bg_fill = p.bg_hover;
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0, p.text_dim.linear_multiply(0.6));
+    v.widgets.hovered.bg_fill = fill_strong();
+    v.widgets.hovered.weak_bg_fill = fill_strong();
+    v.widgets.hovered.bg_stroke = Stroke::NONE;
     v.widgets.hovered.fg_stroke = Stroke::new(1.5, p.text);
     v.widgets.hovered.corner_radius = r;
-    v.widgets.active.bg_fill = accent.linear_multiply(0.25);
-    v.widgets.active.weak_bg_fill = accent.linear_multiply(0.25);
-    v.widgets.active.bg_stroke = Stroke::new(1.0, accent);
+    v.widgets.hovered.expansion = 0.0;
+    v.widgets.active.bg_fill = soft(accent);
+    v.widgets.active.weak_bg_fill = fill_strong();
+    v.widgets.active.bg_stroke = Stroke::NONE;
     v.widgets.active.fg_stroke = Stroke::new(1.5, p.text);
     v.widgets.active.corner_radius = r;
+    v.widgets.active.expansion = 0.0;
     v.widgets.open = v.widgets.active;
+    v.widgets.open.weak_bg_fill = fill_strong();
+    // Focused text fields get the accent ring.
+    v.selection.bg_fill = soft(accent).gamma_multiply(1.6);
+    v.selection.stroke = Stroke::new(1.5, accent);
 
     style.spacing.item_spacing = Vec2::new(8.0, 8.0);
-    style.spacing.button_padding = Vec2::new(12.0, 5.0);
+    style.spacing.button_padding = Vec2::new(14.0, 7.0);
     style.spacing.window_margin = Margin::same(22);
-    style.spacing.interact_size.y = 30.0;
+    style.spacing.menu_margin = Margin::same(6);
+    style.spacing.interact_size.y = 32.0;
     style.spacing.text_edit_width = 260.0;
     style
         .text_styles
         .insert(egui::TextStyle::Body, FontId::proportional(14.0));
     style
         .text_styles
-        .insert(egui::TextStyle::Button, FontId::proportional(13.5));
+        .insert(egui::TextStyle::Button, medium(13.5));
     style
         .text_styles
-        .insert(egui::TextStyle::Small, FontId::proportional(11.5));
+        .insert(egui::TextStyle::Small, FontId::proportional(12.0));
     style
         .text_styles
         .insert(egui::TextStyle::Monospace, FontId::monospace(13.0));
     style
         .text_styles
-        .insert(egui::TextStyle::Heading, semibold(22.0));
+        .insert(egui::TextStyle::Heading, bold(24.0));
     ctx.set_global_style(style);
 }
 
@@ -807,41 +1240,58 @@ pub fn hash_color(s: &str) -> [u8; 3] {
 
 // ------------------------------------------------------------------ widgets
 
-/// Status LED: a small dot with a soft halo when lit.
+use crate::ui::icons::{self, Icon};
+
+/// Status dot: filled with a soft halo when online, an outline ring when not.
 pub fn led(painter: &egui::Painter, center: Pos2, color: Color32, lit: bool) {
     if lit {
-        painter.circle_filled(center, 6.0, color.linear_multiply(0.18));
+        painter.circle_filled(center, 6.0, soft(color));
+        painter.circle_filled(center, 4.0, color);
+    } else {
+        painter.circle_stroke(center, 3.6, Stroke::new(1.5, color.gamma_multiply(0.8)));
     }
-    painter.circle_filled(
-        center,
-        3.2,
-        if lit {
-            color
-        } else {
-            color.linear_multiply(0.5)
-        },
-    );
 }
 
-/// Compact outlined mono label (protocol, tag, variable).
+/// Outline dot for hosts that are offline / unknown.
+pub fn off_color() -> Color32 {
+    lerp(text_dim(), bg_deep(), 0.3)
+}
+
+/// Rounded tag ("test", "backup", "RDP"): soft fill, coloured text.
 pub fn chip(ui: &mut egui::Ui, text: &str, color: Color32) -> egui::Response {
+    tag(ui, text, Some(color))
+}
+
+/// Rounded tag; `None` = neutral grey.
+pub fn tag(ui: &mut egui::Ui, text: &str, color: Option<Color32>) -> egui::Response {
+    let fg = color.unwrap_or_else(text_dim);
+    let bg = color.map(soft).unwrap_or_else(fill);
     let galley = ui
         .painter()
-        .layout_no_wrap(text.to_string(), FontId::monospace(11.0), color);
-    let size = galley.size() + Vec2::new(10.0, 4.0);
+        .layout_no_wrap(text.to_string(), medium(12.0), fg);
+    let size = Vec2::new(galley.size().x + 18.0, 22.0);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
-    ui.painter().rect_stroke(
-        rect,
-        CornerRadius::same(3),
-        Stroke::new(1.0, color.linear_multiply(0.45)),
-        egui::StrokeKind::Inside,
-    );
+    ui.painter().rect_filled(rect, CornerRadius::same(11), bg);
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, fg);
+    resp
+}
+
+/// Uppercase environment pill (PROD, STAGING).
+pub fn pill(ui: &mut egui::Ui, text: &str, color: Color32) -> egui::Response {
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_uppercase(), bold(10.5), color);
+    let size = Vec2::new(galley.size().x + 14.0, 18.0);
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::hover());
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(5), soft(color));
     ui.painter()
         .galley(rect.center() - galley.size() / 2.0, galley, color);
     resp
 }
 
-/// Brand mark: an amber patch jack (socket ring with a pin).
+/// Brand mark: an accent tile with a ring and a pin.
 pub fn logo(ui: &mut egui::Ui, size: f32) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::hover());
     paint_logo(ui.painter(), rect);
@@ -849,66 +1299,204 @@ pub fn logo(ui: &mut egui::Ui, size: f32) -> egui::Response {
 }
 
 pub fn paint_logo(p: &egui::Painter, rect: Rect) {
-    let size = rect.width();
-    p.rect_filled(rect, CornerRadius::same((size * 0.24) as u8), accent());
+    let s = rect.width() / 34.0;
+    p.rect_filled(rect, CornerRadius::same((9.0 * s) as u8), accent());
     let c = rect.center();
-    p.circle_stroke(c, size * 0.27, Stroke::new(size * 0.09, on_accent()));
-    p.circle_filled(c, size * 0.09, on_accent());
+    p.circle_stroke(c, 8.0 * s, Stroke::new(3.2 * s, on_accent()));
+    p.circle_filled(c, 2.6 * s, on_accent());
+}
+
+/// Button look.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Btn {
+    /// Grey fill.
+    Normal,
+    /// Accent fill, for the one primary action.
+    Primary,
+    /// Smaller grey button (28 px).
+    Small,
+    /// Smaller accent button.
+    SmallPrimary,
+    /// Text only, grey until hovered ("Alle öffnen", "+ Host").
+    Link,
+}
+
+/// Filled button with optional leading icon.
+pub fn btn(ui: &mut egui::Ui, kind: Btn, icon: Option<Icon>, label: &str) -> egui::Response {
+    let text = label;
+    let ink = text_color();
+    let (h, font, radius, pad) = match kind {
+        Btn::Normal | Btn::Primary => (34.0, medium(13.5), 9, 14.0),
+        Btn::Small | Btn::SmallPrimary => (28.0, medium(13.0), 7, 12.0),
+        Btn::Link => (26.0, medium(12.5), 6, 8.0),
+    };
+    let primary = matches!(kind, Btn::Primary | Btn::SmallPrimary);
+    let font = if primary { semibold(font.size) } else { font };
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_string(), font, Color32::PLACEHOLDER);
+    let icon_w = if icon.is_some() {
+        if text.is_empty() { 15.0 } else { 21.0 }
+    } else {
+        0.0
+    };
+    let w = galley.size().x + icon_w + pad * 2.0;
+    let w = if text.is_empty() { h } else { w };
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, h), egui::Sense::click());
+    let enabled = ui.is_enabled();
+    let hot = resp.hovered() && enabled;
+    let (bg, fg) = match kind {
+        _ if primary => (
+            if hot {
+                lerp(accent(), Color32::WHITE, 0.08)
+            } else {
+                accent()
+            },
+            on_accent(),
+        ),
+        Btn::Link => (
+            if hot { hover() } else { Color32::TRANSPARENT },
+            if hot { ink } else { text_dim() },
+        ),
+        _ => (if hot { fill_strong() } else { fill() }, ink),
+    };
+    let alpha = if enabled { 1.0 } else { 0.38 };
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(radius), bg.gamma_multiply(alpha));
+    let fg = fg.gamma_multiply(alpha);
+    let mut x = if text.is_empty() {
+        rect.center().x - 7.5
+    } else {
+        rect.left() + pad
+    };
+    if let Some(icon) = icon {
+        let r = Rect::from_center_size(Pos2::new(x + 7.5, rect.center().y), Vec2::splat(15.0));
+        icons::paint(ui.painter(), r, icon, fg);
+        x += icon_w;
+    }
+    if !text.is_empty() {
+        ui.painter().galley(
+            Pos2::new(x, rect.center().y - galley.size().y / 2.0),
+            galley,
+            fg,
+        );
+    }
+    if enabled {
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        resp
+    }
+}
+
+fn text_color() -> Color32 {
+    text()
 }
 
 /// Solid accent button for the one primary action on a screen.
 pub fn primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    let galley = ui
-        .painter()
-        .layout_no_wrap(text.to_string(), semibold(13.5), on_accent());
-    let size = Vec2::new(galley.size().x + 26.0, 30.0);
-    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
-    let fill = if !ui.is_enabled() {
-        accent().linear_multiply(0.35)
-    } else if resp.hovered() {
-        lerp(accent(), Color32::WHITE, 0.12)
-    } else {
-        accent()
-    };
-    ui.painter().rect_filled(rect, CornerRadius::same(6), fill);
-    ui.painter()
-        .galley(rect.center() - galley.size() / 2.0, galley, on_accent());
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    btn(ui, Btn::Primary, None, text)
 }
 
-/// Small uppercase mono label above a section.
+/// Uppercase caption above a group ("DESIGN", "OHNE GRUPPE").
 pub fn section_title(ui: &mut egui::Ui, text: &str) {
     ui.label(
         RichText::new(spaced(&text.to_uppercase()))
-            .font(FontId::monospace(10.5))
+            .font(semibold(12.0))
             .color(text_dim()),
     );
 }
 
-/// Uppercase label text. Plex Mono is already wide enough, so no extra tracking.
+/// Adds a little letter spacing to uppercase captions.
 pub fn spaced(s: &str) -> String {
     s.to_string()
 }
 
-/// Flat surface for grouped settings / forms.
+/// Big page title with an optional count next to it.
+pub fn page_title(ui: &mut egui::Ui, title: &str, count: Option<usize>) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 10.0;
+        ui.label(RichText::new(title).font(bold(32.0)).color(text()));
+        if let Some(n) = count {
+            ui.add_space(-2.0);
+            ui.label(
+                RichText::new(n.to_string())
+                    .font(medium(15.0))
+                    .color(text_dim()),
+            );
+        }
+    });
+}
+
+/// Rounded card for lists and grouped settings.
 pub fn card_frame() -> egui::Frame {
     egui::Frame::NONE
-        .fill(bg_card())
-        .stroke(Stroke::new(1.0, border()))
-        .corner_radius(CornerRadius::same(8))
+        .fill(surface())
+        .stroke(Stroke::new(1.0, card_edge()))
+        .corner_radius(CornerRadius::same(14))
         .inner_margin(Margin::same(16))
 }
 
-/// Compact square icon button with tooltip (toolbars).
+/// Card without padding; rows bring their own.
+pub fn list_card() -> egui::Frame {
+    card_frame().inner_margin(Margin::ZERO)
+}
+
+/// Barely visible card edge (stronger on light themes).
+pub fn card_edge() -> Color32 {
+    if palette().dark {
+        Color32::from_white_alpha(13)
+    } else {
+        Color32::from_black_alpha(18)
+    }
+}
+
+/// Square icon button (32 px, rounded) with tooltip.
+pub fn icon_btn(ui: &mut egui::Ui, icon: Icon, tooltip: &str) -> egui::Response {
+    icon_toggle(ui, icon, tooltip, false)
+}
+
+/// Icon button that stays highlighted while `on`.
+pub fn icon_toggle(ui: &mut egui::Ui, icon: Icon, tooltip: &str, on: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(32.0), egui::Sense::click());
+    let enabled = ui.is_enabled();
+    let hot = resp.hovered() && enabled;
+    if on {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(9), fill_strong());
+    } else if hot {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(9), fill());
+    }
+    let color = if !enabled {
+        text_dim().gamma_multiply(0.4)
+    } else if hot || on {
+        text()
+    } else {
+        text_dim()
+    };
+    icons::paint(
+        ui.painter(),
+        Rect::from_center_size(rect.center(), Vec2::splat(17.0)),
+        icon,
+        color,
+    );
+    resp.on_hover_text(tooltip)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Icon button for a text glyph (for symbols without a line icon).
 pub fn icon_button(ui: &mut egui::Ui, glyph: &str, tooltip: &str) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(30.0), egui::Sense::click());
+    if let Some(icon) = glyph_icon(glyph) {
+        return icon_btn(ui, icon, tooltip);
+    }
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(32.0), egui::Sense::click());
     let enabled = ui.is_enabled();
     if resp.hovered() && enabled {
         ui.painter()
-            .rect_filled(rect, CornerRadius::same(6), bg_hover());
+            .rect_filled(rect, CornerRadius::same(9), fill());
     }
     let color = if !enabled {
-        text_dim().linear_multiply(0.5)
+        text_dim().gamma_multiply(0.4)
     } else if resp.hovered() {
         text()
     } else {
@@ -925,48 +1513,655 @@ pub fn icon_button(ui: &mut egui::Ui, glyph: &str, tooltip: &str) -> egui::Respo
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// Underline-style segmented control; returns the clicked index.
+/// Line icon for the glyphs the old toolbar used.
+fn glyph_icon(glyph: &str) -> Option<Icon> {
+    Some(match glyph {
+        "⚡" => Icon::Bolt,
+        "🔍" => Icon::Search,
+        "⟳" | "↻" => Icon::Refresh,
+        "🗀" | "📁" => Icon::Folder,
+        "⚙" => Icon::Gear,
+        "🔑" => Icon::Key,
+        "＋" | "+" => Icon::Plus,
+        "×" | "✕" => Icon::Close,
+        "⬆" | "↑" => Icon::Up,
+        "⤢" => Icon::Expand,
+        "⌨" => Icon::Keyboard,
+        "↗" => Icon::External,
+        "📝" => Icon::File,
+        "⊞" => Icon::Windows,
+        "📤" => Icon::Upload,
+        "📥" => Icon::Download,
+        "🗑" => Icon::Trash,
+        "📋" => Icon::Copy,
+        "↩" => Icon::Wrap,
+        "⏸" => Icon::Pause,
+        "▶" => Icon::Play,
+        "⏹" => Icon::Stop,
+        "🖥" => Icon::Monitor,
+        _ => return None,
+    })
+}
+
+/// Segmented control (grey track, raised selected segment); returns the clicked index.
 pub fn segmented(ui: &mut egui::Ui, items: &[&str], selected: usize) -> Option<usize> {
+    let font = medium(13.0);
+    let galleys: Vec<_> = items
+        .iter()
+        .map(|l| {
+            ui.painter()
+                .layout_no_wrap(l.to_string(), font.clone(), Color32::PLACEHOLDER)
+        })
+        .collect();
+    let widths: Vec<f32> = galleys.iter().map(|g| g.size().x + 28.0).collect();
+    let total = widths.iter().sum::<f32>() + 2.0 * (items.len() as f32 - 1.0) + 4.0;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(total, 32.0), egui::Sense::hover());
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(9), fill());
+    let mut x = rect.left() + 2.0;
     let mut clicked = None;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 20.0;
-        for (i, label) in items.iter().enumerate() {
-            let active = i == selected;
-            let font = if active {
-                semibold(13.0)
-            } else {
-                FontId::proportional(13.0)
-            };
-            let galley = ui.painter().layout_no_wrap(label.to_string(), font, text());
-            let (rect, resp) =
-                ui.allocate_exact_size(galley.size() + Vec2::new(0.0, 10.0), egui::Sense::click());
-            let color = if active || resp.hovered() {
-                text()
-            } else {
-                text_dim()
-            };
-            ui.painter().galley(rect.left_top(), galley, color);
-            if active {
-                let y = rect.bottom() - 1.0;
-                ui.painter().line_segment(
-                    [Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)],
-                    Stroke::new(2.0, accent()),
-                );
-            }
-            if resp
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .clicked()
-            {
-                clicked = Some(i);
-            }
+    for (i, (g, w)) in galleys.into_iter().zip(widths).enumerate() {
+        let r = Rect::from_min_size(Pos2::new(x, rect.top() + 2.0), Vec2::new(w, 28.0));
+        let resp = ui.interact(r, ui.id().with(("seg", items[i], i)), egui::Sense::click());
+        let on = i == selected;
+        if on {
+            ui.painter().rect_filled(
+                r.translate(Vec2::new(0.0, 1.0)),
+                CornerRadius::same(7),
+                Color32::from_black_alpha(if palette().dark { 70 } else { 18 }),
+            );
+            ui.painter().rect_filled(r, CornerRadius::same(7), seg_on());
+        } else if resp.hovered() {
+            ui.painter().rect_filled(r, CornerRadius::same(7), hover());
         }
-    });
+        let color = if on || resp.hovered() {
+            text()
+        } else {
+            text_dim()
+        };
+        ui.painter().galley(r.center() - g.size() / 2.0, g, color);
+        if resp
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            clicked = Some(i);
+        }
+        x += w + 2.0;
+    }
     clicked
+}
+
+/// Search field with a magnifier inside.
+pub fn search_field(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+    id: egui::Id,
+) -> egui::Response {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 34.0), egui::Sense::hover());
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(9), fill());
+    icons::paint(
+        ui.painter(),
+        Rect::from_center_size(
+            Pos2::new(rect.left() + 18.0, rect.center().y),
+            Vec2::splat(15.0),
+        ),
+        Icon::Search,
+        text_dim(),
+    );
+    let inner = Rect::from_min_max(
+        Pos2::new(rect.left() + 32.0, rect.top()),
+        Pos2::new(rect.right() - 8.0, rect.bottom()),
+    );
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(inner)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    child.add(
+        egui::TextEdit::singleline(text)
+            .id(id)
+            .hint_text(RichText::new(hint).color(text_dim()))
+            .frame(egui::Frame::NONE)
+            .font(FontId::proportional(13.5))
+            .desired_width(inner.width()),
+    )
+}
+
+/// Key cap for shortcut lists.
+pub fn kbd(ui: &mut egui::Ui, key: &str) -> egui::Response {
+    let galley = ui
+        .painter()
+        .layout_no_wrap(key.to_string(), mono_medium(12.5), text());
+    let w = (galley.size().x + 16.0).max(26.0);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 26.0), egui::Sense::hover());
+    let p = ui.painter();
+    p.rect_filled(
+        rect.translate(Vec2::new(0.0, 1.0)),
+        CornerRadius::same(7),
+        Color32::from_black_alpha(if palette().dark { 120 } else { 30 }),
+    );
+    p.rect(
+        rect,
+        CornerRadius::same(7),
+        lerp(surface(), text(), 0.1),
+        Stroke::new(1.0, line()),
+        egui::StrokeKind::Inside,
+    );
+    p.galley(rect.center() - galley.size() / 2.0, galley, text());
+    resp
+}
+
+/// Accent-tinted label for mouse gestures in shortcut lists ("Mausrad").
+pub fn gesture(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_string(), semibold(12.5), accent());
+    let (rect, resp) = ui.allocate_exact_size(
+        Vec2::new(galley.size().x + 20.0, 26.0),
+        egui::Sense::hover(),
+    );
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(7), accent_soft());
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, accent());
+    resp
 }
 
 /// Thin full-width rule.
 pub fn hairline(ui: &mut egui::Ui) {
     let (rect, _) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::ZERO, border());
+    ui.painter().rect_filled(rect, CornerRadius::ZERO, line());
+}
+
+/// Paints the background colour over the four corners of `rect`, so content drawn
+/// with square corners looks like a rounded card.
+pub fn round_corners(p: &egui::Painter, rect: Rect, radius: f32, bg: Color32) {
+    let n = 8;
+    for (corner, center, start) in [
+        (
+            rect.left_top(),
+            rect.left_top() + Vec2::splat(radius),
+            180.0f32,
+        ),
+        (
+            rect.right_top(),
+            rect.right_top() + Vec2::new(-radius, radius),
+            270.0,
+        ),
+        (
+            rect.right_bottom(),
+            rect.right_bottom() - Vec2::splat(radius),
+            0.0,
+        ),
+        (
+            rect.left_bottom(),
+            rect.left_bottom() + Vec2::new(radius, -radius),
+            90.0,
+        ),
+    ] {
+        let mut pts = vec![corner];
+        for i in 0..=n {
+            let a = (start + 90.0 * i as f32 / n as f32).to_radians();
+            pts.push(center + Vec2::new(a.cos(), a.sin()) * radius);
+        }
+        // Each wedge between the corner and the arc is convex enough to fan out.
+        for w in pts[1..].windows(2) {
+            p.add(egui::Shape::convex_polygon(
+                vec![corner, w[0], w[1]],
+                bg,
+                Stroke::NONE,
+            ));
+        }
+    }
+}
+
+/// Rounded list card: rows fill it edge to edge, the corners stay round even when a row
+/// paints a hover background. `bg` is the colour behind the card.
+pub fn card<R>(ui: &mut egui::Ui, bg: Color32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let out = list_card().show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.spacing_mut().item_spacing.y = 0.0;
+        add(ui)
+    });
+    let r = out.response.rect;
+    round_corners(ui.painter(), r, 14.0, bg);
+    ui.painter().rect_stroke(
+        r,
+        CornerRadius::same(14),
+        Stroke::new(1.0, card_edge()),
+        egui::StrokeKind::Inside,
+    );
+    out.inner
+}
+
+/// Background of a form group inside a sheet (slightly lighter than the sheet).
+pub fn group_fill() -> Color32 {
+    let p = palette();
+    if p.dark {
+        lerp(p.bg_card, p.text, 0.065)
+    } else {
+        lerp(p.bg_card, Color32::BLACK, 0.035)
+    }
+}
+
+/// Rows of a card or form group, separated by inset hairlines.
+pub struct Rows {
+    n: usize,
+    /// Left inset of the hairlines and the row padding.
+    pad: f32,
+    /// Label column width for form rows.
+    label_w: f32,
+}
+
+impl Rows {
+    fn divider(&mut self, ui: &mut egui::Ui) {
+        if self.n > 0 {
+            // End at the width the rows really use (the frame is drawn around that).
+            let r = ui.min_rect();
+            let y = ui.cursor().top();
+            ui.painter().line_segment(
+                [Pos2::new(r.left() + self.pad, y), Pos2::new(r.right(), y)],
+                Stroke::new(1.0, line()),
+            );
+        }
+        self.n += 1;
+    }
+
+    /// Settings row: label (and optional help text) left, control right.
+    pub fn setting(
+        &mut self,
+        ui: &mut egui::Ui,
+        label: &str,
+        help: Option<&str>,
+        add: impl FnOnce(&mut egui::Ui),
+    ) {
+        self.divider(ui);
+        let w = ui.available_width();
+        let pad = self.pad;
+        ui.allocate_ui_with_layout(
+            Vec2::new(w, 52.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_size(Vec2::new(w, 52.0));
+                ui.add_space(pad);
+                // Centre the label block vertically in the 52 px row.
+                let text_w = (w * 0.55).max(200.0);
+                let mut h = ui
+                    .painter()
+                    .layout(
+                        label.to_string(),
+                        FontId::proportional(14.5),
+                        text(),
+                        text_w,
+                    )
+                    .size()
+                    .y;
+                if let Some(help) = help {
+                    h += 2.0
+                        + ui.painter()
+                            .layout(help.to_string(), FontId::proportional(12.5), text(), text_w)
+                            .size()
+                            .y;
+                }
+                let top = ((52.0 - h) / 2.0).max(8.0);
+                ui.vertical(|ui| {
+                    ui.set_max_width(text_w);
+                    ui.add_space(top);
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.add(egui::Label::new(RichText::new(label).size(14.5).color(text())).wrap());
+                    if let Some(h) = help {
+                        ui.add(
+                            egui::Label::new(RichText::new(h).size(12.5).color(text_dim())).wrap(),
+                        );
+                    }
+                    ui.add_space(top);
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(pad);
+                    add(ui);
+                });
+            },
+        );
+    }
+
+    /// Free-form row with the usual padding.
+    pub fn full(&mut self, ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+        self.divider(ui);
+        let pad = self.pad as i8;
+        egui::Frame::NONE
+            .inner_margin(Margin::symmetric(pad, 12))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                add(ui)
+            });
+    }
+
+    /// Form row with a switch on the right ("In Favoriten anzeigen").
+    pub fn switch(&mut self, ui: &mut egui::Ui, label: &str, on: &mut bool) -> egui::Response {
+        self.divider(ui);
+        let (row, _) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), egui::Sense::hover());
+        ui.painter().text(
+            Pos2::new(row.left() + self.pad, row.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            FontId::proportional(14.0),
+            text(),
+        );
+        let r = Rect::from_center_size(
+            Pos2::new(row.right() - self.pad - 19.0, row.center().y),
+            Vec2::new(46.0, 28.0),
+        );
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(r)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        toggle(&mut child, on)
+    }
+
+    /// Form row: fixed-width label, frameless control filling the rest (44 px high).
+    pub fn field(&mut self, ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+        self.divider(ui);
+        let (row, _) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), egui::Sense::hover());
+        ui.painter().text(
+            Pos2::new(row.left() + self.pad, row.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            FontId::proportional(14.0),
+            text(),
+        );
+        // The control gets exactly the rest of the row, so it can never widen the form.
+        let rest = Rect::from_min_max(
+            Pos2::new(row.left() + self.pad + self.label_w + 8.0, row.top()),
+            Pos2::new(row.right() - self.pad + 4.0, row.bottom()),
+        );
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rest)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        frameless(&mut child);
+        add(&mut child);
+    }
+}
+
+/// Text fields and combo boxes without a frame (inside form rows).
+pub fn frameless(ui: &mut egui::Ui) {
+    let v = &mut ui.style_mut().visuals;
+    v.extreme_bg_color = Color32::TRANSPARENT;
+    v.widgets.inactive.bg_stroke = Stroke::NONE;
+    v.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+    v.widgets.hovered.bg_stroke = Stroke::NONE;
+    v.widgets.hovered.weak_bg_fill = hover();
+    v.widgets.active.bg_stroke = Stroke::NONE;
+    v.selection.stroke = Stroke::NONE;
+}
+
+/// Settings card: rounded surface with rows.
+pub fn settings_card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui, &mut Rows) -> R) -> R {
+    card(ui, bg_deep(), |ui| {
+        let mut rows = Rows {
+            n: 0,
+            pad: 18.0,
+            label_w: 120.0,
+        };
+        add(ui, &mut rows)
+    })
+}
+
+/// Form group inside a sheet; `label_w` is the label column.
+pub fn form<R>(
+    ui: &mut egui::Ui,
+    label_w: f32,
+    add: impl FnOnce(&mut egui::Ui, &mut Rows) -> R,
+) -> R {
+    let bg = ui.style().visuals.window_fill;
+    let out = egui::Frame::NONE
+        .fill(group_fill())
+        .corner_radius(CornerRadius::same(12))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let mut rows = Rows {
+                n: 0,
+                pad: 14.0,
+                label_w,
+            };
+            add(ui, &mut rows)
+        });
+    round_corners(ui.painter(), out.response.rect, 12.0, bg);
+    out.inner
+}
+
+/// iOS-style switch.
+pub fn toggle(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
+    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(46.0, 28.0), egui::Sense::click());
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    let t = ui.ctx().animate_bool_responsive(resp.id, *on);
+    let off = if palette().dark {
+        lerp(surface(), text(), 0.2)
+    } else {
+        lerp(surface(), Color32::BLACK, 0.12)
+    };
+    let track = lerp(off, accent(), t);
+    let p = ui.painter();
+    p.rect_filled(rect, CornerRadius::same(14), track);
+    let x = egui::lerp(rect.left() + 14.0..=rect.right() - 14.0, t);
+    let c = Pos2::new(x, rect.center().y);
+    p.circle_filled(c + Vec2::new(0.0, 1.0), 12.0, Color32::from_black_alpha(50));
+    p.circle_filled(c, 12.0, Color32::WHITE);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Round × button in a sheet header.
+pub fn close_button(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(30.0), egui::Sense::click());
+    ui.painter().circle_filled(
+        rect.center(),
+        15.0,
+        if resp.hovered() {
+            fill_strong()
+        } else {
+            fill()
+        },
+    );
+    icons::paint_weighted(
+        ui.painter(),
+        Rect::from_center_size(rect.center(), Vec2::splat(11.0)),
+        Icon::Close,
+        text(),
+        3.0,
+    );
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Sheet (modal dialog): title with a round close button, scrollable body, footer row.
+/// Returns the footer's result and whether the sheet was dismissed (× or Esc).
+pub fn sheet<B, F>(
+    ctx: &egui::Context,
+    id: egui::Id,
+    width: f32,
+    title: &str,
+    body: impl FnOnce(&mut egui::Ui) -> B,
+    footer: impl FnOnce(&mut egui::Ui, B) -> F,
+) -> (F, bool) {
+    let mut dismissed = false;
+    let frame = egui::Frame::NONE
+        .fill(surface())
+        .corner_radius(CornerRadius::same(18))
+        .stroke(Stroke::new(1.0, line()))
+        .shadow(Shadow {
+            offset: [0, 24],
+            blur: 70,
+            spread: 0,
+            color: Color32::from_black_alpha(if palette().dark { 115 } else { 40 }),
+        });
+    let out = egui::Modal::new(id)
+        .frame(frame)
+        .backdrop_color(Color32::from_black_alpha(if palette().dark {
+            150
+        } else {
+            70
+        }))
+        .show(ctx, |ui| {
+            ui.set_width(width);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            egui::Frame::NONE
+                .inner_margin(Margin {
+                    left: 20,
+                    right: 18,
+                    top: 18,
+                    bottom: 14,
+                })
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(title).font(bold(20.0)).color(text()));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if close_button(ui).clicked() {
+                                dismissed = true;
+                            }
+                        });
+                    });
+                });
+            let max_h = (ctx.content_rect().height() * 0.72).max(200.0);
+            let b = egui::ScrollArea::vertical()
+                .id_salt(id.with("body"))
+                .max_height(max_h)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    egui::Frame::NONE
+                        .inner_margin(Margin {
+                            left: 20,
+                            right: 20,
+                            top: 0,
+                            bottom: 18,
+                        })
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 8.0;
+                            body(ui)
+                        })
+                        .inner
+                })
+                .inner;
+            let r = ui.max_rect();
+            let y = ui.cursor().top();
+            ui.painter().line_segment(
+                [Pos2::new(r.left(), y), Pos2::new(r.right(), y)],
+                Stroke::new(1.0, line()),
+            );
+            egui::Frame::NONE
+                .inner_margin(Margin::symmetric(20, 14))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.spacing_mut().item_spacing.x = 10.0;
+                            footer(ui, b)
+                        })
+                        .inner
+                    })
+                    .inner
+                })
+                .inner
+        });
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        dismissed = true;
+    }
+    (out.inner, dismissed)
+}
+
+/// Caption above a form group inside a sheet.
+pub fn form_caption(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(14.0);
+    ui.horizontal(|ui| {
+        ui.add_space(14.0);
+        section_title(ui, text);
+    });
+    ui.add_space(2.0);
+}
+
+/// Frame of small dialogs (same look as a sheet, with padding).
+pub fn dialog_frame() -> egui::Frame {
+    egui::Frame::NONE
+        .fill(surface())
+        .corner_radius(CornerRadius::same(18))
+        .stroke(Stroke::new(1.0, line()))
+        .inner_margin(Margin::same(22))
+        .shadow(Shadow {
+            offset: [0, 24],
+            blur: 70,
+            spread: 0,
+            color: Color32::from_black_alpha(if palette().dark { 115 } else { 40 }),
+        })
+}
+
+/// Dimmed background behind dialogs.
+pub fn backdrop() -> Color32 {
+    Color32::from_black_alpha(if palette().dark { 150 } else { 70 })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn luminance(c: Color32) -> f32 {
+        let f = |v: u8| {
+            let v = v as f32 / 255.0;
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * f(c.r()) + 0.7152 * f(c.g()) + 0.0722 * f(c.b())
+    }
+
+    fn contrast(a: Color32, b: Color32) -> f32 {
+        let (la, lb) = (luminance(a), luminance(b));
+        (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+    }
+
+    #[test]
+    fn theme_ids_are_unique() {
+        for (i, a) in THEMES.iter().enumerate() {
+            assert!(
+                THEMES[i + 1..]
+                    .iter()
+                    .all(|b| b.id != a.id && b.name != a.name),
+                "{}",
+                a.id
+            );
+        }
+    }
+
+    #[test]
+    fn themes_are_readable() {
+        let mut bad = Vec::new();
+        for t in THEMES {
+            let checks = [
+                ("text", contrast(t.text, t.bg_deep), 7.0),
+                ("text on card", contrast(t.text, t.bg_card), 7.0),
+                ("dim", contrast(t.text_dim, t.bg_card), 3.5),
+                ("terminal", contrast(t.term_fg, t.term_bg), 4.5),
+                ("accent label", contrast(t.on_accent, t.accent), 2.5),
+            ];
+            for (what, got, min) in checks {
+                if got < min {
+                    bad.push(format!("{} {what}: {got:.2} < {min}", t.id));
+                }
+            }
+            if t.dark != (luminance(t.bg_deep) < 0.2) {
+                bad.push(format!("{} dark flag", t.id));
+            }
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
 }

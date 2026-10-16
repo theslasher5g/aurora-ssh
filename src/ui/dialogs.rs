@@ -14,7 +14,6 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     danger(app, ctx);
     key_setup(app, ctx);
     scan(app, ctx);
-    shortcuts(app, ctx);
     tour(app, ctx);
 }
 
@@ -30,46 +29,52 @@ fn danger(app: &mut App, ctx: &egui::Context) {
         .map(|t| (t.title.clone(), t.env))
         .unwrap_or_default();
     let mut answer = None;
-    egui::Modal::new(egui::Id::new("danger")).show(ctx, |ui| {
-        ui.set_width(460.0);
-        ui.horizontal(|ui| {
-            if host.1 != crate::model::Env::None {
-                env_badge(ui, host.1);
-            }
-            ui.label(theme::heading(
-                t!("Wirklich auf {} ausführen?", host.0),
-                19.0,
-            ));
-        });
-        ui.label(
-            RichText::new(t!("Dieser Befehl {}.", crate::i18n::tr(why))).color(theme::text_dim()),
-        );
-        ui.add_space(8.0);
-        theme::card_frame().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(theme::mono(&cmd, 13.5).color(theme::red()));
-        });
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add(
-                        egui::Button::new(RichText::new(t!("Ausführen")).color(theme::bg_deep()))
-                            .fill(theme::red()),
-                    )
-                    .clicked()
-                {
-                    answer = Some(true);
+    egui::Modal::new(egui::Id::new("danger"))
+        .frame(crate::theme::dialog_frame())
+        .backdrop_color(crate::theme::backdrop())
+        .show(ctx, |ui| {
+            ui.set_width(460.0);
+            ui.horizontal(|ui| {
+                if host.1 != crate::model::Env::None {
+                    env_badge(ui, host.1);
                 }
-                if theme::primary_button(ui, t!("Abbrechen")).clicked() {
-                    answer = Some(false);
-                }
+                ui.label(theme::heading(
+                    t!("Wirklich auf {} ausführen?", host.0),
+                    19.0,
+                ));
             });
+            ui.label(
+                RichText::new(t!("Dieser Befehl {}.", crate::i18n::tr(why)))
+                    .color(theme::text_dim()),
+            );
+            ui.add_space(8.0);
+            theme::card_frame().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(theme::mono(&cmd, 13.5).color(theme::red()));
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new(t!("Ausführen")).color(theme::bg_deep()),
+                            )
+                            .fill(theme::red()),
+                        )
+                        .clicked()
+                    {
+                        answer = Some(true);
+                    }
+                    if theme::primary_button(ui, t!("Abbrechen")).clicked() {
+                        answer = Some(false);
+                    }
+                });
+            });
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                answer = Some(false);
+            }
         });
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            answer = Some(false);
-        }
-    });
     if let Some(run) = answer {
         app.danger = None;
         // Give the keyboard back to the terminal (next frame).
@@ -82,63 +87,7 @@ fn danger(app: &mut App, ctx: &egui::Context) {
 
 /// Small coloured environment label (PROD, STAGING …).
 pub fn env_badge(ui: &mut egui::Ui, env: crate::model::Env) {
-    let color = theme::env_color(env);
-    let text = env.label();
-    let galley =
-        ui.painter()
-            .layout_no_wrap(text.into(), egui::FontId::monospace(10.5), theme::bg_deep());
-    let (rect, _) =
-        ui.allocate_exact_size(galley.size() + Vec2::new(10.0, 4.0), egui::Sense::hover());
-    ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(4), color);
-    ui.painter()
-        .galley(rect.min + Vec2::new(5.0, 2.0), galley, theme::bg_deep());
-}
-
-const SHORTCUTS: &[(&str, &str)] = &[
-    ("Ctrl+K", "Suchen, Befehle, user@host verbinden"),
-    ("Ctrl+1 … 9", "Zu Session 1 … 9 wechseln"),
-    ("Ctrl+0", "Startseite"),
-    ("Ctrl+Tab", "Nächste Session"),
-    ("Ctrl+Shift+W", "Session schließen"),
-    ("Ctrl+Shift+F", "Im Terminal suchen"),
-    ("Ctrl+Mausrad", "Schriftgröße des Terminals"),
-    ("Ctrl+Shift+C / V", "Kopieren / Einfügen im Terminal"),
-    ("Enter", "Getrennte Session neu verbinden"),
-    ("Doppelklick Kopf", "Pane im Splitscreen maximieren"),
-    ("Port ziehen", "Session neben eine andere legen"),
-    ("Mittelklick Port", "Session schließen"),
-    ("F1  oder  ?", "Diese Übersicht"),
-];
-
-fn shortcuts(app: &mut App, ctx: &egui::Context) {
-    if !app.show_shortcuts {
-        return;
-    }
-    let modal = egui::Modal::new(egui::Id::new("shortcuts")).show(ctx, |ui| {
-        ui.set_width(460.0);
-        ui.label(theme::heading(t!("Tastenkürzel"), 20.0));
-        ui.add_space(8.0);
-        egui::Grid::new("shortcut-grid")
-            .num_columns(2)
-            .spacing([18.0, 8.0])
-            .show(ui, |ui| {
-                for (keys, what) in SHORTCUTS {
-                    ui.label(theme::mono(crate::i18n::tr(keys), 12.5).color(theme::accent()));
-                    ui.label(RichText::new(crate::i18n::tr(what)).size(13.0));
-                    ui.end_row();
-                }
-            });
-        ui.add_space(10.0);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button(t!("Schließen")).clicked() {
-                app.show_shortcuts = false;
-            }
-        });
-    });
-    if modal.should_close() {
-        app.show_shortcuts = false;
-    }
+    theme::pill(ui, env.label(), theme::env_color(env));
 }
 
 const TOUR: &[(&str, &str, &str)] = &[
@@ -176,69 +125,72 @@ fn tour(app: &mut App, ctx: &egui::Context) {
     let mut done = false;
     let mut next = false;
     let mut action = None;
-    egui::Modal::new(egui::Id::new("tour")).show(ctx, |ui| {
-        ui.set_width(440.0);
-        // Step dots
-        ui.horizontal(|ui| {
-            for i in 0..TOUR.len() {
-                let (r, _) = ui.allocate_exact_size(
-                    Vec2::new(if i == step { 22.0 } else { 8.0 }, 8.0),
-                    egui::Sense::hover(),
-                );
-                ui.painter().rect_filled(
-                    r,
-                    egui::CornerRadius::same(4),
-                    if i == step {
-                        theme::accent()
-                    } else {
-                        theme::border()
-                    },
-                );
-            }
-        });
-        ui.add_space(10.0);
-        ui.label(theme::heading(title, 21.0));
-        ui.add_space(4.0);
-        ui.label(RichText::new(body).size(14.0).color(theme::text_dim()));
-        ui.add_space(14.0);
-        if step == 0 {
+    egui::Modal::new(egui::Id::new("tour"))
+        .frame(crate::theme::dialog_frame())
+        .backdrop_color(crate::theme::backdrop())
+        .show(ctx, |ui| {
+            ui.set_width(440.0);
+            // Step dots
             ui.horizontal(|ui| {
-                if ui.button(t!("SSH-Host anlegen")).clicked() {
-                    action = Some(crate::app::Action::NewHostOf(
-                        crate::model::Protocol::Ssh,
-                        None,
-                    ));
-                    next = true;
-                }
-                if !crate::app::ssh_config_hosts().is_empty()
-                    && ui.button(t!("Aus ~/.ssh/config importieren")).clicked()
-                {
-                    action = Some(crate::app::Action::ImportSshConfig);
-                    next = true;
+                for i in 0..TOUR.len() {
+                    let (r, _) = ui.allocate_exact_size(
+                        Vec2::new(if i == step { 22.0 } else { 8.0 }, 8.0),
+                        egui::Sense::hover(),
+                    );
+                    ui.painter().rect_filled(
+                        r,
+                        egui::CornerRadius::same(4),
+                        if i == step {
+                            theme::accent()
+                        } else {
+                            theme::border()
+                        },
+                    );
                 }
             });
-            ui.add_space(8.0);
-        }
-        ui.horizontal(|ui| {
-            if ui.button(t!("Überspringen")).clicked() {
-                done = true;
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let last = step + 1 == TOUR.len();
-                let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-                if theme::primary_button(ui, if last { t!("Los geht's") } else { t!("Weiter") })
-                    .clicked()
-                    || enter
-                {
-                    if last {
-                        done = true;
-                    } else {
+            ui.add_space(10.0);
+            ui.label(theme::heading(title, 21.0));
+            ui.add_space(4.0);
+            ui.label(RichText::new(body).size(14.0).color(theme::text_dim()));
+            ui.add_space(14.0);
+            if step == 0 {
+                ui.horizontal(|ui| {
+                    if ui.button(t!("SSH-Host anlegen")).clicked() {
+                        action = Some(crate::app::Action::NewHostOf(
+                            crate::model::Protocol::Ssh,
+                            None,
+                        ));
                         next = true;
                     }
+                    if !crate::app::ssh_config_hosts().is_empty()
+                        && ui.button(t!("Aus ~/.ssh/config importieren")).clicked()
+                    {
+                        action = Some(crate::app::Action::ImportSshConfig);
+                        next = true;
+                    }
+                });
+                ui.add_space(8.0);
+            }
+            ui.horizontal(|ui| {
+                if ui.button(t!("Überspringen")).clicked() {
+                    done = true;
                 }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let last = step + 1 == TOUR.len();
+                    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if theme::primary_button(ui, if last { t!("Los geht's") } else { t!("Weiter") })
+                        .clicked()
+                        || enter
+                    {
+                        if last {
+                            done = true;
+                        } else {
+                            next = true;
+                        }
+                    }
+                });
             });
         });
-    });
     if next {
         app.tour_step = step + 1;
     }
@@ -257,7 +209,9 @@ fn hostkey(app: &mut App, ctx: &egui::Context) {
     };
     let changed = p.previous.is_some();
     let mut answer: Option<(bool, bool)> = None; // (accept, remember)
-    egui::Modal::new(egui::Id::new("hostkey")).show(ctx, |ui| {
+    egui::Modal::new(egui::Id::new("hostkey")).frame(crate::theme::dialog_frame())
+        .backdrop_color(crate::theme::backdrop())
+        .show(ctx, |ui| {
         ui.set_width(500.0);
         if changed {
             ui.label(theme::heading(t!("Server-Schlüssel geändert"), 20.0).color(theme::red()));
@@ -318,48 +272,51 @@ fn password(app: &mut App, ctx: &egui::Context) {
     let Some(pp) = app.password_prompt.as_mut() else {
         return;
     };
-    egui::Modal::new(egui::Id::new("password")).show(ctx, |ui| {
-        ui.set_width(400.0);
-        ui.label(theme::heading(t!("Passwort"), 20.0));
-        ui.label(
-            theme::mono(
-                format!("{user}@{}:{}", pp.host.hostname, pp.host.port),
-                13.0,
-            )
-            .color(theme::text_dim()),
-        );
-        ui.add_space(8.0);
-        let r = ui.add(
-            egui::TextEdit::singleline(&mut pp.password)
-                .password(true)
-                .hint_text(t!("Passwort"))
-                .font(egui::FontId::monospace(14.0))
-                .margin(egui::Margin::symmetric(10, 8))
-                .desired_width(f32::INFINITY),
-        );
-        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-            submit = true;
-        } else {
-            r.request_focus();
-        }
-        if in_library {
-            ui.checkbox(&mut pp.save, t!("Im Keychain speichern"));
-        }
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if theme::primary_button(ui, t!("Verbinden")).clicked() {
-                    submit = true;
-                }
-                if ui.button(t!("Abbrechen")).clicked() {
-                    cancel = true;
-                }
+    egui::Modal::new(egui::Id::new("password"))
+        .frame(crate::theme::dialog_frame())
+        .backdrop_color(crate::theme::backdrop())
+        .show(ctx, |ui| {
+            ui.set_width(400.0);
+            ui.label(theme::heading(t!("Passwort"), 20.0));
+            ui.label(
+                theme::mono(
+                    format!("{user}@{}:{}", pp.host.hostname, pp.host.port),
+                    13.0,
+                )
+                .color(theme::text_dim()),
+            );
+            ui.add_space(8.0);
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut pp.password)
+                    .password(true)
+                    .hint_text(t!("Passwort"))
+                    .font(egui::FontId::monospace(14.0))
+                    .margin(egui::Margin::symmetric(10, 8))
+                    .desired_width(f32::INFINITY),
+            );
+            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                submit = true;
+            } else {
+                r.request_focus();
+            }
+            if in_library {
+                ui.checkbox(&mut pp.save, t!("Im Keychain speichern"));
+            }
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if theme::primary_button(ui, t!("Verbinden")).clicked() {
+                        submit = true;
+                    }
+                    if ui.button(t!("Abbrechen")).clicked() {
+                        cancel = true;
+                    }
+                });
             });
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                cancel = true;
+            }
         });
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            cancel = true;
-        }
-    });
     if cancel {
         if let Some(Purpose::Tunnel(tid)) = app.password_prompt.as_ref().map(|p| p.purpose) {
             app.tunnels.remove(&tid);
@@ -389,65 +346,70 @@ fn snippet_vars(app: &mut App, ctx: &egui::Context) {
         return;
     };
     let (mut submit, mut cancel) = (false, false);
-    egui::Modal::new(egui::Id::new("snippet-vars")).show(ctx, |ui| {
-        ui.set_width(440.0);
-        ui.label(theme::heading(run.snippet.name.clone(), 20.0));
-        ui.label(RichText::new(t!("Werte für die Platzhalter eingeben")).color(theme::text_dim()));
-        ui.add_space(6.0);
-        egui::Grid::new("vars")
-            .num_columns(2)
-            .spacing([12.0, 8.0])
-            .show(ui, |ui| {
-                for (i, (name, value)) in run.values.iter_mut().enumerate() {
-                    ui.label(
-                        RichText::new(format!("{{{{{name}}}}}"))
-                            .monospace()
-                            .color(theme::accent2()),
-                    );
-                    let r = ui.add(egui::TextEdit::singleline(value).desired_width(260.0));
-                    if i == 0 && !ui.memory(|m| m.focused().is_some()) {
-                        r.request_focus();
+    egui::Modal::new(egui::Id::new("snippet-vars"))
+        .frame(crate::theme::dialog_frame())
+        .backdrop_color(crate::theme::backdrop())
+        .show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.label(theme::heading(run.snippet.name.clone(), 20.0));
+            ui.label(
+                RichText::new(t!("Werte für die Platzhalter eingeben")).color(theme::text_dim()),
+            );
+            ui.add_space(6.0);
+            egui::Grid::new("vars")
+                .num_columns(2)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    for (i, (name, value)) in run.values.iter_mut().enumerate() {
+                        ui.label(
+                            RichText::new(format!("{{{{{name}}}}}"))
+                                .monospace()
+                                .color(theme::accent2()),
+                        );
+                        let r = ui.add(egui::TextEdit::singleline(value).desired_width(260.0));
+                        if i == 0 && !ui.memory(|m| m.focused().is_some()) {
+                            r.request_focus();
+                        }
+                        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            submit = true;
+                        }
+                        ui.end_row();
                     }
-                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                });
+            let values = run.values.iter().cloned().collect();
+            let preview = run.snippet.render(&values);
+            egui::Frame::NONE
+                .fill(theme::bg_deep())
+                .corner_radius(egui::CornerRadius::same(8))
+                .inner_margin(egui::Margin::same(10))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new(preview).monospace().color(theme::accent()));
+                });
+            ui.add_space(Vec2::splat(4.0).y);
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if theme::primary_button(
+                        ui,
+                        if run.all {
+                            t!("▶ In allen ausführen")
+                        } else {
+                            t!("▶ Ausführen")
+                        },
+                    )
+                    .clicked()
+                    {
                         submit = true;
                     }
-                    ui.end_row();
-                }
+                    if ui.button(t!("Abbrechen")).clicked() {
+                        cancel = true;
+                    }
+                });
             });
-        let values = run.values.iter().cloned().collect();
-        let preview = run.snippet.render(&values);
-        egui::Frame::NONE
-            .fill(theme::bg_deep())
-            .corner_radius(egui::CornerRadius::same(8))
-            .inner_margin(egui::Margin::same(10))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(RichText::new(preview).monospace().color(theme::accent()));
-            });
-        ui.add_space(Vec2::splat(4.0).y);
-        ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if theme::primary_button(
-                    ui,
-                    if run.all {
-                        t!("▶ In allen ausführen")
-                    } else {
-                        t!("▶ Ausführen")
-                    },
-                )
-                .clicked()
-                {
-                    submit = true;
-                }
-                if ui.button(t!("Abbrechen")).clicked() {
-                    cancel = true;
-                }
-            });
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                cancel = true;
+            }
         });
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            cancel = true;
-        }
-    });
     if cancel {
         app.snippet_run = None;
     } else if submit && let Some(run) = app.snippet_run.take() {
@@ -463,31 +425,34 @@ fn confirm(app: &mut App, ctx: &egui::Context) {
     };
     let text = text.clone();
     let mut answer = None;
-    egui::Modal::new(egui::Id::new("confirm")).show(ctx, |ui| {
-        ui.set_width(380.0);
-        ui.label(theme::heading(t!("Wirklich löschen?"), 20.0));
-        ui.label(RichText::new(text).color(theme::text_dim()));
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add(
-                        egui::Button::new(RichText::new(t!("Löschen")).color(theme::bg_deep()))
-                            .fill(theme::red()),
-                    )
-                    .clicked()
-                {
-                    answer = Some(true);
-                }
-                if ui.button(t!("Abbrechen")).clicked() {
-                    answer = Some(false);
-                }
+    egui::Modal::new(egui::Id::new("confirm"))
+        .frame(crate::theme::dialog_frame())
+        .backdrop_color(crate::theme::backdrop())
+        .show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.label(theme::heading(t!("Wirklich löschen?"), 20.0));
+            ui.label(RichText::new(text).color(theme::text_dim()));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new(t!("Löschen")).color(theme::bg_deep()))
+                                .fill(theme::red()),
+                        )
+                        .clicked()
+                    {
+                        answer = Some(true);
+                    }
+                    if ui.button(t!("Abbrechen")).clicked() {
+                        answer = Some(false);
+                    }
+                });
             });
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                answer = Some(false);
+            }
         });
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            answer = Some(false);
-        }
-    });
     if let Some(yes) = answer
         && let Some((_, action)) = app.confirm_delete.take()
         && yes
@@ -516,72 +481,75 @@ fn key_setup(app: &mut App, ctx: &egui::Context) {
     let mut start = false;
     let mut close = false;
     let ks = app.key_setup.as_mut().expect("checked above");
-    egui::Modal::new(egui::Id::new("key-setup")).show(ctx, |ui| {
-        ui.set_width(460.0);
-        ui.label(theme::heading(t!("SSH-Key für {}", host), 20.0));
-        ui.label(
-            RichText::new(t!(
-                "Aurora meldet sich einmal mit Passwort an, legt den öffentlichen Schlüssel in \
+    egui::Modal::new(egui::Id::new("key-setup"))
+        .frame(crate::theme::dialog_frame())
+        .backdrop_color(crate::theme::backdrop())
+        .show(ctx, |ui| {
+            ui.set_width(460.0);
+            ui.label(theme::heading(t!("SSH-Key für {}", host), 20.0));
+            ui.label(
+                RichText::new(t!(
+                    "Aurora meldet sich einmal mit Passwort an, legt den öffentlichen Schlüssel in \
                  ~/.ssh/authorized_keys ab und prüft danach die Anmeldung per Key."
-            ))
-            .color(theme::text_dim()),
-        );
-        ui.add_space(10.0);
-        ui.add_enabled_ui(!ks.running, |ui| {
-            ui.radio_value(
-                &mut ks.identity,
-                None,
-                t!("Neuen Ed25519-Schlüssel erzeugen (empfohlen)"),
+                ))
+                .color(theme::text_dim()),
             );
-            for (id, label) in &keys {
-                let label = if label.is_empty() {
-                    t!("(ohne Namen)")
-                } else {
-                    label
-                };
+            ui.add_space(10.0);
+            ui.add_enabled_ui(!ks.running, |ui| {
                 ui.radio_value(
                     &mut ks.identity,
-                    Some(*id),
-                    t!("Vorhandenen Schlüssel: {}", label),
+                    None,
+                    t!("Neuen Ed25519-Schlüssel erzeugen (empfohlen)"),
                 );
-            }
-            ui.add_space(8.0);
-            ui.label(RichText::new(t!("Passwort für diese eine Anmeldung")).size(12.5));
-            let r = ui.add(
-                egui::TextEdit::singleline(&mut ks.password)
-                    .password(true)
-                    .desired_width(f32::INFINITY),
-            );
-            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                start = true;
-            }
-        });
-        if let Some(e) = &ks.error {
-            ui.add_space(6.0);
-            ui.label(RichText::new(e).color(theme::red()));
-        }
-        ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            if ks.running {
-                ui.spinner();
-                ui.label(RichText::new(t!("Richte ein…")).color(theme::text_dim()));
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add_enabled(
-                        !ks.running,
-                        egui::Button::new(RichText::new(t!("Einrichten")).strong()),
-                    )
-                    .clicked()
-                {
+                for (id, label) in &keys {
+                    let label = if label.is_empty() {
+                        t!("(ohne Namen)")
+                    } else {
+                        label
+                    };
+                    ui.radio_value(
+                        &mut ks.identity,
+                        Some(*id),
+                        t!("Vorhandenen Schlüssel: {}", label),
+                    );
+                }
+                ui.add_space(8.0);
+                ui.label(RichText::new(t!("Passwort für diese eine Anmeldung")).size(12.5));
+                let r = ui.add(
+                    egui::TextEdit::singleline(&mut ks.password)
+                        .password(true)
+                        .desired_width(f32::INFINITY),
+                );
+                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     start = true;
                 }
-                if ui.button(t!("Abbrechen")).clicked() {
-                    close = true;
+            });
+            if let Some(e) = &ks.error {
+                ui.add_space(6.0);
+                ui.label(RichText::new(e).color(theme::red()));
+            }
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ks.running {
+                    ui.spinner();
+                    ui.label(RichText::new(t!("Richte ein…")).color(theme::text_dim()));
                 }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add_enabled(
+                            !ks.running,
+                            egui::Button::new(RichText::new(t!("Einrichten")).strong()),
+                        )
+                        .clicked()
+                    {
+                        start = true;
+                    }
+                    if ui.button(t!("Abbrechen")).clicked() {
+                        close = true;
+                    }
+                });
             });
         });
-    });
     if close {
         app.key_setup = None;
     } else if start && !app.key_setup.as_ref().is_some_and(|k| k.running) {
@@ -604,7 +572,9 @@ fn scan(app: &mut App, ctx: &egui::Context) {
     let mut close = false;
     let mut import = false;
     let sc = app.scan.as_mut().expect("checked above");
-    let modal = egui::Modal::new(egui::Id::new("scan")).show(ctx, |ui| {
+    let modal = egui::Modal::new(egui::Id::new("scan")).frame(crate::theme::dialog_frame())
+        .backdrop_color(crate::theme::backdrop())
+        .show(ctx, |ui| {
         ui.set_width(560.0);
         ui.label(theme::heading(t!("Netz durchsuchen"), 20.0));
         ui.label(

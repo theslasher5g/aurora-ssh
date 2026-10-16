@@ -8,10 +8,11 @@ use crate::app::{Action, App, ConnState, TabKind, parse_quick};
 use crate::backend::reach::Reach;
 use crate::model::{Host, Protocol};
 use crate::theme;
+use crate::ui::icons::{self, Icon};
 use crate::ui::{fuzzy, relative_time};
 
-const ROW_H: f32 = 44.0;
-const ROW_H_COMPACT: f32 = 32.0;
+const ROW_H: f32 = 66.0;
+const ROW_H_COMPACT: f32 = 44.0;
 
 /// Visible host order of the last frame, for Shift+click ranges.
 pub fn order_id() -> egui::Id {
@@ -59,11 +60,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     // Header: title, search/quick connect, primary action.
     let mut enter = false;
     ui.horizontal(|ui| {
-        ui.label(theme::heading(t!("Verbindungen"), 24.0));
-        ui.label(theme::mono(app.lib.hosts.len().to_string(), 13.0).color(theme::text_dim()));
+        theme::page_title(ui, t!("Verbindungen"), Some(app.lib.hosts.len()));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.menu_button(RichText::new(t!("Neu")).font(theme::semibold(13.5)), |ui| {
-                ui.set_min_width(190.0);
+            ui.spacing_mut().item_spacing.x = 10.0;
+            let new = theme::btn(ui, theme::Btn::Primary, Some(Icon::Plus), t!("Neu"));
+            egui::Popup::menu(&new).show(|ui| {
+                ui.set_min_width(210.0);
                 for (label, proto) in [
                     ("SSH-Host", Protocol::Ssh),
                     ("Remote Desktop", Protocol::Rdp),
@@ -95,8 +97,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     ui.close();
                 }
             });
-            if ui
-                .button(t!("Netz scannen"))
+            if theme::btn(ui, theme::Btn::Normal, Some(Icon::Wifi), t!("Netz scannen"))
                 .on_hover_text(t!(
                     "Geräte mit SSH/RDP im lokalen Netz finden und übernehmen"
                 ))
@@ -104,16 +105,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             {
                 actions.push(Action::OpenScan);
             }
-            let search = ui.add(
-                egui::TextEdit::singleline(&mut app.search)
-                    .hint_text(t!("Suchen oder user@host verbinden"))
-                    .desired_width(320.0)
-                    .margin(egui::Margin::symmetric(10, 6)),
+            let width = (ui.available_width() - 24.0).clamp(180.0, 300.0);
+            let search = theme::search_field(
+                ui,
+                &mut app.search,
+                t!("Suchen oder user@host verbinden"),
+                width,
+                egui::Id::new("host-search"),
             );
             enter = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         });
     });
-    ui.add_space(14.0);
+    ui.add_space(18.0);
 
     if app.lib.hosts.is_empty() && app.search.trim().is_empty() {
         empty_state(ui, actions);
@@ -137,10 +140,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             app.host_filter = i;
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
             let mut changed = false;
             let compact = app.lib.settings.compact;
-            if ui
-                .selectable_label(compact, RichText::new(t!("Kompakt")).size(12.5))
+            let kind = if compact {
+                theme::Btn::SmallPrimary
+            } else {
+                theme::Btn::Small
+            };
+            if theme::btn(ui, kind, None, t!("Kompakt"))
                 .on_hover_text(t!("Kleinere Zeilen für viele Hosts"))
                 .clicked()
             {
@@ -153,7 +161,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     RichText::new(crate::i18n::tr(
                         labels[app.lib.settings.sort.min(2) as usize],
                     ))
-                    .size(12.5),
+                    .font(theme::medium(13.0)),
                 )
                 .width(150.0)
                 .show_ui(ui, |ui| {
@@ -169,7 +177,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 });
             ui.label(
                 RichText::new(t!("Sortierung"))
-                    .size(12.5)
+                    .size(13.0)
                     .color(theme::text_dim()),
             );
             if changed {
@@ -177,8 +185,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             }
         });
     });
-    theme::hairline(ui);
-    ui.add_space(6.0);
+    ui.add_space(14.0);
     selection_bar(app, ui, actions);
     ui.ctx()
         .data_mut(|d| d.insert_temp(order_id(), Vec::<Uuid>::new()));
@@ -187,8 +194,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     let live = live_hosts(app);
 
     egui::ScrollArea::vertical()
+        .id_salt("hosts-page")
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            // Room for the scroll bar next to the cards.
+            ui.set_max_width(ui.available_width() - 14.0);
+            ui.spacing_mut().item_spacing.y = 0.0;
             if !query.is_empty() {
                 let quick = parse_quick(&query).filter(|_| query.contains('@'));
                 if let Some(h) = &quick {
@@ -209,26 +220,30 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 }
                 if hosts.is_empty() && quick.is_none() {
                     ui.add_space(20.0);
-                    ui.label(theme::heading(t!("Kein Host passt zu „{}“", query), 16.0));
+                    ui.label(theme::heading(t!("Kein Host passt zu „{}“", query), 17.0));
+                    ui.add_space(4.0);
                     ui.label(
                         RichText::new(t!(
                             "Leg ihn an – oder tippe user@host, um direkt zu verbinden."
                         ))
                         .color(theme::text_dim()),
                     );
-                    ui.add_space(10.0);
+                    ui.add_space(14.0);
                     ui.horizontal(|ui| {
                         if theme::primary_button(ui, &t!("„{}“ als Host anlegen", query)).clicked()
                         {
                             actions.push(Action::NewHostNamed(query.clone()));
                         }
-                        if !query.contains(' ') && ui.button(t!("Direkt verbinden")).clicked() {
+                        if !query.contains(' ')
+                            && theme::btn(ui, theme::Btn::Normal, None, t!("Direkt verbinden"))
+                                .clicked()
+                        {
                             actions.push(Action::QuickConnect(query.clone()));
                         }
                     });
                 }
-                for h in &hosts {
-                    host_row(app, ui, h, &live, actions);
+                if !hosts.is_empty() {
+                    host_card(app, ui, &hosts, &live, actions);
                 }
                 return;
             }
@@ -249,36 +264,54 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             subnet_hint(app, ui, &loose, actions);
             if !loose.is_empty() || (!app.lib.groups.is_empty() && dragging_host(ui)) {
                 if !app.lib.groups.is_empty() {
-                    ui.add_space(14.0);
+                    ui.add_space(22.0);
                     // Drop zone: hosts dragged here leave their group.
                     let (r, resp) = ui
-                        .allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
+                        .allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::hover());
                     let hot = resp.dnd_hover_payload::<Uuid>().is_some();
                     if hot {
                         ui.painter().rect_stroke(
                             r,
-                            CornerRadius::same(6),
+                            CornerRadius::same(8),
                             Stroke::new(1.5, theme::accent()),
                             egui::StrokeKind::Inside,
                         );
                     }
                     ui.painter().text(
-                        r.left_center() + Vec2::new(0.0, 0.0),
+                        r.left_center() + Vec2::new(8.0, 0.0),
                         egui::Align2::LEFT_CENTER,
                         t!("OHNE GRUPPE"),
-                        FontId::monospace(11.0),
+                        theme::semibold(12.0),
                         theme::text_dim(),
                     );
                     if let Some(id) = resp.dnd_release_payload::<Uuid>() {
                         actions.push(Action::MoveHosts(drag_set(app, *id), None));
                     }
-                    ui.add_space(2.0);
+                    ui.add_space(6.0);
+                } else {
+                    ui.add_space(4.0);
                 }
-                for h in &loose {
-                    host_row(app, ui, h, &live, actions);
+                if !loose.is_empty() {
+                    host_card(app, ui, &loose, &live, actions);
                 }
             }
+            ui.add_space(40.0);
         });
+}
+
+/// One rounded card with a row per host.
+fn host_card(
+    app: &App,
+    ui: &mut egui::Ui,
+    hosts: &[Host],
+    live: &[String],
+    actions: &mut Vec<Action>,
+) {
+    theme::card(ui, theme::bg_deep(), |ui| {
+        for (i, h) in hosts.iter().enumerate() {
+            host_row(app, ui, h, live, i > 0, actions);
+        }
+    });
 }
 
 /// Ids of hosts that currently have a connected session.
@@ -313,62 +346,56 @@ fn passes_filter(filter: usize, h: &Host) -> bool {
 }
 
 fn empty_state(ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-    ui.add_space(60.0);
-    ui.horizontal(|ui| {
-        ui.add_space(4.0);
-        ui.vertical(|ui| {
-            ui.set_max_width(520.0);
-            // A row of empty jacks: the patch bay before anything is plugged in.
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(5.0 * 34.0, 30.0), Sense::hover());
-            for i in 0..5 {
-                let c = Pos2::new(rect.left() + 15.0 + i as f32 * 34.0, rect.center().y);
-                let color = if i == 0 { theme::accent() } else { theme::border() };
-                ui.painter().circle_stroke(c, 11.0, Stroke::new(2.0, color));
-                ui.painter().circle_filled(c, 3.0, color);
-            }
-            ui.add_space(22.0);
-            ui.label(theme::heading(t!("Noch nichts eingesteckt"), 22.0));
-            ui.add_space(2.0);
-            ui.label(
-                RichText::new(t!("Lege deine erste Verbindung an. Für einen schnellen Test reicht user@host oben im Suchfeld."))
-                    .color(theme::text_dim()),
-            );
-            ui.add_space(18.0);
-            ui.horizontal(|ui| {
-                if theme::primary_button(ui, t!("SSH-Host anlegen")).clicked() {
-                    actions.push(Action::NewHostOf(Protocol::Ssh, None));
-                }
-                if ui.button(t!("Remote Desktop")).clicked() {
-                    actions.push(Action::NewHostOf(Protocol::Rdp, None));
-                }
-                if ui.button(t!("Serielles Gerät")).clicked() {
-                    actions.push(Action::NewHostOf(Protocol::Serial, None));
-                }
-            });
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
+    ui.add_space(40.0);
+    theme::card(ui, theme::bg_deep(), |ui| {
+        egui::Frame::NONE
+            .inner_margin(egui::Margin::symmetric(28, 28))
+            .show(ui, |ui| {
+                ui.set_max_width(560.0);
+                ui.spacing_mut().item_spacing.y = 8.0;
+                theme::logo(ui, 44.0);
+                ui.add_space(10.0);
+                ui.label(theme::heading(t!("Noch keine Verbindungen"), 22.0));
                 ui.label(
-                    RichText::new(t!("Oder such dein Netz nach SSH-/RDP-Geräten ab:"))
+                    RichText::new(t!("Lege deine erste Verbindung an. Für einen schnellen Test reicht user@host oben im Suchfeld."))
                         .color(theme::text_dim()),
                 );
-                if ui.button(t!("Netz scannen")).clicked() {
-                    actions.push(Action::OpenScan);
-                }
-            });
-            let found = crate::app::ssh_config_hosts().len();
-            if found > 0 {
-                ui.add_space(14.0);
+                ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(t!("In deiner ~/.ssh/config stehen {} Hosts.", found))
-                            .color(theme::text_dim()),
-                    );
-                    if ui.button(t!("Importieren")).clicked() {
-                        actions.push(Action::ImportSshConfig);
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    if theme::btn(ui, theme::Btn::Primary, Some(Icon::Plus), t!("SSH-Host anlegen")).clicked() {
+                        actions.push(Action::NewHostOf(Protocol::Ssh, None));
+                    }
+                    if theme::btn(ui, theme::Btn::Normal, None, t!("Remote Desktop")).clicked() {
+                        actions.push(Action::NewHostOf(Protocol::Rdp, None));
+                    }
+                    if theme::btn(ui, theme::Btn::Normal, None, t!("Serielles Gerät")).clicked() {
+                        actions.push(Action::NewHostOf(Protocol::Serial, None));
                     }
                 });
-            }
-        });
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(t!("Oder such dein Netz nach SSH-/RDP-Geräten ab:"))
+                            .color(theme::text_dim()),
+                    );
+                    if theme::btn(ui, theme::Btn::Small, Some(Icon::Wifi), t!("Netz scannen")).clicked() {
+                        actions.push(Action::OpenScan);
+                    }
+                });
+                let found = crate::app::ssh_config_hosts().len();
+                if found > 0 {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(t!("In deiner ~/.ssh/config stehen {} Hosts.", found))
+                                .color(theme::text_dim()),
+                        );
+                        if theme::btn(ui, theme::Btn::Small, None, t!("Importieren")).clicked() {
+                            actions.push(Action::ImportSshConfig);
+                        }
+                    });
+                }
+            });
     });
 }
 
@@ -394,21 +421,23 @@ fn selection_bar(app: &App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     }
     let ids: Vec<Uuid> = app.selected_hosts.iter().copied().collect();
     egui::Frame::NONE
-        .fill(theme::accent().gamma_multiply(0.10))
-        .stroke(Stroke::new(1.0, theme::accent().gamma_multiply(0.4)))
-        .corner_radius(CornerRadius::same(8))
-        .inner_margin(egui::Margin::symmetric(12, 8))
+        .fill(theme::accent_soft())
+        .corner_radius(CornerRadius::same(14))
+        .inner_margin(egui::Margin::symmetric(16, 10))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
                 ui.label(
                     RichText::new(t!("{} ausgewählt", n))
-                        .font(theme::semibold(13.5))
+                        .font(theme::semibold(14.0))
                         .color(theme::text()),
                 );
                 ui.add_space(8.0);
-                if theme::primary_button(
+                if theme::btn(
                     ui,
+                    theme::Btn::SmallPrimary,
+                    None,
                     if n > 1 {
                         t!("Öffnen (nebeneinander)")
                     } else {
@@ -419,7 +448,8 @@ fn selection_bar(app: &App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 {
                     actions.push(Action::ConnectMany(ids.clone()));
                 }
-                ui.menu_button(t!("In Gruppe"), |ui| {
+                let r = theme::btn(ui, theme::Btn::Small, None, t!("In Gruppe"));
+                egui::Popup::menu(&r).show(|ui| {
                     if ui.button(t!("Ohne Gruppe")).clicked() {
                         actions.push(Action::MoveHosts(ids.clone(), None));
                         ui.close();
@@ -431,7 +461,8 @@ fn selection_bar(app: &App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         }
                     }
                 });
-                ui.menu_button(t!("Umgebung"), |ui| {
+                let r = theme::btn(ui, theme::Btn::Small, None, t!("Umgebung"));
+                egui::Popup::menu(&r).show(|ui| {
                     for e in crate::model::Env::ALL {
                         let label = if e == crate::model::Env::None {
                             t!("keine")
@@ -444,32 +475,25 @@ fn selection_bar(app: &App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         }
                     }
                 });
-                if ui
-                    .button(RichText::new(t!("Löschen")).color(theme::red()))
-                    .clicked()
-                {
+                if theme::btn(ui, theme::Btn::Small, None, t!("Löschen")).clicked() {
                     actions.push(Action::Confirm(
                         t!("{} Hosts löschen?", n),
                         Box::new(Action::DeleteHosts(ids.clone())),
                     ));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .small_button("×")
-                        .on_hover_text(t!("Auswahl aufheben (Esc)"))
-                        .clicked()
-                    {
+                    if theme::icon_btn(ui, Icon::Close, t!("Auswahl aufheben (Esc)")).clicked() {
                         actions.push(Action::ClearSelection);
                     }
                     ui.label(
                         RichText::new(t!("Ctrl/Shift+Klick wählt aus · ziehen in Gruppen"))
-                            .size(11.5)
+                            .size(12.0)
                             .color(theme::text_dim()),
                     );
                 });
             });
         });
-    ui.add_space(6.0);
+    ui.add_space(12.0);
 }
 
 fn subnet_hint(app: &App, ui: &mut egui::Ui, loose: &[Host], actions: &mut Vec<Action>) {
@@ -489,34 +513,38 @@ fn subnet_hint(app: &App, ui: &mut egui::Ui, loose: &[Host], actions: &mut Vec<A
     else {
         return;
     };
-    ui.add_space(16.0);
+    ui.add_space(22.0);
     egui::Frame::NONE
-        .fill(theme::accent().gamma_multiply(0.08))
-        .stroke(Stroke::new(1.0, theme::accent().gamma_multiply(0.35)))
-        .corner_radius(CornerRadius::same(8))
-        .inner_margin(egui::Margin::symmetric(14, 10))
+        .fill(theme::lerp(theme::bg_deep(), theme::accent(), 0.16))
+        .corner_radius(CornerRadius::same(14))
+        .inner_margin(egui::Margin::symmetric(18, 12))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                icons::show(ui, Icon::Sparkle, 18.0, theme::accent());
+                ui.add_space(8.0);
                 ui.label(
-                    RichText::new(t!("{} Hosts liegen im Netz {}.x", n, net))
-                        .size(13.5)
+                    RichText::new(t!("{} Hosts liegen im Netz {}.x.", n, net))
+                        .font(theme::semibold(14.0))
                         .color(theme::text()),
                 );
                 ui.label(
-                    RichText::new(t!("– zusammen als Gruppe ablegen?"))
-                        .size(13.5)
+                    RichText::new(t!("Zusammen als Gruppe ablegen?"))
+                        .size(14.0)
                         .color(theme::text_dim()),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .small_button("×")
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    if theme::btn(ui, theme::Btn::Normal, Some(Icon::Close), "")
                         .on_hover_text(t!("Nicht mehr vorschlagen"))
                         .clicked()
                     {
                         actions.push(Action::DismissSubnet(net.clone()));
                     }
-                    if theme::primary_button(ui, &t!("Gruppe „LAN {}“ anlegen", net)).clicked()
+                    if theme::btn(ui, theme::Btn::Primary, None, t!("Gruppe anlegen"))
+                        .on_hover_text(t!("Gruppe „LAN {}“ anlegen", net))
+                        .clicked()
                     {
                         actions.push(Action::GroupSubnet(net.clone()));
                     }
@@ -527,32 +555,42 @@ fn subnet_hint(app: &App, ui: &mut egui::Ui, loose: &[Host], actions: &mut Vec<A
 
 fn quick_row(ui: &mut egui::Ui, target: &str, actions: &mut Vec<Action>, query: &str) {
     let (rect, resp) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::click());
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 56.0), Sense::click());
     let p = ui.painter();
     p.rect_filled(
         rect,
-        CornerRadius::same(6),
-        theme::accent().linear_multiply(0.10),
+        CornerRadius::same(14),
+        if resp.hovered() {
+            theme::soft(theme::accent()).gamma_multiply(1.4)
+        } else {
+            theme::accent_soft()
+        },
+    );
+    icons::paint(
+        p,
+        Rect::from_center_size(rect.left_center() + Vec2::new(26.0, 0.0), Vec2::splat(18.0)),
+        Icon::Terminal,
+        theme::accent(),
     );
     p.text(
-        rect.left_center() + Vec2::new(14.0, 0.0),
+        rect.left_center() + Vec2::new(48.0, 0.0),
         egui::Align2::LEFT_CENTER,
         t!("Direkt verbinden"),
-        theme::semibold(14.0),
+        theme::semibold(14.5),
         theme::text(),
     );
     p.text(
-        rect.left_center() + Vec2::new(150.0, 0.0),
+        rect.left_center() + Vec2::new(190.0, 0.0),
         egui::Align2::LEFT_CENTER,
         target,
         FontId::monospace(13.0),
         theme::accent(),
     );
     p.text(
-        rect.right_center() - Vec2::new(14.0, 0.0),
+        rect.right_center() - Vec2::new(18.0, 0.0),
         egui::Align2::RIGHT_CENTER,
-        "Enter",
-        FontId::monospace(11.0),
+        "Enter ↵",
+        theme::medium(12.0),
         theme::text_dim(),
     );
     if resp
@@ -561,7 +599,7 @@ fn quick_row(ui: &mut egui::Ui, target: &str, actions: &mut Vec<Action>, query: 
     {
         actions.push(Action::QuickConnect(query.to_string()));
     }
-    ui.add_space(4.0);
+    ui.add_space(12.0);
 }
 
 fn filter_hosts(app: &App, query: &str) -> Vec<Host> {
@@ -626,7 +664,7 @@ fn group_tree(
         .filter(|g| g.parent_id == parent)
         .cloned()
         .collect();
-    for g in groups {
+    for (gi, g) in groups.into_iter().enumerate() {
         let mut hosts: Vec<Host> = app
             .lib
             .hosts
@@ -641,11 +679,25 @@ fn group_tree(
             .iter()
             .filter(|h| h.group_id.is_some_and(|hg| app.lib.is_descendant(hg, g.id)))
             .count();
-        ui.add_space(if depth == 0 { 16.0 } else { 6.0 });
-        let indent = depth as f32 * 16.0;
-        let head_h = if app.lib.settings.compact { 28.0 } else { 34.0 };
+        // With a protocol filter, groups without a matching host disappear.
+        if app.host_filter != 0
+            && !app.lib.hosts.iter().any(|h| {
+                h.group_id.is_some_and(|hg| app.lib.is_descendant(hg, g.id))
+                    && passes_filter(app.host_filter, h)
+            })
+        {
+            continue;
+        }
+        ui.add_space(if depth == 0 && gi == 0 && parent.is_none() {
+            4.0
+        } else if depth == 0 {
+            22.0
+        } else {
+            12.0
+        });
+        let indent = depth as f32 * 20.0;
         let (full, resp) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), head_h), Sense::click());
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), Sense::click());
         // Hosts dropped on a group header move into that group.
         let drop_hot = resp.dnd_hover_payload::<Uuid>().is_some();
         if let Some(id) = resp.dnd_release_payload::<Uuid>() {
@@ -654,125 +706,83 @@ fn group_tree(
         let rect = Rect::from_min_max(full.min + Vec2::new(indent, 0.0), full.max);
         let p = ui.painter();
         let cy = rect.center().y;
-        // Band with the group colour as a bar on the left.
-        p.rect_filled(
-            rect,
-            CornerRadius::same(6),
-            if resp.hovered() || drop_hot {
-                theme::bg_hover()
-            } else {
-                theme::bg_panel()
-            },
-        );
         if drop_hot {
-            p.rect_stroke(
-                rect,
-                CornerRadius::same(6),
-                Stroke::new(1.5, theme::accent()),
-                egui::StrokeKind::Inside,
-            );
+            p.rect_filled(rect, CornerRadius::same(8), theme::accent_soft());
+        }
+        // Chevron, colour square, name, online count.
+        let chev = Rect::from_center_size(Pos2::new(rect.left() + 10.0, cy), Vec2::splat(12.0));
+        if g.collapsed {
+            // Pointing right.
+            let c = chev.center();
+            let s = Stroke::new(2.0, theme::text_dim());
+            p.line_segment([c + Vec2::new(-2.0, -4.0), c + Vec2::new(2.5, 0.0)], s);
+            p.line_segment([c + Vec2::new(2.5, 0.0), c + Vec2::new(-2.0, 4.0)], s);
+        } else {
+            icons::paint(p, chev, Icon::Chevron, theme::text_dim());
         }
         p.rect_filled(
-            Rect::from_min_size(rect.left_top(), Vec2::new(3.0, rect.height())),
-            CornerRadius {
-                nw: 6,
-                sw: 6,
-                ne: 0,
-                se: 0,
-            },
+            Rect::from_center_size(Pos2::new(rect.left() + 28.0, cy), Vec2::splat(9.0)),
+            CornerRadius::same(2),
             theme::rgb(g.color),
         );
-        let x = rect.left() + 12.0;
-        let c = Pos2::new(x + 4.0, cy);
-        let tri = if g.collapsed {
-            vec![
-                c + Vec2::new(-2.0, -4.0),
-                c + Vec2::new(3.0, 0.0),
-                c + Vec2::new(-2.0, 4.0),
-            ]
-        } else {
-            vec![
-                c + Vec2::new(-4.0, -2.0),
-                c + Vec2::new(4.0, -2.0),
-                c + Vec2::new(0.0, 3.0),
-            ]
-        };
-        p.add(egui::Shape::convex_polygon(
-            tri,
-            theme::text_dim(),
-            Stroke::NONE,
-        ));
-        let galley = p.layout_no_wrap(g.name.clone(), theme::semibold(14.0), theme::text());
+        let galley = p.layout_no_wrap(g.name.clone(), theme::semibold(14.5), theme::text());
         let w = galley.size().x;
         p.galley(
-            Pos2::new(x + 16.0, cy - galley.size().y / 2.0),
+            Pos2::new(rect.left() + 40.0, cy - galley.size().y / 2.0),
             galley,
             theme::text(),
         );
-        let mut tx = x + 16.0 + w + 10.0;
-        // "3/5 online" from the reachability probe.
+        let mut tx = rect.left() + 40.0 + w + 10.0;
+        // "2 von 3 online" from the reachability probe.
         let members = app.lib.hosts_in_group(g.id);
         let up = members
             .iter()
             .filter(|h| matches!(app.reach.get(h.id), Some(Reach::Up(_))))
             .count();
         let count = if app.lib.settings.reachability && total > 0 {
-            format!("{up}/{total} online")
+            t!("{} von {} online", up, total)
         } else {
             total.to_string()
         };
-        let cg = p.layout_no_wrap(count, FontId::monospace(11.0), theme::text_dim());
+        let cg = p.layout_no_wrap(count, FontId::proportional(13.0), theme::text_dim());
         let cw = cg.size().x;
         p.galley(Pos2::new(tx, cy - cg.size().y / 2.0), cg, theme::text_dim());
         tx += cw + 10.0;
         if g.env != crate::model::Env::None {
-            let color = theme::env_color(g.env);
-            let gl = p.layout_no_wrap(
-                g.env.label().into(),
-                FontId::monospace(9.5),
-                theme::bg_deep(),
+            let mut child = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(Rect::from_min_size(
+                        Pos2::new(tx, cy - 9.0),
+                        Vec2::new(90.0, 18.0),
+                    ))
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
             );
-            let r = Rect::from_min_size(Pos2::new(tx, cy - 8.0), gl.size() + Vec2::new(8.0, 4.0));
-            p.rect_filled(r, CornerRadius::same(3), color);
-            p.galley(r.min + Vec2::new(4.0, 2.0), gl, theme::bg_deep());
+            theme::pill(&mut child, g.env.label(), theme::env_color(g.env));
         }
-        let plus_rect =
-            Rect::from_min_max(rect.right_top() - Vec2::new(70.0, 0.0), rect.right_bottom());
-        let all_rect = Rect::from_min_max(
-            rect.right_top() - Vec2::new(170.0, 0.0),
-            rect.right_bottom() - Vec2::new(76.0, 0.0),
+        // "Alle öffnen" and "+ Host" as quiet links on the right.
+        let mut links = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(Rect::from_min_max(
+                    Pos2::new(rect.right() - 260.0, rect.top()),
+                    rect.right_bottom() - Vec2::new(4.0, 0.0),
+                ))
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
-        {
-            // Actions stay visible; they light up under the pointer.
-            let pointer = ui.input(|i| i.pointer.hover_pos());
-            let hot = |r: Rect| resp.hovered() && pointer.is_some_and(|p| r.contains(p));
-            let dim = theme::text_dim().linear_multiply(if resp.hovered() { 1.0 } else { 0.7 });
-            p.text(
-                rect.right_center() - Vec2::new(12.0, 0.0),
-                egui::Align2::RIGHT_CENTER,
-                "+ Host",
-                FontId::proportional(12.0),
-                if hot(plus_rect) { theme::accent() } else { dim },
-            );
-            if total > 0 {
-                p.text(
-                    all_rect.right_center(),
-                    egui::Align2::RIGHT_CENTER,
-                    t!("▶ Alle öffnen"),
-                    FontId::proportional(12.0),
-                    if hot(all_rect) { theme::accent() } else { dim },
-                );
-            }
-        }
-        ui.add_space(2.0);
-        let click_pos = ui.input(|i| i.pointer.interact_pos());
-        let clicked_in = |r: Rect| resp.clicked() && click_pos.is_some_and(|p| r.contains(p));
-        if clicked_in(plus_rect) {
+        links.spacing_mut().item_spacing.x = 4.0;
+        let plus = theme::btn(&mut links, theme::Btn::Link, None, "+ Host");
+        let all =
+            (total > 0).then(|| theme::btn(&mut links, theme::Btn::Link, None, t!("Alle öffnen")));
+        if plus.clicked() {
             actions.push(Action::NewHost(Some(g.id)));
-        } else if total > 0 && clicked_in(all_rect) {
+        } else if all.as_ref().is_some_and(|a| a.clicked()) {
             actions.push(Action::OpenGroup(g.id));
         } else if resp.clicked() {
             actions.push(Action::ToggleGroup(g.id));
+        }
+        if let Some(a) = all {
+            a.on_hover_text(t!(
+                "Verbindet die ersten vier Hosts der Gruppe im Splitscreen"
+            ));
         }
         resp.on_hover_cursor(egui::CursorIcon::PointingHand)
             .context_menu(|ui| {
@@ -811,28 +821,15 @@ fn group_tree(
                 }
             });
         if !g.collapsed {
-            for h in &hosts {
+            if !hosts.is_empty() {
+                ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     ui.add_space(indent);
-                    ui.vertical(|ui| host_row(app, ui, h, live, actions));
+                    ui.vertical(|ui| host_card(app, ui, &hosts, live, actions));
                 });
             }
             group_tree(app, ui, Some(g.id), depth + 1, live, actions);
         }
-    }
-}
-
-/// Brand-ish colour for an OS id from os-release.
-fn os_color(id: &str) -> Color32 {
-    match id {
-        "ubuntu" => Color32::from_rgb(233, 84, 32),
-        "debian" | "raspbian" => Color32::from_rgb(215, 10, 83),
-        "fedora" | "rhel" | "centos" => Color32::from_rgb(81, 162, 218),
-        "rocky" | "almalinux" => Color32::from_rgb(16, 185, 129),
-        "arch" | "alpine" => Color32::from_rgb(23, 147, 209),
-        "windows" => Color32::from_rgb(0, 120, 212),
-        "freebsd" | "opnsense" | "pfsense" => Color32::from_rgb(171, 43, 40),
-        _ => theme::text_dim(),
     }
 }
 
@@ -845,35 +842,30 @@ fn uptime_text(secs: u64) -> String {
     }
 }
 
-/// Small outlined (or filled) mono label at `x`, advancing `x`.
-fn chip(p: &egui::Painter, x: &mut f32, cy: f32, label: String, color: Color32, filled: bool) {
-    let fg = if filled { theme::bg_deep() } else { color };
-    let g = p.layout_no_wrap(label, FontId::monospace(10.5), fg);
-    let r = Rect::from_min_size(Pos2::new(*x, cy - 9.0), g.size() + Vec2::new(10.0, 6.0));
-    if filled {
-        p.rect_filled(r, CornerRadius::same(3), color);
-    } else {
-        p.rect_stroke(
-            r,
-            CornerRadius::same(3),
-            Stroke::new(1.0, color.linear_multiply(0.4)),
-            egui::StrokeKind::Inside,
-        );
-    }
-    p.galley(r.min + Vec2::new(5.0, 3.0), g, fg);
-    *x = r.right() + 6.0;
-}
-
 pub fn rename_id() -> egui::Id {
     egui::Id::new("aurora-rename")
 }
 
-fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &mut Vec<Action>) {
-    let row_h = if app.lib.settings.compact {
-        ROW_H_COMPACT
-    } else {
-        ROW_H
-    };
+/// A label on the right side of a host row.
+struct RowTag {
+    text: String,
+    color: Option<Color32>,
+    /// Status dot in front (tunnels): Some(lit).
+    dot: Option<bool>,
+    tunnel: Option<Uuid>,
+    tip: String,
+}
+
+fn host_row(
+    app: &App,
+    ui: &mut egui::Ui,
+    h: &Host,
+    live: &[String],
+    divider: bool,
+    actions: &mut Vec<Action>,
+) {
+    let compact = app.lib.settings.compact;
+    let row_h = if compact { ROW_H_COMPACT } else { ROW_H };
     let (rect, resp) = ui.allocate_exact_size(
         Vec2::new(ui.available_width(), row_h),
         Sense::click_and_drag(),
@@ -882,22 +874,22 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
         d.get_temp_mut_or_default::<Vec<Uuid>>(order_id())
             .push(h.id)
     });
-    let hovered = ui.rect_contains_pointer(rect);
+    let hovered = ui.rect_contains_pointer(rect.shrink2(Vec2::new(0.0, 0.5)));
     let selected = app.selected_hosts.contains(&h.id);
-    let p = ui.painter().with_clip_rect(rect);
+    let p = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     if selected {
-        p.rect_filled(
-            rect,
-            CornerRadius::same(6),
-            theme::accent().gamma_multiply(0.12),
-        );
-        p.rect_filled(
-            Rect::from_min_size(rect.left_top(), Vec2::new(3.0, rect.height())),
-            CornerRadius::same(1),
-            theme::accent(),
-        );
+        p.rect_filled(rect, CornerRadius::ZERO, theme::accent_soft());
     } else if hovered {
-        p.rect_filled(rect, CornerRadius::same(6), theme::bg_hover());
+        p.rect_filled(rect, CornerRadius::ZERO, theme::hover());
+    }
+    if divider {
+        p.line_segment(
+            [
+                Pos2::new(rect.left() + 44.0, rect.top()),
+                Pos2::new(rect.right(), rect.top()),
+            ],
+            Stroke::new(1.0, theme::line()),
+        );
     }
     // Drag the row (or the whole selection) onto a group header.
     resp.dnd_set_drag_payload(h.id);
@@ -920,16 +912,16 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
             let g = painter.layout_no_wrap(text, theme::semibold(13.0), theme::text());
             let r = Rect::from_min_size(
                 pos + Vec2::new(14.0, 10.0),
-                g.size() + Vec2::new(18.0, 10.0),
+                g.size() + Vec2::new(22.0, 14.0),
             );
             painter.rect(
                 r,
-                CornerRadius::same(6),
-                theme::bg_card(),
-                Stroke::new(1.0, theme::accent()),
+                CornerRadius::same(10),
+                theme::surface(),
+                Stroke::new(1.5, theme::accent()),
                 egui::StrokeKind::Inside,
             );
-            painter.galley(r.min + Vec2::new(9.0, 5.0), g, theme::text());
+            painter.galley(r.min + Vec2::new(11.0, 7.0), g, theme::text());
         }
     }
     if resp.clicked() {
@@ -945,18 +937,14 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
             actions.push(Action::SelectHost(h.id, mode));
         }
     }
-    // bottom rule
-    p.rect_filled(
-        Rect::from_min_max(
-            Pos2::new(rect.left() + 10.0, rect.bottom() - 1.0),
-            rect.right_bottom(),
-        ),
-        CornerRadius::ZERO,
-        theme::border().linear_multiply(0.45),
-    );
 
     let cy = rect.center().y;
-    // LED: lit green = open session, green = reachable, hollow = no answer (probably off),
+    let (y1, y2) = if compact {
+        (cy, cy)
+    } else {
+        (rect.top() + 24.0, rect.top() + 44.0)
+    };
+    // Dot: green = open session or reachable, ring = no answer / not checked,
     // red = the last connection attempt failed.
     let id = h.id.to_string();
     let is_live = live.iter().any(|t| *t == id || t == h.display_name());
@@ -966,17 +954,15 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
         .reachability
         .then(|| app.reach.get(h.id))
         .flatten();
-    let led_pos = Pos2::new(rect.left() + 14.0, cy);
+    let led_pos = Pos2::new(rect.left() + 22.0, cy);
     if app.failed.contains(&h.id) && !is_live {
         theme::led(&p, led_pos, theme::red(), true);
     } else {
         match (is_live, reach) {
-            (true, _) => theme::led(&p, led_pos, theme::green(), true),
-            (false, Some(Reach::Up(_))) => theme::led(&p, led_pos, theme::green(), false),
-            (false, Some(Reach::Down)) => {
-                p.circle_stroke(led_pos, 3.2, Stroke::new(1.2, theme::text_dim()));
+            (true, _) | (false, Some(Reach::Up(_))) => {
+                theme::led(&p, led_pos, theme::green(), true)
             }
-            (false, None) => theme::led(&p, led_pos, theme::text_dim(), false),
+            _ => theme::led(&p, led_pos, theme::off_color(), false),
         }
     }
     {
@@ -996,24 +982,17 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
             .on_hover_text(tip);
     }
 
-    let w = rect.width();
-    let col_name = rect.left() + 30.0;
-    let col_addr = rect.left() + (w * 0.27).max(190.0);
-    let col_info = rect.left() + (w * 0.47).max(360.0);
+    let col_name = rect.left() + 42.0;
 
     // --- name (or inline rename)
     let renaming: Option<(Uuid, String)> = ui.ctx().data(|d| d.get_temp(rename_id()));
     let mut nx;
-    if let Some((rid, mut text)) = renaming.filter(|(rid, _)| *rid == h.id) {
-        let _ = rid;
-        let r = Rect::from_min_size(
-            Pos2::new(col_name - 4.0, cy - 13.0),
-            Vec2::new((col_addr - col_name - 16.0).max(120.0), 26.0),
-        );
+    if let Some((_, mut text)) = renaming.filter(|(rid, _)| *rid == h.id) {
+        let r = Rect::from_min_size(Pos2::new(col_name - 6.0, y1 - 14.0), Vec2::new(260.0, 28.0));
         let edit = ui.put(
             r,
             egui::TextEdit::singleline(&mut text)
-                .font(theme::semibold(14.0))
+                .font(theme::semibold(14.5))
                 .hint_text(h.hostname.as_str()),
         );
         edit.request_focus();
@@ -1038,194 +1017,87 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
     } else {
         let name_galley = p.layout_no_wrap(
             h.display_name().to_string(),
-            theme::semibold(14.0),
+            theme::semibold(15.0),
             theme::text(),
         );
         let name_w = name_galley.size().x;
         p.galley(
-            Pos2::new(col_name, cy - name_galley.size().y / 2.0),
+            Pos2::new(col_name, y1 - name_galley.size().y / 2.0),
             name_galley,
             theme::text(),
         );
         nx = col_name + name_w + 8.0;
     }
     if h.favorite {
-        p.text(
-            Pos2::new(nx, cy),
-            egui::Align2::LEFT_CENTER,
-            "★",
-            FontId::proportional(11.0),
-            theme::accent(),
+        icons::paint(
+            &p,
+            Rect::from_center_size(Pos2::new(nx + 6.0, y1), Vec2::splat(13.0)),
+            Icon::Star,
+            Color32::from_rgb(255, 214, 10),
         );
-        nx += 16.0;
+        nx += 20.0;
     }
     let env = app.lib.env_of(h);
     if env != crate::model::Env::None {
-        let color = theme::env_color(env);
-        let g = p.layout_no_wrap(env.label().into(), FontId::monospace(9.5), theme::bg_deep());
-        let r = Rect::from_min_size(Pos2::new(nx, cy - 8.0), g.size() + Vec2::new(8.0, 4.0));
-        p.rect_filled(r, CornerRadius::same(3), color);
-        p.galley(r.min + Vec2::new(4.0, 2.0), g, theme::bg_deep());
-        nx = r.right() + 6.0;
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(Rect::from_min_size(
+                    Pos2::new(nx, y1 - 9.0),
+                    Vec2::new(90.0, 18.0),
+                ))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        let r = theme::pill(&mut child, env.label(), theme::env_color(env));
+        nx = r.rect.right() + 8.0;
     }
     if !h.notes.trim().is_empty() {
-        let r = Rect::from_center_size(Pos2::new(nx + 7.0, cy), Vec2::splat(16.0));
-        p.text(
-            r.center(),
-            egui::Align2::CENTER_CENTER,
-            "📝",
-            FontId::proportional(11.0),
-            theme::text_dim(),
-        );
+        let r = Rect::from_center_size(Pos2::new(nx + 7.0, y1), Vec2::splat(14.0));
+        icons::paint(&p, r, Icon::File, theme::text_dim());
         ui.interact(r, ui.id().with(("notes", h.id)), Sense::hover())
             .on_hover_text(h.notes.trim());
+        nx += 20.0;
     }
 
     // --- address: only what the name doesn't already say; default ports are hidden.
     let named = !h.label.trim().is_empty();
-    let (user, host_part, port) = match h.protocol {
-        Protocol::Serial => (
-            String::new(),
-            h.serial.port_name.clone(),
-            format!(" {} Bd", h.serial.baud_rate),
-        ),
-        Protocol::Docker | Protocol::Kubernetes => (
-            String::new(),
+    let addr = match h.protocol {
+        Protocol::Serial => format!("{} · {} Bd", h.serial.port_name, h.serial.baud_rate),
+        Protocol::Docker | Protocol::Kubernetes => format!(
+            "{}{}@ {}",
             if named { h.subtitle() } else { String::new() },
-            format!(
-                "{}@ {}",
-                if named { "  " } else { "" },
-                match h.container.via.and_then(|v| app.lib.host(v)) {
-                    Some(v) => v.display_name().to_string(),
-                    None => t!("dieser PC").to_string(),
-                }
-            ),
+            if named { " " } else { "" },
+            match h.container.via.and_then(|v| app.lib.host(v)) {
+                Some(v) => v.display_name().to_string(),
+                None => t!("dieser PC").to_string(),
+            }
         ),
-        _ => (
-            h.username.clone(),
-            if named {
-                h.hostname.clone()
-            } else {
-                String::new()
-            },
-            if h.port == h.protocol.default_port() {
+        _ => {
+            let port = if h.port == h.protocol.default_port() {
                 String::new()
             } else {
                 format!(":{}", h.port)
-            },
-        ),
-    };
-    let mut ax = col_addr;
-    let mut addr_part = |text: String, color: Color32| {
-        if text.is_empty() {
-            return;
+            };
+            match (h.username.is_empty(), named) {
+                (false, true) => format!("{}@{}{}", h.username, h.hostname, port),
+                (false, false) => format!("{}{}", h.username, port),
+                (true, true) => format!("{}{}", h.hostname, port),
+                (true, false) => port.trim_start_matches(':').to_string(),
+            }
         }
-        let g = p.layout_no_wrap(text, FontId::monospace(12.5), color);
-        let gw = g.size().x;
-        p.galley(Pos2::new(ax, cy - g.size().y / 2.0), g, color);
-        ax += gw;
     };
-    let user_text = match (user.is_empty(), host_part.is_empty()) {
-        (false, false) => format!("{user}@"),
-        (false, true) => user,
-        _ => String::new(),
-    };
-    addr_part(user_text, theme::text_dim());
-    addr_part(host_part, theme::text_dim().linear_multiply(1.15));
-    addr_part(port, protocol_color(h.protocol).linear_multiply(0.9));
+    // Facts from the server and the jump host follow the address.
+    let mut extra: Vec<(String, Color32)> = Vec::new();
     if let Some(j) = h.jump_host.and_then(|j| app.lib.host(j)) {
-        addr_part(
-            format!("  via {}", j.display_name()),
-            theme::text_dim().linear_multiply(0.8),
-        );
-    }
-
-    // --- info: protocol (if not SSH), tags, then what the server told us.
-    let mut x = col_info;
-    if h.protocol != Protocol::Ssh {
-        chip(
-            &p,
-            &mut x,
-            cy,
-            protocol_tag(h.protocol).to_string(),
-            protocol_color(h.protocol),
-            false,
-        );
-    }
-    for t in h.tags.iter().take(2) {
-        chip(&p, &mut x, cy, t.clone(), theme::text_dim(), false);
-    }
-    // Tunnels: one switch each.
-    for t in &h.tunnels {
-        use crate::app::TunnelState;
-        let run = app.tunnels.get(&t.id);
-        let (color, tip) = match run.map(|r| &r.state) {
-            Some(TunnelState::Up) => (
-                theme::green(),
-                t!(
-                    "offen: localhost:{} → {}:{} · {} Verbindung(en)\nKlick schließt den Tunnel",
-                    t.local_port,
-                    t.remote_host,
-                    t.remote_port,
-                    run.map(|r| r.conns).unwrap_or(0)
-                ),
-            ),
-            Some(TunnelState::Connecting) => (theme::amber(), t!("verbindet…").to_string()),
-            Some(TunnelState::Failed(e)) => (theme::red(), t!("{}\nKlick startet neu", e)),
-            None => (
-                theme::text_dim(),
-                t!(
-                    "localhost:{} → {}:{}\nKlick öffnet den Tunnel",
-                    t.local_port,
-                    t.remote_host,
-                    t.remote_port
-                ),
-            ),
-        };
-        let name = if t.name.trim().is_empty() {
-            format!(":{}", t.local_port)
-        } else {
-            t.name.clone()
-        };
-        let g = p.layout_no_wrap(name, FontId::monospace(10.5), theme::text());
-        let r = Rect::from_min_size(Pos2::new(x, cy - 10.0), g.size() + Vec2::new(24.0, 8.0));
-        let resp_t = ui.interact(r, ui.id().with(("tunnel", t.id)), Sense::click());
-        p.rect(
-            r,
-            CornerRadius::same(10),
-            if resp_t.hovered() {
-                theme::bg_card()
-            } else {
-                Color32::TRANSPARENT
-            },
-            Stroke::new(1.0, color.linear_multiply(0.6)),
-            egui::StrokeKind::Inside,
-        );
-        theme::led(&p, Pos2::new(r.left() + 9.0, cy), color, run.is_some());
-        p.galley(r.min + Vec2::new(17.0, 4.0), g, theme::text());
-        x = r.right() + 6.0;
-        if resp_t
-            .on_hover_text(tip)
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .clicked()
-        {
-            actions.push(Action::ToggleTunnel(h.id, t.id));
-        }
+        extra.push((t!("via {}", j.display_name()), theme::text_dim()));
     }
     let facts = app.lib.facts.get(&h.id);
     if let Some(f) = facts {
         let os = f.short_os();
-        let start = x;
         if !os.is_empty() {
-            p.circle_filled(Pos2::new(x + 4.0, cy), 3.5, os_color(&f.os_id));
-            let g = p.layout_no_wrap(os, FontId::proportional(12.5), theme::text());
-            let gw = g.size().x;
-            p.galley(Pos2::new(x + 13.0, cy - g.size().y / 2.0), g, theme::text());
-            x += 13.0 + gw + 10.0;
+            extra.push((os, theme::text_dim()));
         }
-        let mut detail = Vec::new();
         if f.uptime_secs > 0 {
-            detail.push((uptime_text(f.uptime_secs), theme::text_dim()));
+            extra.push((uptime_text(f.uptime_secs), theme::text_dim()));
         }
         if let Some(d) = f.disk_used_pct {
             let c = if d >= 90 {
@@ -1235,30 +1107,34 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
             } else {
                 theme::text_dim()
             };
-            detail.push((format!("/ {d} %"), c));
+            extra.push((format!("{d} %"), c));
         }
-        for (text, color) in detail {
-            let g = p.layout_no_wrap(text, FontId::monospace(11.5), color);
-            let gw = g.size().x;
-            p.galley(Pos2::new(x, cy - g.size().y / 2.0), g, color);
-            x += gw + 10.0;
-        }
-        if let Some(n) = f.updates.filter(|n| *n > 0) {
-            chip(
-                &p,
-                &mut x,
-                cy,
-                if n == 1 {
-                    t!("{} Update", n)
-                } else {
-                    t!("{} Updates", n)
-                },
-                theme::amber(),
-                true,
-            );
-        }
-        let info_rect =
-            Rect::from_min_max(Pos2::new(start, rect.top()), Pos2::new(x, rect.bottom()));
+    }
+    let (ax, ay) = if compact {
+        (nx.max(col_name + 180.0) + 8.0, y1)
+    } else {
+        (col_name, y2)
+    };
+    let mut x = ax;
+    if !addr.is_empty() {
+        let g = p.layout_no_wrap(addr, FontId::monospace(12.0), theme::text_dim());
+        let gw = g.size().x;
+        p.galley(Pos2::new(x, ay - g.size().y / 2.0), g, theme::text_dim());
+        x += gw;
+    }
+    let info_start = x;
+    for (i, (text, color)) in extra.iter().enumerate() {
+        let sep = if i == 0 && x == ax { "" } else { "  ·  " };
+        let g = p.layout_no_wrap(format!("{sep}{text}"), FontId::proportional(12.5), *color);
+        let gw = g.size().x;
+        p.galley(Pos2::new(x, ay - g.size().y / 2.0), g, *color);
+        x += gw;
+    }
+    if let Some(f) = facts {
+        let info_rect = Rect::from_min_max(
+            Pos2::new(info_start, ay - 9.0),
+            Pos2::new(x.max(info_start + 1.0), ay + 9.0),
+        );
         let mut tip = format!("{}\nHostname: {}", f.os_name, f.hostname);
         if let Some(t) = f.collected {
             tip.push_str(&t!("\nStand: {}", relative_time(t)));
@@ -1274,92 +1150,82 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
             .data_mut(|d| d.insert_temp(rename_id(), (h.id, h.label.clone())));
     }
 
-    // Right side: last used, or actions on hover.
-    if hovered || resp.context_menu_opened() {
-        // Cover whatever info sits under the buttons.
-        ui.painter().rect_filled(
-            Rect::from_min_max(
-                Pos2::new(rect.right() - 300.0, rect.top() + 1.0),
-                rect.right_bottom() - Vec2::new(0.0, 2.0),
-            ),
-            CornerRadius::same(6),
-            if selected {
-                theme::lerp(theme::bg_hover(), theme::accent(), 0.12)
+    // --- tags on the right: updates, protocol, tags, tunnels.
+    let mut tags: Vec<RowTag> = Vec::new();
+    if let Some(n) = facts.and_then(|f| f.updates).filter(|n| *n > 0) {
+        tags.push(RowTag {
+            text: if n == 1 {
+                t!("{} Update", n)
             } else {
-                theme::bg_hover()
+                t!("{} Updates", n)
             },
-        );
-        let mut bx = rect.right() - 8.0;
-        let mut button = |label: &str, tip: &str, action: Action, primary: bool| {
-            let font = if primary {
-                theme::semibold(12.5)
-            } else {
-                FontId::proportional(12.5)
-            };
-            let g = ui
-                .painter()
-                .layout_no_wrap(label.to_string(), font, theme::text());
-            let r = Rect::from_min_size(
-                Pos2::new(bx - g.size().x - 20.0, cy - 13.0),
-                Vec2::new(g.size().x + 20.0, 26.0),
-            );
-            bx = r.left() - 6.0;
-            let b = ui.interact(r, ui.id().with((h.id, label)), Sense::click());
-            let (fill, fg) = if primary {
-                (
-                    if b.hovered() {
-                        theme::lerp(theme::accent(), Color32::WHITE, 0.12)
-                    } else {
-                        theme::accent()
-                    },
-                    theme::on_accent(),
-                )
-            } else {
-                (
-                    if b.hovered() {
-                        theme::bg_card()
-                    } else {
-                        Color32::TRANSPARENT
-                    },
-                    theme::text(),
-                )
-            };
-            ui.painter().rect(
-                r,
-                CornerRadius::same(5),
-                fill,
-                Stroke::new(1.0, if primary { fill } else { theme::border() }),
-                egui::StrokeKind::Inside,
-            );
-            ui.painter().galley(r.center() - g.size() / 2.0, g, fg);
-            if b.on_hover_text(tip)
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .clicked()
-            {
-                actions.push(action);
-            }
+            color: Some(theme::amber()),
+            dot: None,
+            tunnel: None,
+            tip: t!("Rechtsklick → Updates installieren").into(),
+        });
+    }
+    if h.protocol != Protocol::Ssh {
+        tags.push(RowTag {
+            text: protocol_tag(h.protocol).to_string(),
+            color: Some(protocol_color(h.protocol)),
+            dot: None,
+            tunnel: None,
+            tip: String::new(),
+        });
+    }
+    for t in h.tags.iter().take(2) {
+        tags.push(RowTag {
+            text: t.clone(),
+            color: None,
+            dot: None,
+            tunnel: None,
+            tip: String::new(),
+        });
+    }
+    for t in &h.tunnels {
+        use crate::app::TunnelState;
+        let run = app.tunnels.get(&t.id);
+        let (color, tip) = match run.map(|r| &r.state) {
+            Some(TunnelState::Up) => (
+                Some(theme::green()),
+                t!(
+                    "offen: localhost:{} → {}:{} · {} Verbindung(en)\nKlick schließt den Tunnel",
+                    t.local_port,
+                    t.remote_host,
+                    t.remote_port,
+                    run.map(|r| r.conns).unwrap_or(0)
+                ),
+            ),
+            Some(TunnelState::Connecting) => (Some(theme::amber()), t!("verbindet…").to_string()),
+            Some(TunnelState::Failed(e)) => (Some(theme::red()), t!("{}\nKlick startet neu", e)),
+            None => (
+                None,
+                t!(
+                    "localhost:{} → {}:{}\nKlick öffnet den Tunnel",
+                    t.local_port,
+                    t.remote_host,
+                    t.remote_port
+                ),
+            ),
         };
-        button(
-            t!("Verbinden"),
-            t!("Verbinden (Doppelklick)"),
-            Action::Connect(h.id),
-            true,
-        );
-        if matches!(h.protocol, Protocol::Ssh | Protocol::Rdp) {
-            button(
-                t!("Dateien"),
-                t!("Dateien (SFTP) öffnen"),
-                Action::OpenSftp(h.id),
-                false,
-            );
-        }
-        button(
-            t!("Bearbeiten"),
-            t!("Host bearbeiten"),
-            Action::EditHost(h.id),
-            false,
-        );
-    } else {
+        tags.push(RowTag {
+            text: if t.name.trim().is_empty() {
+                format!(":{}", t.local_port)
+            } else {
+                t.name.clone()
+            },
+            color,
+            dot: Some(run.is_some()),
+            tunnel: Some(t.id),
+            tip,
+        });
+    }
+
+    let show_actions = hovered || resp.context_menu_opened();
+    let slot = 150.0;
+    if !show_actions {
+        // Meta: latency and last use.
         let mut parts = Vec::new();
         if let Some(Reach::Up(ms)) = reach {
             parts.push(format!("{ms} ms"));
@@ -1368,12 +1234,91 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
             parts.push(relative_time(t));
         }
         p.text(
-            rect.right_center() - Vec2::new(14.0, 0.0),
+            Pos2::new(rect.right() - 16.0, cy),
             egui::Align2::RIGHT_CENTER,
-            parts.join("  ·  "),
-            FontId::monospace(11.5),
+            parts.join(" · "),
+            FontId::proportional(12.5),
             theme::text_dim(),
         );
+        let mut tx = rect.right() - 16.0 - slot - 12.0;
+        let left_limit = x.max(nx) + 16.0;
+        for tag in tags.iter().rev() {
+            let fg = tag.color.unwrap_or_else(theme::text_dim);
+            let bg = tag.color.map(theme::soft).unwrap_or_else(theme::fill);
+            let g = p.layout_no_wrap(tag.text.clone(), theme::medium(12.0), fg);
+            let dot_w = if tag.dot.is_some() { 12.0 } else { 0.0 };
+            let w = g.size().x + 18.0 + dot_w;
+            let r = Rect::from_min_size(Pos2::new(tx - w, cy - 11.0), Vec2::new(w, 22.0));
+            if r.left() < left_limit {
+                break;
+            }
+            let hot = tag.tunnel.is_some() && ui.rect_contains_pointer(r);
+            p.rect_filled(
+                r,
+                CornerRadius::same(11),
+                if hot { theme::fill_strong() } else { bg },
+            );
+            if let Some(lit) = tag.dot {
+                let c = Pos2::new(r.left() + 13.0, cy);
+                if lit {
+                    p.circle_filled(c, 3.0, fg);
+                } else {
+                    p.circle_stroke(c, 2.8, Stroke::new(1.3, fg));
+                }
+            }
+            p.galley(
+                Pos2::new(r.left() + 9.0 + dot_w, cy - g.size().y / 2.0),
+                g,
+                fg,
+            );
+            if let Some(tid) = tag.tunnel {
+                let tr = ui.interact(r, ui.id().with(("tunnel", tid)), Sense::click());
+                if tr
+                    .on_hover_text(tag.tip.as_str())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    actions.push(Action::ToggleTunnel(h.id, tid));
+                }
+            } else if !tag.tip.is_empty() {
+                ui.interact(
+                    r,
+                    ui.id().with(("tag", h.id, tag.text.as_str())),
+                    Sense::hover(),
+                )
+                .on_hover_text(tag.tip.as_str());
+            }
+            tx = r.left() - 6.0;
+        }
+    } else {
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(Rect::from_min_max(
+                    Pos2::new(rect.right() - 400.0, rect.top()),
+                    rect.right_bottom() - Vec2::new(8.0, 0.0),
+                ))
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+        );
+        child.spacing_mut().item_spacing.x = 6.0;
+        if theme::btn(&mut child, theme::Btn::SmallPrimary, None, t!("Verbinden"))
+            .on_hover_text(t!("Verbinden (Doppelklick)"))
+            .clicked()
+        {
+            actions.push(Action::Connect(h.id));
+        }
+        if matches!(h.protocol, Protocol::Ssh | Protocol::Rdp)
+            && theme::btn(&mut child, theme::Btn::Small, None, t!("Dateien"))
+                .on_hover_text(t!("Dateien (SFTP) öffnen"))
+                .clicked()
+        {
+            actions.push(Action::OpenSftp(h.id));
+        }
+        if theme::btn(&mut child, theme::Btn::Small, None, t!("Bearbeiten"))
+            .on_hover_text(t!("Host bearbeiten"))
+            .clicked()
+        {
+            actions.push(Action::EditHost(h.id));
+        }
     }
 
     if resp.double_clicked() {

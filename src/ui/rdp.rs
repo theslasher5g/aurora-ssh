@@ -253,7 +253,13 @@ impl RdpView {
             subtitle,
             state,
             |ui| {
-                if theme::icon_button(ui, "↗", t!("Im System-RDP-Client öffnen")).clicked() {
+                if theme::icon_btn(
+                    ui,
+                    crate::ui::icons::Icon::Monitor,
+                    t!("Im System-RDP-Client öffnen"),
+                )
+                .clicked()
+                {
                     action = RdpAction::OpenExternal;
                 }
                 if matches!(self.state, ConnState::Closed(_)) {

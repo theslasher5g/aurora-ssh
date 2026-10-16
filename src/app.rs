@@ -26,6 +26,7 @@ pub enum View {
     Keychain,
     Snippets,
     Settings,
+    Help,
 }
 
 #[derive(Clone)]
@@ -416,7 +417,8 @@ pub struct App {
     /// Enter on a dangerous command waits here for confirmation: (tab, command, why).
     pub danger: Option<(u64, String, &'static str)>,
     pub last_activity: Instant,
-    pub show_shortcuts: bool,
+    /// Filter on the help page.
+    pub help_filter: String,
     pub tour_step: usize,
     /// Terminal that gets the keyboard focus on the next frame.
     pub focus_term: Option<u64>,
@@ -457,6 +459,14 @@ pub struct App {
     pub split_broadcast: bool,
     /// Split pane temporarily shown alone.
     pub maximized: Option<u64>,
+    /// Full-screen mode: no sidebar, the active session fills the window.
+    pub focus: bool,
+    /// Open tab on the settings page.
+    pub settings_tab: usize,
+    /// Pending window full-screen change for the viewport.
+    pub ctx_fullscreen: Option<bool>,
+    /// Sessions shown in their own window.
+    pub popped: Vec<u64>,
     pub palette: Palette,
     pub pw_change: PwChange,
 
@@ -599,7 +609,7 @@ impl App {
             group_split: Vec::new(),
             danger: None,
             last_activity: Instant::now(),
-            show_shortcuts: false,
+            help_filter: String::new(),
             tour_step: 0,
             focus_term: None,
             pane_press: None,
@@ -631,6 +641,10 @@ impl App {
             broadcast: false,
             split_broadcast: false,
             maximized: None,
+            focus: false,
+            settings_tab: 0,
+            ctx_fullscreen: None,
+            popped: Vec::new(),
             palette: Palette::default(),
             pw_change: PwChange::default(),
             host_editor: None,
@@ -1371,11 +1385,42 @@ impl App {
                 self.split_broadcast = !self.split_broadcast;
                 return;
             }
+            SplitOp::Focus(id) => {
+                self.set_focus(id);
+                return;
+            }
+            SplitOp::PopOut(id) => {
+                if self.popped.contains(&id) {
+                    self.popped.retain(|p| *p != id);
+                    self.active = Some(id);
+                    return;
+                }
+                self.popped.push(id);
+                self.split.retain(|s| *s != id);
+                if self.active == Some(id) {
+                    self.active = self.split.first().copied().or_else(|| {
+                        self.tabs
+                            .iter()
+                            .map(|t| t.id)
+                            .find(|t| !self.popped.contains(t))
+                    });
+                }
+            }
         }
         self.maximized = None;
         if self.split.len() < 2 {
             self.split.clear();
         }
+    }
+
+    /// Enters full screen with `id` (or leaves it with `None`).
+    pub fn set_focus(&mut self, id: Option<u64>) {
+        self.focus = id.is_some();
+        if let Some(id) = id {
+            self.active = Some(id);
+            self.focus_term = Some(id);
+        }
+        self.ctx_fullscreen = Some(self.focus);
     }
 
     /// Starts the key installation for the open "SSH-Key einrichten" dialog.
@@ -1763,19 +1808,23 @@ impl App {
         }
     }
 
+    /// Production sessions keep a red frame (staging a faint amber one), so they stand
+    /// out even when not focused. The active pane's accent frame is drawn over it.
     fn env_frame(&self, painter: &egui::Painter, rect: egui::Rect, id: u64) {
         let Some(env) = self.tabs.iter().find(|t| t.id == id).map(|t| t.env) else {
             return;
         };
-        if matches!(env, Env::Prod | Env::Staging) {
-            let width = if env == Env::Prod { 3.0 } else { 2.0 };
-            painter.rect_stroke(
-                rect,
-                CornerRadius::ZERO,
-                Stroke::new(width, theme::env_color(env)),
-                egui::StrokeKind::Inside,
-            );
-        }
+        let stroke = match env {
+            Env::Prod => Stroke::new(1.5, theme::env_color(env)),
+            Env::Staging => Stroke::new(1.0, theme::env_color(env).gamma_multiply(0.6)),
+            _ => return,
+        };
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(PANE_RADIUS as u8),
+            stroke,
+            egui::StrokeKind::Inside,
+        );
     }
 
     /// A session tile dragged out of the rail: preview where it lands, place it on release.
@@ -1897,6 +1946,7 @@ impl App {
     }
 
     pub fn close_tab(&mut self, id: u64) {
+        self.popped.retain(|p| *p != id);
         let was_split = self.split.contains(&id);
         self.split.retain(|s| *s != id);
         // Closing a pane keeps the focus inside the split.
@@ -1930,6 +1980,9 @@ impl App {
                     self.active = partner;
                 }
             }
+        }
+        if self.focus && self.active.is_none() {
+            self.set_focus(None);
         }
     }
 
@@ -2999,24 +3052,34 @@ impl App {
             egui::Panel::top(egui::Id::new(("term-notes", tab_id)))
                 .frame(
                     egui::Frame::NONE
-                        .fill(theme::amber().gamma_multiply(0.10))
-                        .inner_margin(Margin::symmetric(18, 8)),
+                        .fill(theme::lerp(theme::surface(), theme::amber(), 0.10))
+                        .inner_margin(Margin::symmetric(14, 4)),
                 )
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("📝").color(theme::amber()));
-                        ui.add(
-                            egui::Label::new(RichText::new(&notes).size(13.0).color(theme::text()))
-                                .wrap(),
-                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .small_button("×")
-                                .on_hover_text(t!("Ausblenden"))
+                            if theme::icon_btn(ui, crate::ui::icons::Icon::Close, t!("Ausblenden"))
                                 .clicked()
                             {
                                 notes_open = false;
                             }
+                            ui.with_layout(
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    crate::ui::icons::show(
+                                        ui,
+                                        crate::ui::icons::Icon::File,
+                                        15.0,
+                                        theme::amber(),
+                                    );
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(&notes).size(13.0).color(theme::text()),
+                                        )
+                                        .wrap(),
+                                    );
+                                },
+                            );
                         });
                     });
                 });
@@ -3371,6 +3434,70 @@ impl App {
         }
     }
 
+    /// Sessions popped out into their own native windows.
+    fn popout_windows(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
+        self.popped
+            .retain(|id| self.tabs.iter().any(|t| t.id == *id));
+        for id in self.popped.clone() {
+            let Some(title) = self
+                .tabs
+                .iter()
+                .find(|t| t.id == id)
+                .map(|t| t.title.clone())
+            else {
+                continue;
+            };
+            let vid = egui::ViewportId::from_hash_of(("aurora-popout", id));
+            let builder = egui::ViewportBuilder::default()
+                .with_title(format!("{title} – Aurora"))
+                .with_inner_size([960.0, 640.0])
+                .with_min_inner_size([480.0, 320.0]);
+            let mut back = false;
+            ctx.show_viewport_immediate(vid, builder, |ui, _class| {
+                if ui.input(|i| i.viewport().close_requested()) {
+                    back = true;
+                }
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::NONE.fill(theme::bg_deep()))
+                    .show(ui, |ui| self.render_tab(ui, id, actions));
+            });
+            if back {
+                self.popped.retain(|p| *p != id);
+                self.active = Some(id);
+            }
+        }
+    }
+
+    /// Stand-in for a session that lives in its own window.
+    fn popped_placeholder(&mut self, ui: &mut egui::Ui, id: u64) {
+        let r = ui.max_rect();
+        ui.painter()
+            .rect_filled(r, CornerRadius::ZERO, theme::surface());
+        let c = r.center();
+        crate::ui::icons::paint(
+            ui.painter(),
+            egui::Rect::from_center_size(c - Vec2::new(0.0, 46.0), Vec2::splat(36.0)),
+            crate::ui::icons::Icon::External,
+            theme::text_dim(),
+        );
+        ui.painter().text(
+            c - Vec2::new(0.0, 6.0),
+            egui::Align2::CENTER_CENTER,
+            t!("Läuft in eigenem Fenster"),
+            theme::semibold(15.0),
+            theme::text(),
+        );
+        let br = egui::Rect::from_center_size(c + Vec2::new(0.0, 36.0), Vec2::new(160.0, 34.0));
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(br)
+                .layout(egui::Layout::top_down(egui::Align::Center)),
+        );
+        if theme::btn(&mut child, theme::Btn::Normal, None, t!("Zurückholen")).clicked() {
+            self.popped.retain(|p| *p != id);
+        }
+    }
+
     fn toasts_ui(&mut self, ctx: &egui::Context) {
         self.toasts
             .retain(|t| t.at.elapsed() < Duration::from_secs(5));
@@ -3384,12 +3511,18 @@ impl App {
             .show(ctx, |ui| {
                 for t in &self.toasts {
                     egui::Frame::NONE
-                        .fill(theme::bg_panel())
-                        .stroke(Stroke::new(1.0, theme::border()))
-                        .corner_radius(CornerRadius::same(4))
-                        .inner_margin(Margin::symmetric(14, 10))
+                        .fill(theme::lerp(theme::surface(), theme::text(), 0.08))
+                        .stroke(Stroke::new(1.0, theme::line()))
+                        .corner_radius(CornerRadius::same(12))
+                        .inner_margin(Margin::symmetric(16, 12))
+                        .shadow(egui::Shadow {
+                            offset: [0, 10],
+                            blur: 30,
+                            spread: 0,
+                            color: egui::Color32::from_black_alpha(90),
+                        })
                         .show(ui, |ui| {
-                            ui.set_max_width(380.0);
+                            ui.set_max_width(400.0);
                             ui.horizontal(|ui| {
                                 let (r, _) =
                                     ui.allocate_exact_size(Vec2::splat(10.0), egui::Sense::hover());
@@ -3446,7 +3579,11 @@ impl App {
                         .any(|e| matches!(e, egui::Event::Text(t) if t == "?")))
         });
         if help {
-            self.show_shortcuts = !self.show_shortcuts;
+            if self.active.is_none() && self.view == View::Help {
+                actions.push(Action::Navigate(View::Hosts));
+            } else {
+                actions.push(Action::Navigate(View::Help));
+            }
         }
         if close_tab && let Some(id) = self.active {
             self.close_tab(id);
@@ -3527,7 +3664,26 @@ impl eframe::App for App {
             ctx.request_repaint_after(limit.saturating_sub(self.last_activity.elapsed()));
         }
         self.shortcuts(&ctx, &mut actions);
-        crate::ui::chrome::rail(self, ui, &mut actions);
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F11)) {
+            if self.focus {
+                self.set_focus(None);
+            } else if let Some(a) = self.active {
+                self.set_focus(Some(a));
+            }
+        }
+        if self.focus
+            && !self
+                .active
+                .is_some_and(|a| self.tabs.iter().any(|t| t.id == a))
+        {
+            self.set_focus(None);
+        }
+        if let Some(fs) = self.ctx_fullscreen.take() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(fs));
+        }
+        if !self.focus {
+            crate::ui::chrome::rail(self, ui, &mut actions);
+        }
         let central = ui.available_rect_before_wrap();
 
         ctx.data_mut(|d| {
@@ -3539,18 +3695,32 @@ impl eframe::App for App {
                     split_broadcast: self.split_broadcast,
                     envs: self.tabs.iter().map(|t| t.env).collect(),
                     tabs: self.tabs.iter().map(|t| (t.id, t.title.clone())).collect(),
+                    live: self.tabs.iter().map(tab_live).collect(),
+                    focus: self.focus,
+                    popped: self.popped.clone(),
                 },
             )
         });
         if self.maximized.is_some() && self.maximized != self.active {
             self.maximized = None;
         }
-        let split_view = self.split_view();
+        let split_view = self.split_view() && !self.focus;
         match self.active {
-            Some(_) if split_view => {
-                let ids = self.split.clone();
+            Some(id) if self.focus && self.tabs.iter().any(|t| t.id == id) => {
+                self.render_tab(ui, id, &mut actions);
+            }
+            Some(id) if split_view || self.tabs.iter().any(|t| t.id == id) => {
+                let ids = if split_view {
+                    self.split.clone()
+                } else {
+                    vec![id]
+                };
                 egui::CentralPanel::default()
-                    .frame(egui::Frame::NONE.fill(theme::border()))
+                    .frame(
+                        egui::Frame::NONE
+                            .fill(theme::bg_deep())
+                            .inner_margin(Margin::same(PANE_GAP as i8)),
+                    )
                     .show(ui, |ui| {
                         let rects = crate::ui::chrome::split_rects(ui.max_rect(), ids.len());
                         for (id, rect) in ids.iter().copied().zip(rects.iter().copied()) {
@@ -3561,7 +3731,11 @@ impl eframe::App for App {
                                     .layout(egui::Layout::top_down(egui::Align::Min)),
                             );
                             child.set_clip_rect(rect);
-                            self.render_tab(&mut child, id, &mut actions);
+                            if self.popped.contains(&id) {
+                                self.popped_placeholder(&mut child, id);
+                            } else {
+                                self.render_tab(&mut child, id, &mut actions);
+                            }
                             let pressed = ui.input(|i| {
                                 (i.pointer.primary_pressed() || i.pointer.secondary_pressed())
                                     && i.pointer.interact_pos().is_some_and(|p| rect.contains(p))
@@ -3571,25 +3745,34 @@ impl eframe::App for App {
                                 self.pane_press = Some(id);
                             }
                         }
-                        self.sync_split_focus(&ctx, &ids, &rects);
-                        // Frames last, on top of the panes, for the final active pane.
+                        if ids.len() >= 2 {
+                            self.sync_split_focus(&ctx, &ids, &rects);
+                        }
+                        // Corners and frames last, on top of the panes.
                         let painter = ui.painter().clone();
                         for (id, rect) in ids.iter().copied().zip(rects) {
-                            self.env_frame(&painter, rect, id);
-                            if self.active == Some(id) {
+                            theme::round_corners(&painter, rect, PANE_RADIUS, theme::bg_deep());
+                            let accent_frame = ids.len() >= 2 && self.active == Some(id);
+                            if !accent_frame {
+                                self.env_frame(&painter, rect, id);
+                            }
+                            if accent_frame {
                                 painter.rect_stroke(
                                     rect,
-                                    CornerRadius::ZERO,
-                                    Stroke::new(1.5, theme::accent().linear_multiply(0.8)),
+                                    CornerRadius::same(PANE_RADIUS as u8),
+                                    Stroke::new(2.0, theme::accent()),
+                                    egui::StrokeKind::Inside,
+                                );
+                            } else {
+                                painter.rect_stroke(
+                                    rect,
+                                    CornerRadius::same(PANE_RADIUS as u8),
+                                    Stroke::new(1.0, theme::card_edge()),
                                     egui::StrokeKind::Inside,
                                 );
                             }
                         }
                     });
-            }
-            Some(id) if self.tabs.iter().any(|t| t.id == id) => {
-                self.render_tab(ui, id, &mut actions);
-                self.env_frame(&ui.painter().clone(), central, id);
             }
             _ => {
                 self.active = None;
@@ -3597,7 +3780,12 @@ impl eframe::App for App {
                     .frame(
                         egui::Frame::NONE
                             .fill(theme::bg_deep())
-                            .inner_margin(Margin::symmetric(40, 30)),
+                            .inner_margin(Margin {
+                                left: 40,
+                                right: 40,
+                                top: 32,
+                                bottom: 24,
+                            }),
                     )
                     .show(ui, |ui| match self.view {
                         View::Hosts => crate::ui::hosts::show(self, ui, &mut actions),
@@ -3605,9 +3793,11 @@ impl eframe::App for App {
                         View::Keychain => crate::ui::keychain::show(self, ui, &mut actions),
                         View::Snippets => crate::ui::snippets::show(self, ui, &mut actions),
                         View::Settings => crate::ui::settings::show(self, ui, &mut actions),
+                        View::Help => crate::ui::help::show(self, ui),
                     });
             }
         }
+        self.popout_windows(&ctx, &mut actions);
 
         self.drag_drop(&ctx, central, split_view);
 
@@ -3663,6 +3853,21 @@ impl eframe::App for App {
     }
 }
 
+/// Space around and between session panes.
+const PANE_GAP: f32 = 10.0;
+const PANE_RADIUS: f32 = 12.0;
+
+/// Whether a session is connected right now.
+fn tab_live(t: &Tab) -> bool {
+    match &t.kind {
+        TabKind::Term(t) => matches!(t.state, ConnState::Connected),
+        TabKind::Sftp(t) => matches!(t.state(), ConnState::Connected),
+        TabKind::Rdp(t) => t.is_live(),
+        TabKind::Vnc(t) => matches!(t.view.state, ConnState::Connected),
+        TabKind::Log(t) => matches!(t.state, ConnState::Connected),
+    }
+}
+
 /// Small pill at the bottom of a terminal while dropped files upload.
 fn upload_badge(ui: &egui::Ui, name: &str, done: u64, total: u64) {
     let r = ui.max_rect();
@@ -3682,12 +3887,10 @@ fn upload_badge(ui: &egui::Ui, name: &str, done: u64, total: u64) {
         egui::pos2(r.right() - size.x - 12.0, r.bottom() - size.y - 10.0),
         size,
     );
-    painter.rect(
+    painter.rect_filled(
         pill,
-        CornerRadius::same(255),
-        theme::bg_card(),
-        Stroke::new(1.0, theme::accent()),
-        egui::StrokeKind::Inside,
+        CornerRadius::same(12),
+        theme::lerp(theme::surface(), theme::accent(), 0.16),
     );
     let frac = if total > 0 {
         done as f32 / total as f32
@@ -3712,19 +3915,17 @@ fn closed_badge(ui: &egui::Ui) {
         egui::FontId::proportional(12.5),
         theme::text(),
     );
-    let size = g.size() + Vec2::new(28.0, 14.0);
+    let size = g.size() + Vec2::new(32.0, 16.0);
     let pill = egui::Rect::from_min_size(
-        egui::pos2(r.center().x - size.x / 2.0, r.bottom() - size.y - 14.0),
+        egui::pos2(r.center().x - size.x / 2.0, r.bottom() - size.y - 16.0),
         size,
     );
-    painter.rect(
+    painter.rect_filled(
         pill,
-        CornerRadius::same(255),
-        theme::bg_card(),
-        Stroke::new(1.0, theme::amber()),
-        egui::StrokeKind::Inside,
+        CornerRadius::same(12),
+        theme::lerp(theme::surface(), theme::amber(), 0.18),
     );
-    painter.galley(pill.min + Vec2::new(14.0, 7.0), g, theme::text());
+    painter.galley(pill.min + Vec2::new(16.0, 8.0), g, theme::text());
 }
 
 pub fn state_color(s: &ConnState) -> Color32 {

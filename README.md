@@ -2,7 +2,7 @@
 
 A modern client for **SSH, SFTP, RDP, VNC, Telnet, serial consoles and Docker/Kubernetes
 containers**, written in Rust: clean, fast, with an encrypted keychain, snippets, host groups,
-tunnels, a live log viewer and switchable themes. UI in English and German.
+tunnels, a live log viewer and 26 switchable themes. UI in English and German.
 
 ![Hosts](docs/screenshots/hosts.png)
 
@@ -21,6 +21,8 @@ Every [release](../../releases) contains Windows, Linux and macOS:
 The macOS app is not notarized: on first start right-click Aurora → *Open*
 (or `xattr -cr /Applications/Aurora.app`). Language: *Settings → Sprache / Language*.
 
+What's new in each version: [CHANGELOG.md](CHANGELOG.md).
+
 ## Features
 
 | Area | |
@@ -28,7 +30,8 @@ The macOS app is not notarized: on first start right-click Aurora → *Open*
 | **SSH** | Own terminal emulator (256 colours/truecolor, scrollback, selection, bracketed paste, resize), key/password/keyboard-interactive auth, keepalive, reconnect with Enter |
 | **Files (SFTP)** | Own section in the rail. Two columns, each side **local or any server** – including **server ⇄ server** (streamed through Aurora, the servers don't need to reach each other). Windows servers with OpenSSH (`C:\path` is translated, local drive list), RDP hosts get their SFTP port. Recursive transfers with progress, drag & drop |
 | **Edit remote files** | Double-click a server file to open it in your editor; every save is uploaded automatically (executable file types are never opened with the default app) |
-| **Split screen** | Up to **4 sessions side by side** (terminal, files, RDP mixed) – drag a port from the rail into the window (a preview shows where it lands), ◫ menu or right-click. Double-click a header to maximize, "type into all panes", × ends a session, ↗ only detaches it |
+| **Split screen** | Up to **4 sessions side by side** (terminal, files, RDP mixed) – drag a port from the rail into the window (a preview shows where it lands), the split menu or right-click. Double-click a header to maximize, "type into all panes", × ends a session |
+| **Full screen & windows** | **Full screen** (`F11`) hides everything but the session, with a session switcher in the top bar · **open a session in its own window** (and bring it back with the same button) |
 | **Tunnels & jump host** | Port forwardings per host as switches in the list (status LED, optionally open the browser); "connect via" another SSH host (ProxyJump) – used for terminal, files and tunnels |
 | **RDP** | Inside the tab (IronRDP): follows the window size, **clipboard in both directions** (automatic + "copy from host"/"send to host" buttons), **Ctrl+Alt+Del**, Windows key, type the clipboard as keystrokes (for login screens/consoles). Optionally in the system client (mstsc, FreeRDP, Remmina) |
 | **VNC** | Inside the tab (own RFB client: ZRLE, CopyRect, Raw, resize, VNC password): fit or 1:1, Ctrl+Alt+Del, clipboard in both directions, type the clipboard as keystrokes, view-only mode |
@@ -37,7 +40,7 @@ The macOS app is not notarized: on first start right-click Aurora → *Open*
 | **Docker & Kubernetes** | Containers and pods as their own session type – on this PC or on any SSH host. "Browse containers" lists `docker ps` / `kubectl get pods` (Podman and kube contexts supported); one click opens a shell (bash, else sh) or the logs, or saves the container to the host list |
 | **Log viewer** | Follow a file (`tail -F`), `journalctl -f` or container logs live in their own tab: filter (`nginx \| timeout`), only matches or highlighting, errors/warnings colored and filterable, pause with a counter of waiting lines, copy, wrap. From the host menu ("View log…") or right-click a file in the file browser ("Follow as log") |
 | **Terminal profile** | Per host: own color theme (e.g. PROD always in a different look), font and font size. Fonts: IBM Plex Mono, Hack, installed monospace fonts (Cascadia, Consolas, Menlo, DejaVu, JetBrains Mono …) or any .ttf/.otf file |
-| **Host list** | After the first login it shows **OS, uptime, disk usage and pending updates** (one click: "install updates"), latency and status (green = reachable, ring = no answer, red = last connection failed). Hosts without a name take the server's hostname, rename with `F2`. Multi-select (Ctrl/Shift+click) with bulk actions, drag hosts into groups, compact view, sorting. Groups show "x/y online"; hosts in the same subnet can be grouped with one click |
+| **Host list** | Groups as cards with "x of y online". After the first login it shows **OS, uptime, disk usage and pending updates** (one click: "install updates"), latency and status (green = reachable, ring = no answer, red = last connection failed). Hosts without a name take the server's hostname, rename with `F2`. Multi-select (Ctrl/Shift+click) with bulk actions, drag hosts into groups, compact view, sorting. Groups show "x/y online"; hosts in the same subnet can be grouped with one click |
 | **Network scan** | Finds SSH/RDP devices in the local network (with an OS hint from the SSH banner) and adds them |
 | **SSH key setup** | Generates a key, installs it on the server, verifies the login – no more passwords |
 | **Keychain** | Passwords & SSH keys, Ed25519 generator, encrypted with Argon2id + XChaCha20-Poly1305 |
@@ -46,17 +49,18 @@ The macOS app is not notarized: on first start right-click Aurora → *Open*
 | **Productivity** | **Quick connect**: `user@host`, `host:port` or `ssh -p 2222 user@host` in `Ctrl+K`, then "save as host" · **open a whole group** side by side · **search in the terminal** (`Ctrl+Shift+F`, incl. scrollback) · **font size with `Ctrl` + mouse wheel** per pane · import from `~/.ssh/config` · sessions and split layout are **restored on the next start** |
 | **Safety** | **Environment labels** PROD / STAGING / TEST / DEV per host or group – PROD sessions get a red frame and **ask before dangerous commands** (`rm -rf`, `reboot`, `DROP TABLE` …) · **notes per host** shown when connecting · **auto-lock** after inactivity (sessions keep running) · clear error messages with the next step |
 | **Comfort** | Reachability LED per host (TCP check with latency), **update check** on start with one-click update (SHA256-verified) · drop files onto a terminal to upload them to the current directory · a port blinks when a long command finishes in the background · disconnected sessions marked with ⟳, click to reconnect · encrypted **export/import** of hosts, groups, snippets and keys |
-| **Design** | Own "Patchbay" design: sessions as numbered ports with status LEDs, IBM Plex Sans/Mono. 12 themes (Phosphor, Glacier, Nord, Dracula, Paper, Tokyo Night, Gruvbox, Catppuccin, Rosé Pine, Solarized Dark/Light, GitHub Light) – the terminal follows the theme. Command palette `Ctrl/⌘+K`, broadcast mode, first-start tour, shortcut overview with `F1` / `?` |
+| **Design** | Calm card layout with Inter and IBM Plex Mono, line icons and rounded sheets for all editors. The sidebar shows labels on the start pages and becomes a slim rail with numbered session tiles once sessions are open. **26 themes** – dark: Phosphor, Glacier, Nord, Dracula, Tokyo Night, Gruvbox, Catppuccin, Rosé Pine, Solarized Dark, One Dark, Monokai, Everforest, Kanagawa, Ayu Mirage, Night Owl, Synthwave, Midnight, Matrix; light: Paper, Solarized Light, GitHub Light, Catppuccin Latte, Rosé Pine Dawn, One Light, Ayu Light, Nord Light – the terminal follows the theme. Settings in tabs (appearance, terminal, general, security, data & updates), command palette `Ctrl/⌘+K`, broadcast mode, first-start tour, help page with all shortcuts (`F1` / `?`) |
 
 | | |
 |---|---|
-| ![PROD warning](docs/screenshots/prod.png) | ![Drag a session next to another](docs/screenshots/drag-split.png) |
-| ![Split screen](docs/screenshots/split.png) | ![Server ⇄ server](docs/screenshots/sftp.png) |
-| ![Files](docs/screenshots/files.png) | ![Tokyo Night](docs/screenshots/tokyo.png) |
-| ![Terminal](docs/screenshots/terminal.png) | ![GitHub Light](docs/screenshots/light.png) |
+| ![Split screen](docs/screenshots/split.png) | ![PROD warning](docs/screenshots/prod.png) |
+| ![Server ⇄ server](docs/screenshots/sftp.png) | ![Full screen](docs/screenshots/fullscreen.png) |
+| ![Terminal](docs/screenshots/terminal.png) | ![Tokyo Night](docs/screenshots/tokyo.png) |
+| ![New host](docs/screenshots/editor.png) | ![GitHub Light](docs/screenshots/light.png) |
 | ![RDP](docs/screenshots/rdp.png) | ![Paper theme](docs/screenshots/paper.png) |
 | ![Command palette](docs/screenshots/palette.png) | ![Snippets](docs/screenshots/snippets.png) |
-| ![Settings & themes](docs/screenshots/themes.png) | ![Vault](docs/screenshots/lock.png) |
+| ![Settings & themes](docs/screenshots/themes.png) | ![Shortcuts](docs/screenshots/shortcuts.png) |
+| ![Files](docs/screenshots/files.png) | ![Vault](docs/screenshots/lock.png) |
 
 (Screenshots show the German UI.)
 
@@ -70,7 +74,8 @@ The macOS app is not notarized: on first start right-click Aurora → *Open*
 | `Ctrl/⌘ + Shift + W` | Close session |
 | `Ctrl + Shift + F` | Search in the terminal (Enter = older, Shift+Enter = newer match) |
 | `Ctrl` + mouse wheel | Terminal font size |
-| `F1` / `?` | All shortcuts |
+| `F11` | Full screen on/off |
+| `F1` / `?` | Help page with all shortcuts |
 | `Ctrl + Shift + C` / selection | Copy in the terminal |
 | `Enter` in a disconnected session | Reconnect |
 
@@ -113,15 +118,15 @@ Details and review results: [SECURITY.md](SECURITY.md).
 src/
 ├── app.rs             state, tabs, session lifecycle, layout
 ├── terminal.rs        vt100 + renderer + keyboard → escape sequences, search, zoom
-├── theme.rs           "Patchbay" design system: palettes, fonts, widgets
+├── theme.rs           design system: 26 palettes, fonts, widgets (buttons, cards, forms, sheets)
 ├── update.rs          update check (GitHub releases) and self-update
 ├── i18n/              English texts for the German source strings
 ├── model.rs / store.rs  data, persistence, vault, export
 ├── backend/           ssh (incl. jump host), sftp (incl. server⇄server), tunnel, scan, serial, rdp, reach,
 │                      vnc (RFB client), telnet, local (pseudo terminal), container, logs
-└── ui/                rail (chrome), hosts, keychain, snippets, files, RDP, VNC, log viewer, containers,
-                       settings, dialogs, palette
-assets/fonts/          IBM Plex Sans/Mono (SIL OFL)
+└── ui/                sidebar/rail and session headers (chrome), line icons, hosts, keychain, snippets,
+                       files, RDP, VNC, log viewer, containers, settings, help, editors, dialogs, palette
+assets/fonts/          Inter (UI) and IBM Plex Mono (terminal), both SIL OFL
 crates/aurora-rdp/     IronRDP helper process (stdio protocol)
 packaging/             .deb/.tar.gz script, Inno Setup installer, macOS .app/.dmg script
 ```

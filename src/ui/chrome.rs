@@ -3,13 +3,15 @@
 //! Open sessions live in the rail as numbered "ports" (the number is the Ctrl+N shortcut),
 //! each with a status LED, instead of a tab strip.
 
-use egui::{Color32, CornerRadius, FontId, Margin, Pos2, Rect, RichText, Sense, Stroke, Vec2};
+use egui::{Color32, CornerRadius, Margin, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 
 use crate::app::{Action, App, ConnState, TabKind, View};
 use crate::theme;
+use crate::ui::icons::{self, Icon};
 
-const RAIL_WIDTH: f32 = 64.0;
-const TILE: f32 = 40.0;
+const RAIL_WIDTH: f32 = 72.0;
+const SIDEBAR_WIDTH: f32 = 232.0;
+const TILE: f32 = 44.0;
 
 /// Two-letter label for a session tile.
 pub fn initials(title: &str) -> String {
@@ -29,36 +31,63 @@ pub fn initials(title: &str) -> String {
     s.to_uppercase()
 }
 
-fn rail_button(
+/// Navigation entry: icon only (rail) or icon + label (sidebar).
+fn nav_item(
     ui: &mut egui::Ui,
-    glyph: &str,
-    tooltip: &str,
+    icon: Icon,
+    label: &str,
     selected: bool,
+    wide: bool,
     tint: Option<Color32>,
+    dot: Option<Color32>,
 ) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(TILE), Sense::click());
+    let size = if wide {
+        Vec2::new(ui.available_width(), 34.0)
+    } else {
+        Vec2::splat(TILE)
+    };
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let p = ui.painter();
+    let radius = if wide { 8 } else { 12 };
     if selected {
-        p.rect_filled(rect, CornerRadius::same(8), theme::bg_hover());
+        p.rect_filled(rect, CornerRadius::same(radius), theme::accent_soft());
     } else if resp.hovered() {
-        p.rect_filled(rect, CornerRadius::same(8), theme::bg_card());
+        p.rect_filled(rect, CornerRadius::same(radius), theme::hover());
     }
     let color = tint.unwrap_or(if selected {
         theme::accent()
-    } else if resp.hovered() {
-        theme::text()
     } else {
         theme::text_dim()
     });
-    p.text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        glyph,
-        FontId::proportional(17.0),
-        color,
-    );
-    resp.on_hover_text(tooltip)
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
+    let icon_rect = if wide {
+        Rect::from_center_size(
+            Pos2::new(rect.left() + 19.0, rect.center().y),
+            Vec2::splat(18.0),
+        )
+    } else {
+        Rect::from_center_size(rect.center(), Vec2::splat(18.0))
+    };
+    icons::paint(p, icon_rect, icon, color);
+    if wide {
+        p.text(
+            Pos2::new(rect.left() + 38.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            theme::medium(14.0),
+            theme::text(),
+        );
+        if let Some(c) = dot {
+            p.circle_filled(Pos2::new(rect.right() - 14.0, rect.center().y), 3.5, c);
+        }
+    } else if let Some(c) = dot {
+        p.circle_filled(rect.right_top() + Vec2::new(-9.0, 9.0), 3.5, c);
+    }
+    let resp = if wide {
+        resp
+    } else {
+        resp.on_hover_text(label)
+    };
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -67,7 +96,6 @@ fn port_tile(
     in_split: bool,
     index: usize,
     label: &str,
-    cable: Color32,
     led: Color32,
     live: bool,
     active: bool,
@@ -86,57 +114,57 @@ fn port_tile(
     } else {
         0.0
     };
-    let stroke = if attention {
-        Stroke::new(2.0, theme::accent().gamma_multiply(pulse))
-    } else if active {
-        Stroke::new(1.5, theme::accent())
-    } else if resp.hovered() {
-        Stroke::new(1.0, theme::text_dim())
+    let fill = if resp.hovered() {
+        theme::fill_strong()
     } else {
-        Stroke::new(1.0, theme::border())
+        theme::fill()
     };
-    p.rect(
-        rect,
-        CornerRadius::same(8),
-        if active {
-            theme::bg_card()
-        } else {
-            Color32::TRANSPARENT
-        },
-        stroke,
-        egui::StrokeKind::Inside,
-    );
+    p.rect_filled(rect, CornerRadius::same(12), fill);
+    if attention {
+        p.rect_stroke(
+            rect,
+            CornerRadius::same(12),
+            Stroke::new(2.0, theme::accent().gamma_multiply(pulse)),
+            egui::StrokeKind::Inside,
+        );
+    } else if active {
+        p.rect_stroke(
+            rect.expand(1.0),
+            CornerRadius::same(13),
+            Stroke::new(2.0, theme::accent()),
+            egui::StrokeKind::Inside,
+        );
+    }
     p.text(
-        rect.center() + Vec2::new(0.0, 1.0),
+        rect.center(),
         egui::Align2::CENTER_CENTER,
         label,
-        theme::mono_medium(13.0),
+        theme::bold(13.0),
         if dead {
-            theme::text_dim().gamma_multiply(0.5)
-        } else if active {
-            theme::text()
+            theme::text_dim().gamma_multiply(0.6)
         } else {
-            theme::text_dim()
+            theme::text()
         },
     );
     if matches!(env, crate::model::Env::Prod | crate::model::Env::Staging) {
         // Environment stripe along the top edge.
         p.rect_filled(
             Rect::from_min_size(
-                rect.left_top() + Vec2::new(8.0, 1.0),
-                Vec2::new(TILE - 16.0, 3.0),
+                rect.left_top() + Vec2::new(12.0, 2.0),
+                Vec2::new(TILE - 24.0, 2.5),
             ),
             CornerRadius::same(2),
             theme::env_color(env),
         );
     }
     if dead {
-        // Reconnect hint in the corner.
-        p.text(
-            rect.right_bottom() + Vec2::new(-4.0, -1.0),
-            egui::Align2::RIGHT_BOTTOM,
-            "⟳",
-            FontId::proportional(11.0),
+        icons::paint(
+            p,
+            Rect::from_center_size(
+                rect.right_bottom() + Vec2::new(-9.0, -9.0),
+                Vec2::splat(10.0),
+            ),
+            Icon::Refresh,
             theme::amber(),
         );
     }
@@ -145,70 +173,102 @@ fn port_tile(
             rect.left_bottom() + Vec2::new(5.0, -3.0),
             egui::Align2::LEFT_BOTTOM,
             index.to_string(),
-            FontId::monospace(8.5),
-            theme::text_dim().linear_multiply(0.8),
+            theme::semibold(9.5),
+            theme::text_dim(),
         );
     }
-    // Cable colour = group colour of the host.
-    p.line_segment(
-        [
-            rect.center_bottom() + Vec2::new(-6.0, -5.0),
-            rect.center_bottom() + Vec2::new(6.0, -5.0),
-        ],
-        Stroke::new(2.0, cable.linear_multiply(if active { 1.0 } else { 0.7 })),
-    );
-    let led = if attention {
+    let dot = if attention {
         theme::accent().gamma_multiply(pulse)
     } else {
         led
     };
-    theme::led(
-        p,
-        rect.right_top() + Vec2::new(-7.0, 7.0),
-        led,
-        live || attention,
-    );
+    let c = rect.right_top() + Vec2::new(-9.0, 9.0);
+    if live || attention {
+        p.circle_filled(c, 6.0, theme::side());
+        p.circle_filled(c, 4.0, dot);
+    } else {
+        p.circle_filled(c, 5.5, theme::side());
+        p.circle_stroke(c, 3.5, Stroke::new(1.5, dot));
+    }
     if in_split {
         p.rect_filled(
             Rect::from_min_size(
-                rect.left_top() + Vec2::new(-8.0, 8.0),
-                Vec2::new(2.0, TILE - 16.0),
+                rect.left_top() + Vec2::new(-10.0, 12.0),
+                Vec2::new(3.0, TILE - 24.0),
             ),
-            CornerRadius::same(1),
+            CornerRadius::same(2),
             theme::accent(),
         );
     }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// Left rail: navigation, open sessions as ports, global toggles.
+/// Sidebar with labels while no session is open, slim rail with session tiles otherwise.
 pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+    let wide = app.tabs.is_empty() && ui.ctx().content_rect().width() >= 900.0;
+    let width = if wide { SIDEBAR_WIDTH } else { RAIL_WIDTH };
     egui::Panel::left("rail")
-        .exact_size(RAIL_WIDTH)
+        .exact_size(width)
         .resizable(false)
-        .frame(
-            egui::Frame::NONE
-                .fill(theme::bg_panel())
-                .inner_margin(Margin::symmetric(12, 14)),
-        )
+        .show_separator_line(false)
+        .frame(egui::Frame::NONE.fill(theme::side()).inner_margin(if wide {
+            Margin {
+                left: 12,
+                right: 12,
+                top: 20,
+                bottom: 16,
+            }
+        } else {
+            Margin::symmetric(14, 16)
+        }))
         .show(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
-                theme::logo(ui, 30.0).on_hover_text("Aurora");
-                ui.add_space(14.0);
+            // Hairline on the edge towards the content.
+            let edge = ui.max_rect().right() + if wide { 12.0 } else { 14.0 } - 0.5;
+            let r = ui.clip_rect();
+            ui.painter().line_segment(
+                [
+                    Pos2::new(edge, r.top() - 40.0),
+                    Pos2::new(edge, r.bottom() + 40.0),
+                ],
+                Stroke::new(1.0, theme::line()),
+            );
+            let layout = if wide {
+                egui::Layout::top_down(egui::Align::Min)
+            } else {
+                egui::Layout::top_down(egui::Align::Center)
+            };
+            ui.with_layout(layout, |ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                if wide {
+                    ui.horizontal(|ui| {
+                        ui.add_space(10.0);
+                        theme::logo(ui, 34.0).on_hover_text("Aurora");
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if theme::icon_btn(ui, Icon::Lock, t!("Sperren")).clicked() {
+                                actions.push(Action::Lock);
+                            }
+                        });
+                    });
+                    ui.add_space(22.0);
+                } else {
+                    theme::logo(ui, 34.0).on_hover_text("Aurora");
+                    ui.add_space(14.0);
+                }
 
                 let home = app.active.is_none();
-                for (view, glyph, tip) in [
-                    (View::Hosts, "🖧", "Verbindungen"),
-                    (View::Keychain, "🔑", "Schlüssel & Passwörter"),
-                    (View::Files, "🗀", "Dateien (SFTP)"),
-                    (View::Snippets, "⚡", "Snippets"),
+                for (view, icon, label) in [
+                    (View::Hosts, Icon::Hosts, "Verbindungen"),
+                    (View::Keychain, Icon::Key, "Schlüssel"),
+                    (View::Files, Icon::Folder, "Dateien"),
+                    (View::Snippets, Icon::Bolt, "Snippets"),
                 ] {
-                    if rail_button(
+                    if nav_item(
                         ui,
-                        glyph,
-                        crate::i18n::tr(tip),
+                        icon,
+                        crate::i18n::tr(label),
                         home && app.view == view,
+                        wide,
+                        None,
                         None,
                     )
                     .clicked()
@@ -216,245 +276,327 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         actions.push(Action::Navigate(view));
                     }
                 }
+                tunnel_item(app, ui, wide, actions);
 
                 if !app.tabs.is_empty() {
-                    ui.add_space(8.0);
-                    let (r, _) = ui.allocate_exact_size(Vec2::new(24.0, 1.0), Sense::hover());
+                    ui.add_space(6.0);
+                    let (r, _) = ui.allocate_exact_size(Vec2::new(28.0, 1.0), Sense::hover());
                     ui.painter()
-                        .rect_filled(r, CornerRadius::ZERO, theme::border());
-                    ui.add_space(8.0);
+                        .rect_filled(r, CornerRadius::ZERO, theme::line());
+                    ui.add_space(6.0);
                 }
 
-                let mut activate = None;
-                let mut close = None;
-                let mut reconnect = None;
-                let mut revive = None;
-                let dragging = dragged_tab(ui.ctx()).is_some();
-                for (i, tab) in app.tabs.iter().enumerate() {
-                    let (state_color, live, state) = match &tab.kind {
-                        TabKind::Term(t) => (
-                            crate::app::state_color(&t.state),
-                            matches!(t.state, ConnState::Connected),
-                            state_text(&t.state),
-                        ),
-                        TabKind::Sftp(t) => (
-                            crate::app::state_color(t.state()),
-                            matches!(t.state(), ConnState::Connected),
-                            state_text(t.state()),
-                        ),
-                        TabKind::Rdp(t) => (
-                            t.status_color(),
-                            t.is_live(),
-                            if t.is_live() {
-                                t!("verbunden").into()
-                            } else {
-                                t!("getrennt").into()
-                            },
-                        ),
-                        TabKind::Vnc(t) => (
-                            crate::app::state_color(&t.view.state),
-                            matches!(t.view.state, ConnState::Connected),
-                            state_text(&t.view.state),
-                        ),
-                        TabKind::Log(t) => (
-                            crate::app::state_color(&t.state),
-                            matches!(t.state, ConnState::Connected),
-                            state_text(&t.state),
-                        ),
-                    };
-                    let kind = match &tab.kind {
-                        TabKind::Term(_) => "Terminal",
-                        TabKind::Sftp(_) => t!("Dateien"),
-                        TabKind::Rdp(_) | TabKind::Vnc(_) => "Desktop",
-                        TabKind::Log(_) => "Log",
-                    };
-                    let dead = match &tab.kind {
-                        TabKind::Term(t) => matches!(t.state, ConnState::Closed(_)),
-                        TabKind::Vnc(t) => matches!(t.view.state, ConnState::Closed(_)),
-                        TabKind::Log(t) => matches!(t.state, ConnState::Closed(_)),
-                        _ => false,
-                    };
-                    let resp = port_tile(
-                        ui,
-                        app.split.len() >= 2 && app.split.contains(&tab.id),
-                        i + 1,
-                        &initials(&tab.title),
-                        tab.color,
-                        state_color,
-                        live,
-                        app.active == Some(tab.id),
-                        tab.attention,
-                        dead,
-                        tab.env,
-                    );
-                    let tile = resp.rect;
-                    if resp.drag_started() {
-                        ui.ctx()
-                            .data_mut(|d| d.insert_temp(drag_id(), DragTab(tab.id)));
-                    }
-                    let resp = if dragging {
-                        resp
+                ports(app, ui, actions);
+
+                ui.with_layout(
+                    if wide {
+                        egui::Layout::bottom_up(egui::Align::Min)
                     } else {
-                        resp.on_hover_ui(|ui| {
-                            ui.label(theme::heading(&tab.title, 13.5));
-                            ui.label(theme::mono(&tab.subtitle, 12.0).color(theme::text_dim()));
-                            ui.label(
-                                RichText::new(format!("{kind} · {state}"))
-                                    .size(12.0)
-                                    .color(theme::text_dim()),
-                            );
-                            if dead {
-                                ui.label(
-                                    RichText::new(t!("Getrennt – Klick verbindet neu"))
-                                        .size(12.0)
-                                        .color(theme::amber()),
-                                );
-                            }
-                            if tab.attention {
-                                ui.label(
-                                    RichText::new(t!("Neue Ausgabe / Befehl fertig"))
-                                        .size(12.0)
-                                        .color(theme::accent()),
-                                );
-                            }
-                            ui.label(
-                                RichText::new(t!("Ziehen, um sie neben eine Session zu legen"))
-                                    .size(11.5)
-                                    .color(theme::text_dim()),
-                            );
-                        })
-                    };
-                    // Small × in the top-left corner while hovering: end the session.
-                    if !dragging && ui.rect_contains_pointer(tile) {
-                        let xr = Rect::from_min_size(tile.left_top(), Vec2::splat(15.0));
-                        let x = ui.interact(xr, ui.id().with(("port-x", tab.id)), Sense::click());
-                        close_glyph(ui.painter(), xr.center(), x.hovered(), true);
-                        if x.on_hover_text(t!("Session beenden")).clicked() {
-                            close = Some(tab.id);
-                        }
-                    }
-                    if resp.clicked() {
-                        activate = Some(tab.id);
-                        if dead {
-                            revive = Some(tab.id);
-                        }
-                    }
-                    if resp.middle_clicked() {
-                        close = Some(tab.id);
-                    }
-                    resp.context_menu(|ui| {
-                        if let Some(a) = app.active.filter(|a| *a != tab.id)
-                            && !app.split.contains(&tab.id)
-                            && app.split.len() < MAX_SPLIT
-                            && ui.button(t!("Neben aktuelle Session legen")).clicked()
-                        {
-                            push_split_op(ui.ctx(), SplitOp::Add(a, tab.id));
-                            ui.close();
-                        }
-                        if ui.button(t!("Neu verbinden")).clicked() {
-                            reconnect = Some(tab.id);
-                            ui.close();
-                        }
-                        if ui.button(t!("Schließen")).clicked() {
-                            close = Some(tab.id);
-                            ui.close();
-                        }
-                    });
-                }
-                if let Some(id) = activate {
-                    app.active = Some(id);
-                }
-                if let Some(id) = reconnect.or(revive) {
-                    actions.push(Action::Reconnect(id));
-                }
-                if let Some(id) = close {
-                    app.close_tab(id);
-                }
-
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                    ui.spacing_mut().item_spacing.y = 6.0;
-                    if rail_button(ui, "🔒", t!("Sperren"), false, None).clicked() {
-                        actions.push(Action::Lock);
-                    }
-                    if !app.tunnels.is_empty() {
-                        let up = app
-                            .tunnels
-                            .values()
-                            .filter(|r| r.state == crate::app::TunnelState::Up)
-                            .count();
-                        let resp = rail_button(
+                        egui::Layout::bottom_up(egui::Align::Center)
+                    },
+                    |ui| {
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        if nav_item(
                             ui,
-                            "⇄",
-                            &t!("{} Tunnel offen", up),
-                            false,
-                            Some(theme::green()),
-                        );
-                        egui::Popup::menu(&resp).show(|ui| {
-                            ui.set_min_width(260.0);
-                            for (tid, run) in &app.tunnels {
-                                let Some(h) = app.lib.host(run.host) else {
-                                    continue;
-                                };
-                                let Some(t) = h.tunnels.iter().find(|t| t.id == *tid) else {
-                                    continue;
-                                };
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        RichText::new(format!(
-                                            "{} · localhost:{}",
-                                            t.label(),
-                                            t.local_port
-                                        ))
-                                        .size(12.5),
-                                    );
-                                    if ui.small_button(t!("Schließen")).clicked() {
-                                        actions.push(Action::ToggleTunnel(run.host, *tid));
-                                    }
-                                });
-                            }
-                        });
-                    }
-                    if rail_button(ui, "?", t!("Tastenkürzel (F1)"), app.show_shortcuts, None)
+                            Icon::Help,
+                            t!("Hilfe"),
+                            home && app.view == View::Help,
+                            wide,
+                            None,
+                            None,
+                        )
+                        .on_hover_text(t!("Tastenkürzel (F1)"))
                         .clicked()
-                    {
-                        app.show_shortcuts = true;
-                    }
-                    if let Some(rel) = &app.update.latest {
-                        let tip = t!("Update auf {} verfügbar", rel.version_text());
-                        if rail_button(ui, "⬆", &tip, false, Some(theme::accent())).clicked() {
+                        {
+                            actions.push(Action::Navigate(View::Help));
+                        }
+                        if nav_item(
+                            ui,
+                            Icon::Sun,
+                            t!("Einstellungen"),
+                            home && app.view == View::Settings,
+                            wide,
+                            None,
+                            None,
+                        )
+                        .clicked()
+                        {
                             actions.push(Action::Navigate(View::Settings));
                         }
-                    }
-                    if rail_button(
-                        ui,
-                        "⚙",
-                        t!("Einstellungen"),
-                        home && app.view == View::Settings,
-                        None,
-                    )
-                    .clicked()
-                    {
-                        actions.push(Action::Navigate(View::Settings));
-                    }
-                    let tip = if app.broadcast {
-                        t!("Broadcast an: Eingaben gehen an alle Terminals")
-                    } else {
-                        t!("Broadcast: Eingaben an alle Terminals senden")
-                    };
-                    if rail_button(
-                        ui,
-                        "📡",
-                        tip,
-                        app.broadcast,
-                        app.broadcast.then(theme::pink),
-                    )
-                    .clicked()
-                    {
-                        app.broadcast = !app.broadcast;
-                    }
-                });
+                        if let Some(rel) = &app.update.latest {
+                            let tip = t!("Update auf {} verfügbar", rel.version_text());
+                            if nav_item(
+                                ui,
+                                Icon::Download,
+                                &tip,
+                                false,
+                                wide,
+                                Some(theme::accent()),
+                                None,
+                            )
+                            .clicked()
+                            {
+                                actions.push(Action::Navigate(View::Settings));
+                            }
+                        }
+                        if !wide {
+                            if nav_item(ui, Icon::Lock, t!("Sperren"), false, false, None, None)
+                                .clicked()
+                            {
+                                actions.push(Action::Lock);
+                            }
+                            if !app.tabs.is_empty() {
+                                let tip = if app.broadcast {
+                                    t!("Broadcast an: Eingaben gehen an alle Terminals")
+                                } else {
+                                    t!("Broadcast: Eingaben an alle Terminals senden")
+                                };
+                                if nav_item(
+                                    ui,
+                                    Icon::Broadcast,
+                                    tip,
+                                    app.broadcast,
+                                    false,
+                                    app.broadcast.then(theme::pink),
+                                    None,
+                                )
+                                .clicked()
+                                {
+                                    app.broadcast = !app.broadcast;
+                                }
+                            }
+                        }
+                    },
+                );
             });
         });
+}
+
+/// "Tunnel" entry: a menu with every tunnel of every host, open ones first.
+fn tunnel_item(app: &App, ui: &mut egui::Ui, wide: bool, actions: &mut Vec<Action>) {
+    let up = app
+        .tunnels
+        .values()
+        .filter(|r| r.state == crate::app::TunnelState::Up)
+        .count();
+    let dot = (!app.tunnels.is_empty()).then(|| {
+        if up > 0 {
+            theme::green()
+        } else {
+            theme::amber()
+        }
+    });
+    let resp = nav_item(ui, Icon::Tunnel, t!("Tunnel"), false, wide, None, dot);
+    let resp = if wide {
+        resp
+    } else {
+        resp.on_hover_text(t!("{} Tunnel offen", up))
+    };
+    egui::Popup::menu(&resp).show(|ui| {
+        ui.set_min_width(300.0);
+        let mut any = false;
+        for h in &app.lib.hosts {
+            for tnl in &h.tunnels {
+                any = true;
+                let run = app.tunnels.get(&tnl.id);
+                let on = run.is_some_and(|r| r.state == crate::app::TunnelState::Up);
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(Vec2::splat(12.0), Sense::hover());
+                    theme::led(
+                        ui.painter(),
+                        r.center(),
+                        if on {
+                            theme::green()
+                        } else if run.is_some() {
+                            theme::amber()
+                        } else {
+                            theme::off_color()
+                        },
+                        on,
+                    );
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        ui.label(RichText::new(tnl.label()).font(theme::semibold(13.0)));
+                        ui.label(
+                            theme::mono(
+                                format!("{} · localhost:{}", h.display_name(), tnl.local_port),
+                                11.5,
+                            )
+                            .color(theme::text_dim()),
+                        );
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let label = if run.is_some() {
+                            t!("Schließen")
+                        } else {
+                            t!("Öffnen")
+                        };
+                        if theme::btn(ui, theme::Btn::Small, None, label).clicked() {
+                            actions.push(Action::ToggleTunnel(h.id, tnl.id));
+                        }
+                    });
+                });
+            }
+        }
+        if !any {
+            ui.label(
+                RichText::new(t!(
+                    "Noch keine Tunnel. Lege sie beim Host an (Bearbeiten → Tunnel)."
+                ))
+                .size(12.5)
+                .color(theme::text_dim()),
+            );
+        }
+    });
+}
+
+/// Open sessions as tiles; the number is the Ctrl+N shortcut.
+fn ports(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+    let mut activate = None;
+    let mut close = None;
+    let mut reconnect = None;
+    let mut revive = None;
+    let dragging = dragged_tab(ui.ctx()).is_some();
+    for (i, tab) in app.tabs.iter().enumerate() {
+        let (state_color, live, state) = match &tab.kind {
+            TabKind::Term(t) => (
+                crate::app::state_color(&t.state),
+                matches!(t.state, ConnState::Connected),
+                state_text(&t.state),
+            ),
+            TabKind::Sftp(t) => (
+                crate::app::state_color(t.state()),
+                matches!(t.state(), ConnState::Connected),
+                state_text(t.state()),
+            ),
+            TabKind::Rdp(t) => (
+                t.status_color(),
+                t.is_live(),
+                if t.is_live() {
+                    t!("verbunden").into()
+                } else {
+                    t!("getrennt").into()
+                },
+            ),
+            TabKind::Vnc(t) => (
+                crate::app::state_color(&t.view.state),
+                matches!(t.view.state, ConnState::Connected),
+                state_text(&t.view.state),
+            ),
+            TabKind::Log(t) => (
+                crate::app::state_color(&t.state),
+                matches!(t.state, ConnState::Connected),
+                state_text(&t.state),
+            ),
+        };
+        let kind = match &tab.kind {
+            TabKind::Term(_) => "Terminal",
+            TabKind::Sftp(_) => t!("Dateien"),
+            TabKind::Rdp(_) | TabKind::Vnc(_) => "Desktop",
+            TabKind::Log(_) => "Log",
+        };
+        let dead = match &tab.kind {
+            TabKind::Term(t) => matches!(t.state, ConnState::Closed(_)),
+            TabKind::Vnc(t) => matches!(t.view.state, ConnState::Closed(_)),
+            TabKind::Log(t) => matches!(t.state, ConnState::Closed(_)),
+            _ => false,
+        };
+        let resp = port_tile(
+            ui,
+            app.split.len() >= 2 && app.split.contains(&tab.id),
+            i + 1,
+            &initials(&tab.title),
+            state_color,
+            live,
+            app.active == Some(tab.id),
+            tab.attention,
+            dead,
+            tab.env,
+        );
+        let tile = resp.rect;
+        if resp.drag_started() {
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(drag_id(), DragTab(tab.id)));
+        }
+        let resp = if dragging {
+            resp
+        } else {
+            resp.on_hover_ui(|ui| {
+                ui.label(theme::heading(&tab.title, 13.5));
+                ui.label(theme::mono(&tab.subtitle, 12.0).color(theme::text_dim()));
+                ui.label(
+                    RichText::new(format!("{kind} · {state}"))
+                        .size(12.0)
+                        .color(theme::text_dim()),
+                );
+                if dead {
+                    ui.label(
+                        RichText::new(t!("Getrennt – Klick verbindet neu"))
+                            .size(12.0)
+                            .color(theme::amber()),
+                    );
+                }
+                if tab.attention {
+                    ui.label(
+                        RichText::new(t!("Neue Ausgabe / Befehl fertig"))
+                            .size(12.0)
+                            .color(theme::accent()),
+                    );
+                }
+                ui.label(
+                    RichText::new(t!("Ziehen, um sie neben eine Session zu legen"))
+                        .size(11.5)
+                        .color(theme::text_dim()),
+                );
+            })
+        };
+        // Small × in the top-left corner while hovering: end the session.
+        if !dragging && ui.rect_contains_pointer(tile) {
+            let xr = Rect::from_min_size(tile.left_top() + Vec2::splat(-3.0), Vec2::splat(16.0));
+            let x = ui.interact(xr, ui.id().with(("port-x", tab.id)), Sense::click());
+            close_glyph(ui.painter(), xr.center(), x.hovered(), true);
+            if x.on_hover_text(t!("Session beenden")).clicked() {
+                close = Some(tab.id);
+            }
+        }
+        if resp.clicked() {
+            activate = Some(tab.id);
+            if dead {
+                revive = Some(tab.id);
+            }
+        }
+        if resp.middle_clicked() {
+            close = Some(tab.id);
+        }
+        resp.context_menu(|ui| {
+            if let Some(a) = app.active.filter(|a| *a != tab.id)
+                && !app.split.contains(&tab.id)
+                && app.split.len() < MAX_SPLIT
+                && ui.button(t!("Neben aktuelle Session legen")).clicked()
+            {
+                push_split_op(ui.ctx(), SplitOp::Add(a, tab.id));
+                ui.close();
+            }
+            if ui.button(t!("Neu verbinden")).clicked() {
+                reconnect = Some(tab.id);
+                ui.close();
+            }
+            if ui.button(t!("Schließen")).clicked() {
+                close = Some(tab.id);
+                ui.close();
+            }
+        });
+        ui.add_space(4.0);
+    }
+    if let Some(id) = activate {
+        app.active = Some(id);
+    }
+    if let Some(id) = reconnect.or(revive) {
+        actions.push(Action::Reconnect(id));
+    }
+    if let Some(id) = close {
+        app.close_tab(id);
+    }
 }
 
 pub fn state_text(s: &ConnState) -> String {
@@ -486,6 +628,12 @@ pub struct SplitInfo {
     /// Environment per tab, same order as `tabs`.
     pub envs: Vec<crate::model::Env>,
     pub tabs: Vec<(u64, String)>,
+    /// Connected state per tab, same order as `tabs`.
+    pub live: Vec<bool>,
+    /// Full-screen mode is on.
+    pub focus: bool,
+    /// Sessions in their own window.
+    pub popped: Vec<u64>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -500,6 +648,10 @@ pub enum SplitOp {
     Maximize(u64),
     /// Toggle typing into all split panes at once.
     Broadcast,
+    /// Full screen with this session (`None` = leave full screen).
+    Focus(Option<u64>),
+    /// Show the session in its own window, or bring it back.
+    PopOut(u64),
 }
 
 /// Session tile currently dragged out of the rail.
@@ -563,20 +715,6 @@ fn close_glyph(p: &egui::Painter, c: Pos2, hot: bool, plate: bool) {
     p.line_segment([c + Vec2::new(-d, d), c + Vec2::new(d, -d)], s);
 }
 
-/// Header button with a painted glyph.
-fn header_icon(
-    ui: &mut egui::Ui,
-    paint: impl FnOnce(&egui::Painter, Rect, bool),
-) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(26.0), Sense::click());
-    if resp.hovered() {
-        ui.painter()
-            .rect_filled(rect, CornerRadius::same(6), theme::bg_hover());
-    }
-    paint(ui.painter(), rect, resp.hovered());
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
 pub const MAX_SPLIT: usize = 4;
 
 pub fn split_info_id() -> egui::Id {
@@ -591,30 +729,9 @@ fn push_split_op(ctx: &egui::Context, op: SplitOp) {
     ctx.data_mut(|d| d.insert_temp(split_op_id(), op));
 }
 
-/// Painted "two panes" icon button.
+/// "Two panes" icon button.
 fn split_button(ui: &mut egui::Ui, on: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::click());
-    if resp.hovered() {
-        ui.painter()
-            .rect_filled(rect, CornerRadius::same(6), theme::bg_hover());
-    }
-    let color = if on {
-        theme::accent()
-    } else if resp.hovered() {
-        theme::text()
-    } else {
-        theme::text_dim()
-    };
-    let r = Rect::from_center_size(rect.center(), Vec2::new(14.0, 11.0));
-    let p = ui.painter();
-    p.rect_stroke(
-        r,
-        CornerRadius::same(2),
-        Stroke::new(1.3, color),
-        egui::StrokeKind::Inside,
-    );
-    p.line_segment([r.center_top(), r.center_bottom()], Stroke::new(1.3, color));
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    theme::icon_toggle(ui, Icon::Split, t!("Ansicht teilen"), on)
 }
 
 /// Header button: put another session next to this one (up to four).
@@ -627,7 +744,7 @@ fn split_menu(ui: &mut egui::Ui, index: usize) {
         return;
     };
     let in_split = info.split.len() >= 2 && info.split.contains(&me);
-    let resp = split_button(ui, in_split).on_hover_text(t!("Nebeneinander anzeigen"));
+    let resp = split_button(ui, in_split);
     egui::Popup::menu(&resp).show(|ui| {
         ui.set_min_width(220.0);
         let shown: Vec<u64> = if in_split {
@@ -702,7 +819,8 @@ fn split_menu(ui: &mut egui::Ui, index: usize) {
 
 /// Pane rectangles for 1–4 sessions: side by side, 1+2 or a 2×2 grid.
 pub fn split_rects(r: Rect, n: usize) -> Vec<Rect> {
-    let g = 1.0;
+    // Half the gap between panes.
+    let g = 5.0;
     let (l, t, rr, b) = (r.left(), r.top(), r.right(), r.bottom());
     let mx = r.center().x;
     let my = r.center().y;
@@ -726,7 +844,8 @@ pub fn split_rects(r: Rect, n: usize) -> Vec<Rect> {
     }
 }
 
-/// Slim header above a session: port number, name, address, state and actions.
+/// Header above a session: close, port number, name and address, state dot; actions on
+/// the right. In full-screen mode it becomes the top bar with the session switcher.
 pub fn session_header(
     ui: &mut egui::Ui,
     id: egui::Id,
@@ -736,21 +855,37 @@ pub fn session_header(
     state: (String, Color32),
     right: impl FnOnce(&mut egui::Ui),
 ) {
+    let info: SplitInfo = ui
+        .ctx()
+        .data(|d| d.get_temp(split_info_id()))
+        .unwrap_or_default();
+    if info.focus {
+        return focus_bar(ui, id, index, subtitle, &info, right);
+    }
     egui::Panel::top(id)
-        .exact_size(46.0)
+        .exact_size(56.0)
         .frame(
             egui::Frame::NONE
-                .fill(theme::bg_deep())
-                .inner_margin(Margin::symmetric(18, 0)),
+                .fill(theme::surface())
+                .inner_margin(Margin {
+                    left: 8,
+                    right: 10,
+                    top: 0,
+                    bottom: 0,
+                }),
         )
         .show(ui, |ui| {
+            let full = ui.max_rect();
+            ui.painter().line_segment(
+                [
+                    Pos2::new(full.left() - 8.0, full.bottom() - 0.5),
+                    Pos2::new(full.right() + 10.0, full.bottom() - 0.5),
+                ],
+                Stroke::new(1.0, theme::line()),
+            );
             // Right side first, so the title/address get whatever space is left and
             // truncate instead of running under the buttons in narrow split panes.
-            let narrow = ui.available_width() < 640.0;
-            let info: SplitInfo = ui
-                .ctx()
-                .data(|d| d.get_temp(split_info_id()))
-                .unwrap_or_default();
+            let narrow = ui.available_width() < 560.0;
             let me = info.tabs.get(index.wrapping_sub(1)).map(|t| t.0);
             let in_split = me.is_some_and(|m| info.split.len() >= 2 && info.split.contains(&m));
             if let (Some(me), true) = (me, in_split) {
@@ -760,118 +895,228 @@ pub fn session_header(
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                if let (Some(me), true) = (me, in_split) {
-                    // Take this pane out of the split; the session keeps running.
-                    let resp = header_icon(ui, |p, r, hot| {
-                        let color = if hot {
-                            theme::text()
-                        } else {
-                            theme::text_dim()
-                        };
-                        let s = Stroke::new(1.3, color);
-                        let c = r.center();
-                        // Box open at the top right with an arrow leaving it.
-                        let b = Rect::from_center_size(c + Vec2::new(-1.0, 1.0), Vec2::splat(11.0));
-                        p.line_segment([b.left_top() + Vec2::new(0.0, 0.0), b.left_bottom()], s);
-                        p.line_segment([b.left_bottom(), b.right_bottom()], s);
-                        p.line_segment([b.left_top(), b.left_top() + Vec2::new(4.0, 0.0)], s);
-                        p.line_segment(
-                            [b.right_bottom(), b.right_bottom() - Vec2::new(0.0, 4.0)],
-                            s,
-                        );
-                        let tip = b.right_top() + Vec2::new(2.0, -2.0);
-                        p.line_segment([b.center(), tip], s);
-                        p.line_segment([tip, tip + Vec2::new(-4.5, 0.0)], s);
-                        p.line_segment([tip, tip + Vec2::new(0.0, 4.5)], s);
-                    })
-                    .on_hover_text(t!("Aus dem Splitscreen lösen – Session bleibt offen"));
-                    if resp.clicked() {
-                        push_split_op(ui.ctx(), SplitOp::Remove(me));
-                    }
-                    let maxed = info.maximized == Some(me);
-                    let resp = header_icon(ui, |p, r, hot| {
-                        let color = if maxed {
-                            theme::accent()
-                        } else if hot {
-                            theme::text()
-                        } else {
-                            theme::text_dim()
-                        };
-                        let s = Stroke::new(1.3, color);
-                        let b = Rect::from_center_size(r.center(), Vec2::splat(12.0));
-                        let l = 4.0;
-                        // Corner brackets: outward = maximize, inward = restore.
-                        for (corner, dx, dy) in [
-                            (b.left_top(), 1.0, 1.0),
-                            (b.right_top(), -1.0, 1.0),
-                            (b.left_bottom(), 1.0, -1.0),
-                            (b.right_bottom(), -1.0, -1.0),
-                        ] {
-                            let c = if maxed {
-                                corner + Vec2::new(dx * l, dy * l)
-                            } else {
-                                corner
-                            };
-                            let (sx, sy) = if maxed { (-dx, -dy) } else { (dx, dy) };
-                            p.line_segment([c, c + Vec2::new(sx * l, 0.0)], s);
-                            p.line_segment([c, c + Vec2::new(0.0, sy * l)], s);
-                        }
-                    })
-                    .on_hover_text(if maxed {
-                        t!("Zurück zum Splitscreen (Doppelklick auf den Kopf)")
+                ui.spacing_mut().item_spacing.x = 2.0;
+                if let Some(me) = me {
+                    let popped = info.popped.contains(&me);
+                    let tip = if popped {
+                        t!("Zurück ins Hauptfenster")
                     } else {
-                        t!("Maximieren (Doppelklick auf den Kopf)")
-                    });
-                    if resp.clicked() {
-                        push_split_op(ui.ctx(), SplitOp::Maximize(me));
+                        t!("In eigenem Fenster öffnen")
+                    };
+                    if theme::icon_toggle(ui, Icon::External, tip, popped).clicked() {
+                        push_split_op(ui.ctx(), SplitOp::PopOut(me));
+                    }
+                    if !popped
+                        && theme::icon_btn(ui, Icon::Maximize, t!("Vollbild (F11)")).clicked()
+                    {
+                        push_split_op(ui.ctx(), SplitOp::Focus(Some(me)));
                     }
                 }
                 split_menu(ui, index);
-                right(ui);
-                ui.add_space(10.0);
-                let (label, color) = state;
-                if !narrow {
-                    ui.add(
-                        egui::Label::new(RichText::new(&label).size(12.5).color(theme::text_dim()))
-                            .truncate(),
-                    );
-                }
-                let (r, resp) = ui.allocate_exact_size(Vec2::new(12.0, 12.0), Sense::hover());
-                theme::led(ui.painter(), r.center(), color, true);
-                resp.on_hover_text(label);
                 ui.add_space(6.0);
+                let (r, _) = ui.allocate_exact_size(Vec2::new(1.0, 18.0), Sense::hover());
+                ui.painter()
+                    .rect_filled(r, CornerRadius::ZERO, theme::line());
+                ui.add_space(6.0);
+                right(ui);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 10.0;
                     if let Some(me) = me {
-                        ui.add_space(-10.0);
-                        let resp =
-                            header_icon(ui, |p, r, hot| close_glyph(p, r.center(), hot, false))
-                                .on_hover_text(t!("Session beenden"));
-                        if resp.clicked() {
+                        let (r, resp) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::click());
+                        if resp.hovered() {
+                            ui.painter()
+                                .rect_filled(r, CornerRadius::same(9), theme::fill());
+                        }
+                        icons::paint_weighted(
+                            ui.painter(),
+                            Rect::from_center_size(r.center(), Vec2::splat(12.0)),
+                            Icon::Close,
+                            if resp.hovered() {
+                                theme::text()
+                            } else {
+                                theme::text_dim()
+                            },
+                            2.8,
+                        );
+                        if resp
+                            .on_hover_text(t!("Session beenden"))
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
                             push_split_op(ui.ctx(), SplitOp::Close(me));
                         }
                     }
                     ui.label(
                         RichText::new(format!("{index:02}"))
-                            .font(theme::mono_medium(12.5))
+                            .font(theme::mono_medium(12.0))
                             .color(theme::accent()),
                     );
-                    if let Some(&env) = info.envs.get(index.wrapping_sub(1))
-                        && env != crate::model::Env::None
-                    {
-                        crate::ui::dialogs::env_badge(ui, env);
-                    }
-                    ui.add(egui::Label::new(theme::heading(title, 15.0)).truncate());
-                    if !narrow {
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 8.0;
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(title)
+                                        .font(theme::semibold(14.5))
+                                        .color(theme::text()),
+                                )
+                                .truncate(),
+                            );
+                            if let Some(&env) = info.envs.get(index.wrapping_sub(1))
+                                && env != crate::model::Env::None
+                            {
+                                theme::pill(ui, env.label(), theme::env_color(env));
+                            }
+                            let (label, color) = &state;
+                            let (r, resp) =
+                                ui.allocate_exact_size(Vec2::splat(12.0), Sense::hover());
+                            theme::led(
+                                ui.painter(),
+                                r.center(),
+                                *color,
+                                *color != theme::text_dim(),
+                            );
+                            resp.on_hover_text(label.as_str());
+                            if narrow {
+                                return;
+                            }
+                            if !matches!(color, c if *c == theme::green()) {
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(label.as_str())
+                                            .size(12.0)
+                                            .color(theme::text_dim()),
+                                    )
+                                    .truncate(),
+                                );
+                            }
+                        });
                         ui.add(
-                            egui::Label::new(theme::mono(subtitle, 12.5).color(theme::text_dim()))
+                            egui::Label::new(theme::mono(subtitle, 11.5).color(theme::text_dim()))
                                 .truncate(),
                         );
-                    }
+                    });
                 });
             });
         });
+}
+
+/// Top bar of the full-screen mode: leave, switch session, address, actions.
+fn focus_bar(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    index: usize,
+    subtitle: &str,
+    info: &SplitInfo,
+    right: impl FnOnce(&mut egui::Ui),
+) {
+    egui::Panel::top(id)
+        .exact_size(56.0)
+        .frame(
+            egui::Frame::NONE
+                .fill(theme::side())
+                .inner_margin(Margin::symmetric(16, 0)),
+        )
+        .show(ui, |ui| {
+            let full = ui.max_rect();
+            ui.painter().line_segment(
+                [
+                    Pos2::new(full.left() - 16.0, full.bottom() - 0.5),
+                    Pos2::new(full.right() + 16.0, full.bottom() - 0.5),
+                ],
+                Stroke::new(1.0, theme::line()),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                right(ui);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 14.0;
+                    if theme::btn(ui, theme::Btn::Normal, Some(Icon::Exit), t!("Verlassen"))
+                        .on_hover_text(t!("Vollbild verlassen (F11)"))
+                        .clicked()
+                    {
+                        push_split_op(ui.ctx(), SplitOp::Focus(None));
+                    }
+                    // Session switcher: a segmented control with a status dot per session.
+                    let (track, _) = ui.allocate_exact_size(
+                        Vec2::new(
+                            info.tabs
+                                .iter()
+                                .map(|(_, t)| switcher_width(ui, t))
+                                .sum::<f32>()
+                                + 2.0 * info.tabs.len() as f32
+                                + 2.0,
+                            34.0,
+                        ),
+                        Sense::hover(),
+                    );
+                    ui.painter()
+                        .rect_filled(track, CornerRadius::same(10), theme::fill());
+                    let mut x = track.left() + 2.0;
+                    for (i, (tid, title)) in info.tabs.iter().enumerate() {
+                        let w = switcher_width(ui, title);
+                        let r = Rect::from_min_size(
+                            Pos2::new(x, track.top() + 2.0),
+                            Vec2::new(w, 30.0),
+                        );
+                        let resp = ui.interact(r, ui.id().with(("focus-tab", tid)), Sense::click());
+                        let on = i + 1 == index;
+                        if on {
+                            ui.painter()
+                                .rect_filled(r, CornerRadius::same(8), theme::seg_on());
+                        } else if resp.hovered() {
+                            ui.painter()
+                                .rect_filled(r, CornerRadius::same(8), theme::hover());
+                        }
+                        let dot = info.live.get(i).copied().unwrap_or(false);
+                        theme::led(
+                            ui.painter(),
+                            Pos2::new(r.left() + 17.0, r.center().y),
+                            if dot {
+                                theme::green()
+                            } else {
+                                theme::off_color()
+                            },
+                            false,
+                        );
+                        if dot {
+                            ui.painter().circle_filled(
+                                Pos2::new(r.left() + 17.0, r.center().y),
+                                3.5,
+                                theme::green(),
+                            );
+                        }
+                        ui.painter().text(
+                            Pos2::new(r.left() + 29.0, r.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            title,
+                            theme::medium(13.0),
+                            if on { theme::text() } else { theme::text_dim() },
+                        );
+                        if resp
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            push_split_op(ui.ctx(), SplitOp::Focus(Some(*tid)));
+                        }
+                        x += w + 2.0;
+                    }
+                    ui.add(
+                        egui::Label::new(theme::mono(subtitle, 12.0).color(theme::text_dim()))
+                            .truncate(),
+                    );
+                });
+            });
+        });
+}
+
+fn switcher_width(ui: &egui::Ui, title: &str) -> f32 {
+    ui.painter()
+        .layout_no_wrap(title.to_string(), theme::medium(13.0), theme::text())
+        .size()
+        .x
+        + 42.0
 }
 
 /// Paints a horizontal accent band (e.g. broadcast mode) at the top of `rect`.
