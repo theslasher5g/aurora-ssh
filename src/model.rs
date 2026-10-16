@@ -524,6 +524,52 @@ impl Identity {
 #[serde(default)]
 pub struct Keychain {
     pub identities: Vec<Identity>,
+    /// Proxmox server id → API token secret or password.
+    pub pve_secrets: HashMap<Uuid, String>,
+}
+
+/// A Proxmox VE server (or cluster) shown on the Proxmox page. The secret lives in the
+/// keychain (`Keychain::pve_secrets`).
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[serde(default)]
+pub struct PveServer {
+    pub id: Uuid,
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    /// API token (`user@realm!tokenid`) instead of user + password.
+    pub token: bool,
+    /// `user@realm` or, with a token, `user@realm!tokenid`.
+    pub user: String,
+    /// SHA-256 fingerprint of the trusted certificate (`AB:CD:…`), empty = not yet.
+    pub tls_pin: String,
+    /// SSH host that reaches the nodes (consoles via `pct enter` / `qm terminal`).
+    pub ssh_host: Option<Uuid>,
+}
+
+impl Default for PveServer {
+    fn default() -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: String::new(),
+            host: String::new(),
+            port: 8006,
+            token: true,
+            user: String::new(),
+            tls_pin: String::new(),
+            ssh_host: None,
+        }
+    }
+}
+
+impl PveServer {
+    pub fn display_name(&self) -> &str {
+        if self.name.trim().is_empty() {
+            self.host.trim()
+        } else {
+            self.name.trim()
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -646,6 +692,8 @@ pub struct Library {
     pub facts: HashMap<Uuid, HostFacts>,
     /// The user's own log viewer sources.
     pub log_commands: Vec<LogCommand>,
+    /// Proxmox VE servers (own page, not part of the host list).
+    pub pve_servers: Vec<PveServer>,
 }
 
 /// System facts collected after an SSH login (read-only commands).
@@ -953,6 +1001,16 @@ mod tests {
         assert!(HostFacts::parse("garbage").is_none());
         assert_eq!(subnet24("192.168.0.44").as_deref(), Some("192.168.0"));
         assert_eq!(subnet24("web-01.example.com"), None);
+    }
+
+    #[test]
+    fn old_files_load_without_proxmox() {
+        let lib: Library = serde_json::from_str(r#"{"hosts":[],"groups":[]}"#).unwrap();
+        assert!(lib.pve_servers.is_empty());
+        let kc: Keychain = serde_json::from_str(r#"{"identities":[]}"#).unwrap();
+        assert!(kc.pve_secrets.is_empty());
+        let s: PveServer = serde_json::from_str(r#"{"host":"pve"}"#).unwrap();
+        assert_eq!((s.port, s.token, s.display_name()), (8006, true, "pve"));
     }
 
     #[test]

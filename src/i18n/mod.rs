@@ -15,6 +15,7 @@ mod ui_hosts;
 mod ui_v052;
 mod ui_v060;
 mod ui_v061;
+mod ui_v061_pve;
 mod ui_vnc;
 
 static ENGLISH: AtomicBool = AtomicBool::new(false);
@@ -29,6 +30,7 @@ const TABLES: &[&[(&str, &str)]] = &[
     ui_v052::T,
     ui_v060::T,
     ui_v061::T,
+    ui_v061_pve::T,
     ui_vnc::T,
 ];
 

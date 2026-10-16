@@ -44,6 +44,7 @@ pub enum Icon {
     Stop,
     Logs,
     Record,
+    Server,
 }
 
 enum Prim {
@@ -147,6 +148,11 @@ fn prims(icon: Icon) -> &'static [Prim] {
         Icon::Stop => &[R(6.0, 6.0, 12.0, 12.0, 2.0)],
         Icon::Logs => &[R(4.0, 4.0, 16.0, 16.0, 2.5), Path("M8 9h8M8 12h5M8 15h7")],
         Icon::Record => &[Circle(12.0, 12.0, 6.0)],
+        Icon::Server => &[
+            R(3.0, 3.5, 18.0, 7.0, 2.0),
+            R(3.0, 13.5, 18.0, 7.0, 2.0),
+            Path("M7 7h2M7 17h2M13 7h4M13 17h4"),
+        ],
     }
 }
 
@@ -530,7 +536,7 @@ mod tests {
             Hosts, Key, Folder, Bolt, Tunnel, Gear, Sun, Help, Search, Wifi, Plus, Chevron, Star,
             Sparkle, Close, Split, Maximize, Exit, External, Keyboard, Expand, Monitor, Up,
             Refresh, File, Lock, Broadcast, Download, Terminal, Windows, Upload, Trash, Copy, Wrap,
-            Pause, Play, Stop,
+            Pause, Play, Stop, Server, Logs, Record,
         ] {
             for prim in prims(icon) {
                 if let Prim::Path(d) = prim {

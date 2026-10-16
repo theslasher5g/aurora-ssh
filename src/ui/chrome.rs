@@ -261,6 +261,7 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     (View::Keychain, Icon::Key, "Schlüssel"),
                     (View::Files, Icon::Folder, "Dateien"),
                     (View::Snippets, Icon::Bolt, "Snippets"),
+                    (View::Proxmox, Icon::Server, "Proxmox"),
                 ] {
                     if nav_item(
                         ui,

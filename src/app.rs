@@ -27,6 +27,7 @@ pub enum View {
     Snippets,
     Settings,
     Help,
+    Proxmox,
 }
 
 #[derive(Clone)]
@@ -544,6 +545,8 @@ pub struct App {
     pub containers: Option<ContainerBrowser>,
     /// Container hosts waiting for their SSH host's credentials (`Purpose::Container`).
     pub pending_containers: std::collections::HashMap<u64, Host>,
+    /// Command line for a `Purpose::Container` session instead of the container shell.
+    pub pending_exec: std::collections::HashMap<u64, String>,
     pub log_picker: Option<LogPicker>,
     pub tunnel_sink: Sink<backend::tunnel::TunnelEvent>,
     pub tunnel_rx: UnboundedReceiver<backend::tunnel::TunnelEvent>,
@@ -587,6 +590,8 @@ pub struct App {
     pub reach: crate::backend::reach::Reachability,
     pub update_sink: Sink<crate::update::UpdateEvent>,
     pub update_rx: UnboundedReceiver<crate::update::UpdateEvent>,
+    /// Proxmox servers: live data, editor, certificate prompt.
+    pub pve: crate::ui::proxmox::PveState,
 }
 
 /// UI intents collected while drawing and applied afterwards.
@@ -662,6 +667,8 @@ pub enum Action {
     OpenLog(Option<Uuid>, String),
     /// Open a container/pod (not necessarily saved): shell or logs.
     OpenContainer(Box<Host>, bool),
+    /// Proxmox page: servers, power actions, consoles.
+    Pve(crate::ui::proxmox::PveAction),
 }
 
 impl App {
@@ -732,6 +739,7 @@ impl App {
             tunnels: Default::default(),
             containers: None,
             pending_containers: Default::default(),
+            pending_exec: Default::default(),
             log_picker: None,
             tunnel_sink,
             tunnel_rx,
@@ -765,6 +773,7 @@ impl App {
             reach: Default::default(),
             update_sink,
             update_rx,
+            pve: crate::ui::proxmox::PveState::new(&cc.egui_ctx),
         }
     }
 
@@ -891,6 +900,22 @@ impl App {
         self.open_session(&host, purpose, user, password, ident, ctx);
     }
 
+    /// Terminal tab titled `title` that logs into the SSH host `via` (with its stored
+    /// credentials or the password prompt) and runs `line` there – the container-session
+    /// path with a custom command (Proxmox consoles).
+    pub fn open_exec(&mut self, via: Host, title: String, line: String, ctx: &egui::Context) {
+        let key = self.alloc_id();
+        let tab_host = Host {
+            id: Uuid::new_v4(),
+            label: title,
+            notes: String::new(),
+            ..via.clone()
+        };
+        self.pending_containers.insert(key, tab_host);
+        self.pending_exec.insert(key, line);
+        self.connect_host(via, Purpose::Container(key), ctx);
+    }
+
     pub fn open_session(
         &mut self,
         host: &Host,
@@ -938,13 +963,27 @@ impl App {
             let Some(c) = self.pending_containers.remove(&key) else {
                 return;
             };
-            let line = backend::container::shell_line(&backend::container::exec_argv(
-                c.protocol,
-                &c.container,
-            ));
+            let custom = self.pending_exec.remove(&key);
+            let line = custom.clone().unwrap_or_else(|| {
+                backend::container::shell_line(&backend::container::exec_argv(
+                    c.protocol,
+                    &c.container,
+                ))
+            });
             let spec = ConnectSpec::SshExec(params, line);
-            let subtitle = format!("{} · {}", container_kind(&c), host.display_name());
+            let kind = if custom.is_some() {
+                "Proxmox".to_string()
+            } else {
+                container_kind(&c)
+            };
+            let subtitle = format!("{kind} · {}", host.display_name());
             self.push_term_tab(&c, spec, subtitle, ctx);
+            if custom.is_some()
+                && let Some(t) = self.tabs.last_mut()
+            {
+                // A command on the SSH host, nothing to save as a host.
+                t.unsaved = None;
+            }
             return;
         }
         if let Purpose::Pane(tab_id, idx) = purpose {
@@ -2288,6 +2327,7 @@ impl App {
 
     fn pump_events(&mut self, ctx: &egui::Context) {
         self.pump_updates(ctx);
+        crate::ui::proxmox::pump(self);
         while let Ok(p) = self.prompts_rx.try_recv() {
             self.hostkey_queue.push_back(p);
         }
@@ -2867,6 +2907,7 @@ impl App {
                 self.save_library();
             }
             Action::Confirm(text, inner) => self.confirm_delete = Some((text, *inner)),
+            Action::Pve(a) => crate::ui::proxmox::apply(self, a, ctx),
             Action::OpenGroup(gid) => {
                 let hosts: Vec<Host> = self
                     .lib
@@ -3115,6 +3156,7 @@ impl App {
                 self.host_editor = None;
                 self.identity_editor = None;
                 self.password_prompt = None;
+                self.pve.lock();
             }
         }
     }
@@ -4229,6 +4271,7 @@ impl eframe::App for App {
                         View::Snippets => crate::ui::snippets::show(self, ui, &mut actions),
                         View::Settings => crate::ui::settings::show(self, ui, &mut actions),
                         View::Help => crate::ui::help::show(self, ui),
+                        View::Proxmox => crate::ui::proxmox::show(self, ui, &mut actions),
                     });
             }
         }
@@ -4256,6 +4299,7 @@ impl eframe::App for App {
         }
 
         crate::ui::editors::show_all(self, &ctx, &mut actions);
+        crate::ui::proxmox::windows(self, &ctx);
         crate::ui::palette::show(self, &ctx, &mut actions);
         crate::ui::dialogs::show(self, &ctx);
         crate::ui::containers::show(self, &ctx, &mut actions);
