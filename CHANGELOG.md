@@ -3,6 +3,14 @@
 ## 0.6.1
 
 ### New features
+- **Proxmox VE:** own page in the sidebar with every VM and container of your Proxmox
+  servers, grouped by server and node (status, VM/CT, tags, IP, uptime, vCPU, CPU, RAM).
+  Search by name, VMID, tag or IP; filter VMs / containers / running; templates on demand;
+  refreshes every 10 s. Start, shut down, reboot, stop (with confirmation) and resume;
+  console (`pct enter` / `qm terminal` through the node's SSH host, or SSH to the VM's IP);
+  "save as host". Login with an API token (recommended) or user + password; secrets stay in
+  the encrypted vault, the server certificate is pinned on first contact. Guests are also
+  in the command palette.
 - **Logs next to the terminal:** the log viewer docks at the right of an SSH session
   (header button or `Ctrl+Shift+L`), uses the session's login (no second password prompt)
   and can be resized at its edge. Pick a preset, type a file or command, or one of your own.
