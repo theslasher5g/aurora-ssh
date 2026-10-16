@@ -9,15 +9,21 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod files;
+
+use std::collections::HashMap;
 use std::io::Write;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use ironrdp::client::config::{ClipboardType, ConfigBuilder, Destination};
 use ironrdp::client::rdp::{RdpClient, RdpInputEvent, RdpOutputEvent};
 use ironrdp::cliprdr::backend::{ClipboardMessage, CliprdrBackend};
 use ironrdp::cliprdr::pdu::{
-    ClipboardFormat, ClipboardFormatId, ClipboardGeneralCapabilityFlags, FileContentsRequest,
-    FileContentsResponse, FormatDataRequest, FormatDataResponse, LockDataId,
+    ClipboardFileAttributes, ClipboardFormat, ClipboardFormatId, ClipboardFormatName,
+    ClipboardGeneralCapabilityFlags, FileContentsFlags, FileContentsRequest, FileContentsResponse,
+    FileDescriptor, FormatDataRequest, FormatDataResponse, LockDataId,
 };
 use ironrdp::input::{Database, MouseButton, MousePosition, Operation, Scancode, WheelRotations};
 use serde::Deserialize;
@@ -71,6 +77,14 @@ enum Cmd {
     },
     /// Ask the remote session for its clipboard text.
     ClipGet,
+    /// Offer local files and folders to the remote session (clipboard file list).
+    OfferFiles {
+        paths: Vec<String>,
+    },
+    /// Save the files on the remote clipboard into `dir` (created if missing).
+    FetchFiles {
+        dir: String,
+    },
     CtrlAltDel,
     ReleaseAll,
     /// Answer to a certificate prompt.
@@ -89,6 +103,57 @@ mod tag {
     pub const CLOSED: u8 = 5;
     /// Unknown or changed server key: `{"fingerprint": .., "previous": ..}`; expects `Trust`.
     pub const CERT: u8 = 6;
+    /// File transfer event, JSON with an `ev` field (see [`super::FileEv`]).
+    pub const FILES: u8 = 7;
+}
+
+/// File transfer events for the UI (tag [`tag::FILES`]).
+#[derive(serde::Serialize, Debug, PartialEq)]
+#[serde(tag = "ev", rename_all = "snake_case")]
+enum FileEv {
+    /// The list was announced to the host.
+    Offered {
+        files: usize,
+        bytes: u64,
+        skipped: Vec<String>,
+    },
+    /// The host accepted the announced list: time to paste.
+    Accepted,
+    Progress {
+        up: bool,
+        done: u64,
+        total: u64,
+    },
+    /// Whether the remote clipboard currently holds files.
+    Remote {
+        files: bool,
+    },
+    Saved {
+        dir: String,
+        files: usize,
+    },
+    /// `code`: unsupported, empty, rejected, busy, no_files, list, read, remote_read,
+    /// write, too_big.
+    Error {
+        code: String,
+        detail: String,
+    },
+}
+
+fn file_event(out: &Out, ev: &FileEv) {
+    if let Ok(j) = serde_json::to_vec(ev) {
+        send(out, tag::FILES, j);
+    }
+}
+
+fn file_error(out: &Out, code: &str, detail: impl Into<String>) {
+    file_event(
+        out,
+        &FileEv::Error {
+            code: code.into(),
+            detail: detail.into(),
+        },
+    );
 }
 
 type Out = std::sync::mpsc::SyncSender<(u8, Vec<u8>)>;
@@ -99,13 +164,54 @@ fn send(out: &Out, tag: u8, payload: Vec<u8>) {
 
 // ---------------------------------------------------------------- clipboard
 
-#[derive(Default)]
 struct ClipShared {
     local_text: Option<String>,
     input: Option<mpsc::UnboundedSender<RdpInputEvent>>,
+    out: Out,
+    ready: bool,
+    caps: ClipboardGeneralCapabilityFlags,
+    /// Files currently on offer, and snapshots the host locked (`clipDataId`).
+    offer: Option<Arc<Vec<files::LocalEntry>>>,
+    locks: HashMap<u32, Arc<Vec<files::LocalEntry>>>,
+    /// Waiting for the host's answer to our file list.
+    offer_pending: bool,
+    offer_error_sent: bool,
+    open_file: Option<(PathBuf, std::fs::File)>,
+    /// Highest byte served per (list, index), for the progress badge.
+    served: HashMap<(usize, usize), u64>,
+    last_progress: Instant,
+    /// Format id of `FileGroupDescriptorW` on the remote clipboard.
+    remote_files: Option<ClipboardFormatId>,
+    pending_fetch: Option<PathBuf>,
+    download: Option<files::Download>,
+    /// Outstanding request of the download: (stream id, is SIZE).
+    download_stream: Option<(u32, bool)>,
+    next_stream: u32,
 }
 
 impl ClipShared {
+    fn new(out: Out) -> Self {
+        Self {
+            local_text: None,
+            input: None,
+            out,
+            ready: false,
+            caps: ClipboardGeneralCapabilityFlags::empty(),
+            offer: None,
+            locks: HashMap::new(),
+            offer_pending: false,
+            offer_error_sent: false,
+            open_file: None,
+            served: HashMap::new(),
+            last_progress: Instant::now(),
+            remote_files: None,
+            pending_fetch: None,
+            download: None,
+            download_stream: None,
+            next_stream: 1,
+        }
+    }
+
     fn post(&self, msg: ClipboardMessage) {
         if let Some(tx) = &self.input {
             let _ = tx.send(RdpInputEvent::Clipboard(msg));
@@ -119,6 +225,189 @@ impl ClipShared {
             Vec::new()
         };
         self.post(ClipboardMessage::SendInitiateCopy(formats));
+    }
+
+    fn can_transfer(&self) -> bool {
+        self.ready
+            && self
+                .caps
+                .contains(ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED)
+    }
+
+    fn progress(&mut self, up: bool, done: u64, total: u64, force: bool) {
+        if force || self.last_progress.elapsed() > Duration::from_millis(150) {
+            self.last_progress = Instant::now();
+            file_event(&self.out, &FileEv::Progress { up, done, total });
+        }
+    }
+
+    /// Announces `list` to the host (from the stdin thread).
+    fn offer_files(&mut self, list: files::FileList) {
+        if !self.can_transfer() {
+            return file_error(&self.out, "unsupported", "");
+        }
+        if list.entries.is_empty() {
+            return file_error(&self.out, "empty", list.skipped.join(", "));
+        }
+        let descriptors: Vec<FileDescriptor> = list
+            .entries
+            .iter()
+            .map(files::LocalEntry::descriptor)
+            .collect();
+        let (count, bytes) = (list.file_count(), list.total_bytes());
+        self.offer = Some(Arc::new(list.entries));
+        self.open_file = None;
+        self.served.clear();
+        self.offer_pending = true;
+        self.offer_error_sent = false;
+        self.post(ClipboardMessage::SendInitiateFileCopy(descriptors));
+        file_event(
+            &self.out,
+            &FileEv::Offered {
+                files: count,
+                bytes,
+                skipped: list.skipped,
+            },
+        );
+    }
+
+    /// Answers a `FileContentsRequest` for our offer.
+    fn serve(&mut self, req: &FileContentsRequest) -> FileContentsResponse<'static> {
+        let list = req
+            .data_id
+            .and_then(|id| self.locks.get(&id).cloned())
+            .or_else(|| self.offer.clone());
+        let index = usize::try_from(req.index).unwrap_or(usize::MAX);
+        let Some((list, entry)) = list
+            .as_ref()
+            .and_then(|l| l.get(index).cloned().map(|e| (l.clone(), e)))
+        else {
+            return FileContentsResponse::new_error(req.stream_id);
+        };
+        if entry.is_dir {
+            return FileContentsResponse::new_error(req.stream_id);
+        }
+        if req.flags.contains(FileContentsFlags::SIZE) {
+            return FileContentsResponse::new_size_response(req.stream_id, entry.size);
+        }
+        // Files are opened when the host asks, not when they are dropped.
+        if self
+            .open_file
+            .as_ref()
+            .is_none_or(|(p, _)| *p != entry.path)
+        {
+            match std::fs::File::open(&entry.path) {
+                Ok(f) => self.open_file = Some((entry.path.clone(), f)),
+                Err(e) => {
+                    self.read_failed(&entry, &e);
+                    return FileContentsResponse::new_error(req.stream_id);
+                }
+            }
+        }
+        let (_, f) = self.open_file.as_mut().expect("opened above");
+        match files::read_range(f, req.position, req.requested_size) {
+            Ok(data) => {
+                let key = (Arc::as_ptr(&list) as usize, index);
+                let end = req.position + data.len() as u64;
+                let seen = self.served.entry(key).or_default();
+                *seen = (*seen).max(end.min(entry.size));
+                let done: u64 = self.served.values().sum();
+                let total: u64 = list.iter().filter(|e| !e.is_dir).map(|e| e.size).sum();
+                self.progress(true, done.min(total), total, done >= total);
+                FileContentsResponse::new_data_response(req.stream_id, data)
+            }
+            Err(e) => {
+                self.read_failed(&entry, &e);
+                FileContentsResponse::new_error(req.stream_id)
+            }
+        }
+    }
+
+    fn read_failed(&mut self, entry: &files::LocalEntry, e: &std::io::Error) {
+        if !std::mem::replace(&mut self.offer_error_sent, true) {
+            file_error(&self.out, "read", format!("{}: {e}", entry.rel.join("/")));
+        }
+    }
+
+    /// Starts saving the remote clipboard's files into `dir` (from the stdin thread).
+    fn fetch_files(&mut self, dir: PathBuf) {
+        if !self.can_transfer() {
+            return file_error(&self.out, "unsupported", "");
+        }
+        if self.download.is_some() || self.pending_fetch.is_some() {
+            return file_error(&self.out, "busy", "");
+        }
+        let Some(format) = self.remote_files else {
+            return file_error(&self.out, "no_files", "");
+        };
+        self.pending_fetch = Some(dir);
+        self.post(ClipboardMessage::SendInitiatePaste(format));
+    }
+
+    /// Issues the next request of the running download, or finishes it.
+    fn drive_download(&mut self) {
+        let Some(dl) = self.download.as_mut() else {
+            return;
+        };
+        let huge = self
+            .caps
+            .contains(ClipboardGeneralCapabilityFlags::HUGE_FILE_SUPPORT_ENABLED);
+        let step = dl.advance();
+        let clip_data_id = dl.clip_data_id;
+        let (done, total) = (dl.done_bytes, dl.total_bytes);
+        let request =
+            |stream_id, index: usize, flags, position, requested_size| FileContentsRequest {
+                stream_id,
+                index: i32::try_from(index).unwrap_or(i32::MAX),
+                flags,
+                position,
+                requested_size,
+                data_id: clip_data_id,
+            };
+        let stream_id = self.next_stream;
+        self.next_stream = self.next_stream.wrapping_add(1).max(1);
+        match step {
+            Ok(files::Step::Size { index }) => {
+                self.download_stream = Some((stream_id, true));
+                let r = request(stream_id, index, FileContentsFlags::SIZE, 0, 8);
+                self.post(ClipboardMessage::SendFileContentsRequest(r));
+            }
+            Ok(files::Step::Range { index, pos, len }) => {
+                if pos >= 0x8000_0000 && !huge {
+                    self.end_download(Some(("too_big", String::new())));
+                    return;
+                }
+                self.download_stream = Some((stream_id, false));
+                let r = request(stream_id, index, FileContentsFlags::RANGE, pos, len);
+                self.post(ClipboardMessage::SendFileContentsRequest(r));
+                self.progress(false, done, total, false);
+            }
+            Ok(files::Step::Finished) => self.end_download(None),
+            Err(e) => self.end_download(Some(("write", e.to_string()))),
+        }
+    }
+
+    fn end_download(&mut self, error: Option<(&str, String)>) {
+        self.download_stream = None;
+        let Some(mut dl) = self.download.take() else {
+            return;
+        };
+        match error {
+            Some((code, detail)) => {
+                dl.abort();
+                file_error(&self.out, code, detail);
+            }
+            None => {
+                self.progress(false, dl.done_bytes, dl.total_bytes, true);
+                file_event(
+                    &self.out,
+                    &FileEv::Saved {
+                        dir: dl.root.display().to_string(),
+                        files: dl.files_written,
+                    },
+                );
+            }
+        }
     }
 }
 
@@ -149,10 +438,27 @@ impl CliprdrBackend for Bridge {
     }
 
     fn client_capabilities(&self) -> ClipboardGeneralCapabilityFlags {
-        ClipboardGeneralCapabilityFlags::empty()
+        ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED
+            | ClipboardGeneralCapabilityFlags::FILECLIP_NO_FILE_PATHS
+            | ClipboardGeneralCapabilityFlags::CAN_LOCK_CLIPDATA
+            | ClipboardGeneralCapabilityFlags::HUGE_FILE_SUPPORT_ENABLED
     }
 
-    fn on_ready(&mut self) {}
+    fn on_ready(&mut self) {
+        self.shared.0.lock().unwrap().ready = true;
+    }
+
+    fn on_format_list_response(&mut self, ok: bool) {
+        let mut s = self.shared.0.lock().unwrap();
+        if std::mem::take(&mut s.offer_pending) {
+            if ok {
+                file_event(&s.out, &FileEv::Accepted);
+            } else {
+                s.offer = None;
+                file_error(&s.out, "rejected", "");
+            }
+        }
+    }
 
     fn on_request_format_list(&mut self) {
         self.shared.0.lock().unwrap().advertise();
@@ -160,11 +466,25 @@ impl CliprdrBackend for Bridge {
 
     fn on_process_negotiated_capabilities(
         &mut self,
-        _capabilities: ClipboardGeneralCapabilityFlags,
+        capabilities: ClipboardGeneralCapabilityFlags,
     ) {
+        self.shared.0.lock().unwrap().caps = capabilities;
     }
 
     fn on_remote_copy(&mut self, available_formats: &[ClipboardFormat]) {
+        {
+            let mut s = self.shared.0.lock().unwrap();
+            s.remote_files = available_formats
+                .iter()
+                .find(|f| {
+                    f.name
+                        .as_ref()
+                        .is_some_and(|n| n.value() == ClipboardFormatName::FILE_LIST.value())
+                })
+                .map(|f| f.id);
+            let files = s.remote_files.is_some() && s.can_transfer();
+            file_event(&s.out, &FileEv::Remote { files });
+        }
         if available_formats
             .iter()
             .any(|f| f.id == ClipboardFormatId::CF_UNICODETEXT)
@@ -193,6 +513,10 @@ impl CliprdrBackend for Bridge {
 
     fn on_format_data_response(&mut self, response: FormatDataResponse<'_>) {
         if response.is_error() {
+            let mut s = self.shared.0.lock().unwrap();
+            if s.pending_fetch.take().is_some() {
+                file_error(&s.out, "list", "");
+            }
             return;
         }
         if let Ok(text) = response.to_unicode_string() {
@@ -201,13 +525,77 @@ impl CliprdrBackend for Bridge {
         }
     }
 
-    fn on_file_contents_request(&mut self, _request: FileContentsRequest) {}
+    fn on_file_contents_request(&mut self, request: FileContentsRequest) {
+        let mut s = self.shared.0.lock().unwrap();
+        let response = s.serve(&request);
+        s.post(ClipboardMessage::SendFileContentsResponse(response));
+    }
 
-    fn on_file_contents_response(&mut self, _response: FileContentsResponse<'_>) {}
+    fn on_file_contents_response(&mut self, response: FileContentsResponse<'_>) {
+        let mut s = self.shared.0.lock().unwrap();
+        let Some((stream, is_size)) = s.download_stream else {
+            return;
+        };
+        if response.stream_id() != stream {
+            return;
+        }
+        s.download_stream = None;
+        if response.is_error() {
+            return s.end_download(Some(("remote_read", String::new())));
+        }
+        let Some(dl) = s.download.as_mut() else {
+            return;
+        };
+        let result = if is_size {
+            response
+                .data_as_size()
+                .map(|n| dl.got_size(n))
+                .map_err(|e| e.to_string())
+        } else {
+            dl.got_data(response.data()).map_err(|e| e.to_string())
+        };
+        match result {
+            Ok(()) => s.drive_download(),
+            Err(e) => s.end_download(Some(("remote_read", e))),
+        }
+    }
 
-    fn on_lock(&mut self, _data_id: LockDataId) {}
+    fn on_lock(&mut self, data_id: LockDataId) {
+        let mut s = self.shared.0.lock().unwrap();
+        if let Some(offer) = s.offer.clone() {
+            s.locks.insert(data_id.0, offer);
+        }
+    }
 
-    fn on_unlock(&mut self, _data_id: LockDataId) {}
+    fn on_unlock(&mut self, data_id: LockDataId) {
+        let mut s = self.shared.0.lock().unwrap();
+        s.locks.remove(&data_id.0);
+        if s.locks.is_empty() {
+            s.open_file = None;
+        }
+    }
+
+    fn on_remote_file_list(&mut self, list: &[FileDescriptor], clip_data_id: Option<u32>) {
+        let mut s = self.shared.0.lock().unwrap();
+        let Some(root) = s.pending_fetch.take() else {
+            return;
+        };
+        if let Err(e) = std::fs::create_dir_all(&root) {
+            return file_error(&s.out, "write", format!("{}: {e}", root.display()));
+        }
+        let entries: Vec<_> = list
+            .iter()
+            .map(|f| {
+                let is_dir = f
+                    .attributes
+                    .is_some_and(|a| a.contains(ClipboardFileAttributes::DIRECTORY));
+                (f.relative_path.clone(), f.name.clone(), is_dir, f.file_size)
+            })
+            .collect();
+        let plan = files::plan_download(&root, &entries);
+        s.download = Some(files::Download::new(root, plan, clip_data_id));
+        s.drive_download();
+    }
 }
 
 // ---------------------------------------------------------------- certificate
@@ -397,7 +785,7 @@ fn run(out: Out) -> anyhow::Result<()> {
     }
     let connect: Connect = serde_json::from_str(&first)?;
 
-    let shared = SharedClip(Arc::new(Mutex::new(ClipShared::default())));
+    let shared = SharedClip(Arc::new(Mutex::new(ClipShared::new(out.clone()))));
     let bridge_shared = shared.clone();
     let bridge_out = out.clone();
     let mut builder = ConfigBuilder::new()
@@ -474,6 +862,24 @@ fn run(out: Out) -> anyhow::Result<()> {
                     let mut s = shared_cmds.0.lock().unwrap();
                     s.local_text = Some(text.clone());
                     s.advertise();
+                    None
+                }
+                Cmd::OfferFiles { paths } => {
+                    // Walking big folders must not hold up mouse and keyboard input.
+                    let shared = shared_cmds.clone();
+                    let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+                    std::thread::spawn(move || {
+                        let list = files::build_file_list(&paths);
+                        shared.0.lock().unwrap().offer_files(list);
+                    });
+                    None
+                }
+                Cmd::FetchFiles { dir } => {
+                    shared_cmds
+                        .0
+                        .lock()
+                        .unwrap()
+                        .fetch_files(PathBuf::from(dir));
                     None
                 }
                 Cmd::ClipGet => {
@@ -559,7 +965,7 @@ mod tests {
         let prev = vec![0u32; 16];
         let mut next = prev.clone();
         assert_eq!(dirty_rect(&prev, &next, w), None);
-        next[1 * w + 1] = 7;
+        next[w + 1] = 7;
         next[2 * w + 3] = 9;
         assert_eq!(dirty_rect(&prev, &next, w), Some((1, 1, 3, 2)));
         assert_eq!(dirty_rect(&[], &next, w), Some((0, 0, 4, 4)));
@@ -587,5 +993,77 @@ mod tests {
         let t: Cmd = serde_json::from_str(r#"{"t":"Trust","accept":true}"#).unwrap();
         assert_eq!(t, Cmd::Trust { accept: true });
         assert!(fingerprint(b"key").starts_with("SHA256:"));
+        let o: Cmd = serde_json::from_str(r#"{"t":"OfferFiles","paths":["/a b/ä.txt"]}"#).unwrap();
+        assert_eq!(
+            o,
+            Cmd::OfferFiles {
+                paths: vec!["/a b/ä.txt".into()]
+            }
+        );
+        let f: Cmd = serde_json::from_str(r#"{"t":"FetchFiles","dir":"/x"}"#).unwrap();
+        assert_eq!(f, Cmd::FetchFiles { dir: "/x".into() });
+    }
+
+    #[test]
+    fn file_events_are_tagged_json() {
+        let j = serde_json::to_string(&FileEv::Progress {
+            up: true,
+            done: 1,
+            total: 2,
+        })
+        .unwrap();
+        assert_eq!(j, r#"{"ev":"progress","up":true,"done":1,"total":2}"#);
+        let j = serde_json::to_string(&FileEv::Accepted).unwrap();
+        assert_eq!(j, r#"{"ev":"accepted"}"#);
+    }
+
+    #[test]
+    fn serves_sizes_and_ranges_of_the_offer() {
+        let dir = std::env::temp_dir().join(format!("aurora-rdp-serve-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("d")).unwrap();
+        std::fs::write(dir.join("d/f.txt"), b"abcdef").unwrap();
+        let (tx, rx) = std::sync::mpsc::sync_channel(64);
+        let mut s = ClipShared::new(tx);
+        // Not ready yet: refused, nothing posted.
+        s.offer_files(files::build_file_list(&[dir.join("d")]));
+        assert!(s.offer.is_none());
+        s.ready = true;
+        s.caps = ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED;
+        s.offer_files(files::build_file_list(&[dir.join("d")]));
+        assert_eq!(s.offer.as_ref().unwrap().len(), 2);
+        let req = |index, flags, position, requested_size| FileContentsRequest {
+            stream_id: 7,
+            index,
+            flags,
+            position,
+            requested_size,
+            data_id: None,
+        };
+        let r = s.serve(&req(1, FileContentsFlags::SIZE, 0, 8));
+        assert_eq!(r.data_as_size().unwrap(), 6);
+        let r = s.serve(&req(1, FileContentsFlags::RANGE, 2, 3));
+        assert_eq!(r.data(), b"cde");
+        let r = s.serve(&req(1, FileContentsFlags::RANGE, 5, 100));
+        assert_eq!(r.data(), b"f");
+        let r = s.serve(&req(1, FileContentsFlags::RANGE, 6, 100));
+        assert!(!r.is_error() && r.data().is_empty());
+        assert!(s.serve(&req(0, FileContentsFlags::SIZE, 0, 8)).is_error());
+        assert!(s.serve(&req(9, FileContentsFlags::SIZE, 0, 8)).is_error());
+        // A locked snapshot keeps serving after a new offer.
+        s.locks.insert(3, s.offer.clone().unwrap());
+        s.offer = None;
+        let mut locked = req(1, FileContentsFlags::RANGE, 0, 2);
+        locked.data_id = Some(3);
+        assert_eq!(s.serve(&locked).data(), b"ab");
+        let events: Vec<String> = rx
+            .try_iter()
+            .filter(|(t, _)| *t == tag::FILES)
+            .map(|(_, p)| String::from_utf8(p).unwrap())
+            .collect();
+        assert!(events[0].contains("unsupported"));
+        assert!(events[1].contains("offered"));
+        assert!(events.iter().any(|e| e.contains(r#""done":6,"total":6"#)));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

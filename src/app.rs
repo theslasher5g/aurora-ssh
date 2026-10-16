@@ -310,6 +310,8 @@ pub struct SnippetRun {
     pub snippet: Snippet,
     pub values: Vec<(String, String)>,
     pub all: bool,
+    /// Run as PowerShell in this RDP tab instead of pasting into terminals.
+    pub rdp_tab: Option<u64>,
 }
 
 /// "SSH-Key einrichten" dialog.
@@ -2679,6 +2681,7 @@ impl App {
                             values: vars.into_iter().map(|v| (v, String::new())).collect(),
                             snippet: s,
                             all,
+                            rdp_tab: None,
                         });
                     }
                 }
@@ -3323,7 +3326,33 @@ impl App {
         }
     }
 
+    /// Starts a PowerShell script on the Windows host of RDP tab `tab_id`.
+    pub fn run_powershell(&mut self, tab_id: u64, script: &str) {
+        let result = match self
+            .tabs
+            .iter_mut()
+            .find(|t| t.id == tab_id)
+            .map(|t| &mut t.kind)
+        {
+            Some(TabKind::Rdp(t)) => match t.embedded.as_mut() {
+                Some(v) => v.run_powershell(script),
+                None => Err(t!("Nicht verbunden").into()),
+            },
+            _ => Err(t!("Nicht verbunden").into()),
+        };
+        if let Err(e) = result {
+            self.toast(e, theme::amber());
+        }
+    }
+
     fn rdp_tab(&mut self, ui: &mut egui::Ui, tab_id: u64) {
+        let ps_snippets: Vec<(Uuid, String)> = self
+            .lib
+            .snippets
+            .iter()
+            .filter(|s| s.shell == crate::model::ShellKind::PowerShell)
+            .map(|s| (s.id, s.name.clone()))
+            .collect();
         let index = self.tabs.iter().position(|t| t.id == tab_id).unwrap_or(0) + 1;
         let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
             return;
@@ -3341,10 +3370,29 @@ impl App {
                 &title,
                 &subtitle,
                 &t.launch,
+                &ps_snippets,
                 &mut toasts,
             );
-            if let crate::ui::rdp::RdpAction::OpenExternal = action {
-                t.launch_external();
+            match action {
+                crate::ui::rdp::RdpAction::OpenExternal => t.launch_external(),
+                crate::ui::rdp::RdpAction::RunSnippet(id) => {
+                    if let Some(s) = self.lib.snippet(id).cloned() {
+                        let vars = s.variables();
+                        if vars.is_empty() {
+                            if let Err(e) = view.run_powershell(&s.script) {
+                                toasts.push((e, theme::amber()));
+                            }
+                        } else {
+                            self.snippet_run = Some(SnippetRun {
+                                values: vars.into_iter().map(|v| (v, String::new())).collect(),
+                                snippet: s,
+                                all: false,
+                                rdp_tab: Some(tab_id),
+                            });
+                        }
+                    }
+                }
+                crate::ui::rdp::RdpAction::None => {}
             }
             for (text, c) in toasts {
                 self.toast(text, c);

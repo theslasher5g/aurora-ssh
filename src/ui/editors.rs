@@ -1038,6 +1038,17 @@ fn snippet_editor(app: &mut App, ctx: &egui::Context) {
                 f.field(ui, "Tags", |ui| {
                     field_text(ui, tags, "docker, logs");
                 });
+                f.field(ui, t!("Shell"), |ui| {
+                    use crate::model::ShellKind;
+                    let cur = usize::from(s.shell == ShellKind::PowerShell);
+                    let r = ui.scope(|ui| theme::segmented(ui, &["Shell", "PowerShell"], cur));
+                    if let Some(i) = r.inner {
+                        s.shell = [ShellKind::Shell, ShellKind::PowerShell][i];
+                    }
+                    r.response.on_hover_text(t!(
+                        "PowerShell-Snippets lassen sich auch in RDP-Sessions auf Windows-Hosts starten"
+                    ));
+                });
             });
             theme::form_caption(ui, "Script");
             theme::form(ui, 110.0, |ui, f| {
