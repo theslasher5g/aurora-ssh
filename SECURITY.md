@@ -20,6 +20,11 @@
 | Jump host | The target's server key is verified exactly like a direct connection (own fingerprint per `host:port`) |
 | Editing remote files | Downloaded into a private, randomly named temp directory (0700); executable types (`.exe`, `.cmd`, `.hta`, `.js`, `.desktop` …) are not opened without an explicitly configured editor; on Windows always Notepad instead of the default app |
 | Export | Own passphrase, Argon2id + XChaCha20-Poly1305, file mode `0600` |
+| Containers | Container/pod names and options are shell-quoted before they go into the `docker`/`kubectl` command on an SSH host; on this PC the CLI is started directly (no shell) and only looked up in `PATH` – never in the current directory |
+| Log viewer | Read-only: `tail -F <quoted path>` or the command you entered, on its own channel; escape sequences are stripped from the output, at most 20,000 lines are kept |
+| Telnet | Unencrypted by design (only for devices that can't do SSH). Auto-login types the stored password only once and only after a password prompt |
+| VNC | VNC auth (DES challenge) or none; RFB traffic itself is unencrypted – over the internet use a tunnel (SSH host → tunnel to port 5900). All server data is bounds-checked (rectangles clipped, cut text capped at 1 MiB) |
+| Fonts | Font files are parsed and checked before they are handed to the renderer; broken files fall back to IBM Plex Mono |
 
 ## Security review 0.1 (fixed)
 
@@ -46,3 +51,4 @@
 * Terminal OSC 52 (clipboard writes by the server) is deliberately ignored.
 * Keyboard-interactive auth answers every prompt with the stored password (OTP prompts fail).
 * Jump hosts need stored credentials (identity); chains of several jump hosts are not supported.
+* Telnet and VNC are unencrypted protocols; Apple Remote Desktop / VeNCrypt / TLS security types are not supported (macOS: enable "VNC viewers may control screen with password").

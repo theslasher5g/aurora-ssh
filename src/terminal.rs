@@ -129,6 +129,10 @@ pub struct TermOutput {
 
 pub struct TermView<'a> {
     pub font_size: f32,
+    /// Terminal font family (`theme::term_font`).
+    pub family: egui::FontFamily,
+    /// Colors of another theme (host terminal profile); `None` = current theme.
+    pub palette: Option<theme::Palette>,
     pub accent: Color32,
     pub copy_on_select: bool,
     pub glow: Option<Color32>,
@@ -442,9 +446,9 @@ impl Terminal {
 
     pub fn show(&mut self, ui: &mut egui::Ui, id: egui::Id, view: TermView<'_>) -> TermOutput {
         let mut out = TermOutput::default();
-        let pal = theme::palette();
+        let pal = view.palette.unwrap_or_else(theme::palette);
         let (term_bg, term_fg) = (pal.term_bg, pal.term_fg);
-        let font = FontId::monospace(view.font_size * self.font_scale);
+        let font = FontId::new(view.font_size * self.font_scale, view.family.clone());
         let (cw, ch) = ui.fonts_mut(|f| (f.glyph_width(&font, 'M'), f.row_height(&font)));
         let cw = cw.max(1.0);
         let ch = ch.ceil().max(1.0);

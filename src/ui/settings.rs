@@ -36,6 +36,30 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     .num_columns(2)
                     .spacing([24.0, 12.0])
                     .show(ui, |ui| {
+                        ui.label(t!("Schrift"));
+                        let current = if app.lib.settings.term_font.is_empty() {
+                            theme::DEFAULT_TERM_FONT.to_string()
+                        } else {
+                            app.lib.settings.term_font.clone()
+                        };
+                        egui::ComboBox::from_id_salt("term-font")
+                            .selected_text(&current)
+                            .width(220.0)
+                            .show_ui(ui, |ui| {
+                                for f in theme::term_fonts() {
+                                    let value = if f == theme::DEFAULT_TERM_FONT {
+                                        String::new()
+                                    } else {
+                                        f.clone()
+                                    };
+                                    changed |= ui
+                                        .selectable_value(&mut app.lib.settings.term_font, value, f)
+                                        .changed();
+                                }
+                            })
+                            .response
+                            .on_hover_text(t!("Pro Host abweichend einstellbar: Host bearbeiten → Terminal-Profil"));
+                        ui.end_row();
                         ui.label(t!("Schriftgröße"));
                         changed |= ui
                             .add(

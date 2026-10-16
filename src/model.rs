@@ -12,16 +12,34 @@ pub enum Protocol {
     Ssh,
     Rdp,
     Serial,
+    Telnet,
+    Vnc,
+    /// Shell in a Docker/Podman container (on this PC or an SSH host).
+    Docker,
+    /// Shell in a Kubernetes pod (kubectl on this PC or an SSH host).
+    Kubernetes,
 }
 
 impl Protocol {
-    pub const ALL: [Protocol; 3] = [Protocol::Ssh, Protocol::Rdp, Protocol::Serial];
+    pub const ALL: [Protocol; 7] = [
+        Protocol::Ssh,
+        Protocol::Rdp,
+        Protocol::Vnc,
+        Protocol::Telnet,
+        Protocol::Serial,
+        Protocol::Docker,
+        Protocol::Kubernetes,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             Protocol::Ssh => "SSH",
             Protocol::Rdp => "RDP",
             Protocol::Serial => "Serial",
+            Protocol::Telnet => "Telnet",
+            Protocol::Vnc => "VNC",
+            Protocol::Docker => "Docker",
+            Protocol::Kubernetes => "Kubernetes",
         }
     }
 
@@ -30,6 +48,10 @@ impl Protocol {
             Protocol::Ssh => "🖧",
             Protocol::Rdp => "🖥",
             Protocol::Serial => "🔌",
+            Protocol::Telnet => "☎",
+            Protocol::Vnc => "🖵",
+            Protocol::Docker => "📦",
+            Protocol::Kubernetes => "☸",
         }
     }
 
@@ -38,7 +60,27 @@ impl Protocol {
             Protocol::Ssh => 22,
             Protocol::Rdp => 3389,
             Protocol::Serial => 0,
+            Protocol::Telnet => 23,
+            Protocol::Vnc => 5900,
+            Protocol::Docker | Protocol::Kubernetes => 0,
         }
+    }
+
+    /// Reached by TCP at `hostname:port` (reachability LED, scan, address field).
+    pub fn is_network(self) -> bool {
+        matches!(
+            self,
+            Protocol::Ssh | Protocol::Rdp | Protocol::Telnet | Protocol::Vnc
+        )
+    }
+
+    pub fn is_container(self) -> bool {
+        matches!(self, Protocol::Docker | Protocol::Kubernetes)
+    }
+
+    /// Opens a text terminal (and can use a terminal profile).
+    pub fn is_terminal(self) -> bool {
+        !matches!(self, Protocol::Rdp | Protocol::Vnc)
     }
 }
 
@@ -134,6 +176,46 @@ impl Default for RdpSettings {
     }
 }
 
+/// Docker/Podman container or Kubernetes pod reached through its CLI.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+#[serde(default)]
+pub struct ContainerSettings {
+    /// SSH host that runs docker/kubectl; `None` = this PC.
+    pub via: Option<Uuid>,
+    /// Docker: `podman` instead of `docker`.
+    pub podman: bool,
+    /// Container name/ID or pod name.
+    pub name: String,
+    /// Kubernetes namespace ("" = default).
+    pub namespace: String,
+    /// Kubernetes container inside the pod ("" = default container).
+    pub container: String,
+    /// kubectl context ("" = current).
+    pub context: String,
+    /// Shell to start ("" = bash, else sh).
+    pub shell: String,
+    /// Run as this user (docker exec -u).
+    pub user: String,
+}
+
+/// Terminal look per host; empty/zero values follow the app settings.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+#[serde(default)]
+pub struct TermProfile {
+    /// Theme id for the terminal colors.
+    pub theme: String,
+    /// Font name from the font list, or a path to a .ttf/.otf file.
+    pub font: String,
+    pub font_size: f32,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+#[serde(default)]
+pub struct VncSettings {
+    /// Only watch, never send keyboard/mouse.
+    pub view_only: bool,
+}
+
 /// Local port forwarding: `localhost:local_port` → (as seen from the server)
 /// `remote_host:remote_port`.
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
@@ -178,9 +260,14 @@ impl Tunnel {
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct SavedSession {
     pub host: Uuid,
-    /// "term", "files" or "rdp"
+    /// "term", "files", "rdp", "vnc" or "log"
     pub kind: String,
     pub in_split: bool,
+    /// Log tabs: the followed file or command.
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub title: String,
 }
 
 /// Environment label of a host or group; production sessions get a red frame and
@@ -234,6 +321,10 @@ pub struct Host {
     pub last_connected: Option<DateTime<Utc>>,
     pub serial: SerialSettings,
     pub rdp: RdpSettings,
+    pub container: ContainerSettings,
+    pub vnc: VncSettings,
+    /// Terminal colors and font for this host.
+    pub term: TermProfile,
 }
 
 impl Default for Host {
@@ -258,6 +349,9 @@ impl Default for Host {
             last_connected: None,
             serial: SerialSettings::default(),
             rdp: RdpSettings::default(),
+            container: ContainerSettings::default(),
+            vnc: VncSettings::default(),
+            term: TermProfile::default(),
         }
     }
 }
@@ -268,6 +362,8 @@ impl Host {
             &self.label
         } else if self.protocol == Protocol::Serial {
             &self.serial.port_name
+        } else if self.protocol.is_container() {
+            &self.container.name
         } else {
             &self.hostname
         }
@@ -277,6 +373,18 @@ impl Host {
         match self.protocol {
             Protocol::Serial => {
                 format!("{} · {} baud", self.serial.port_name, self.serial.baud_rate)
+            }
+            Protocol::Docker | Protocol::Kubernetes => {
+                let c = &self.container;
+                let mut s = if self.protocol == Protocol::Kubernetes && !c.namespace.is_empty() {
+                    format!("{}/{}", c.namespace, c.name)
+                } else {
+                    c.name.clone()
+                };
+                if !c.container.is_empty() {
+                    s = format!("{s}:{}", c.container);
+                }
+                s
             }
             _ => {
                 let user = if self.username.is_empty() {
@@ -418,6 +526,8 @@ pub struct Keychain {
 #[serde(default)]
 pub struct Settings {
     pub font_size: f32,
+    /// Terminal font ("" = IBM Plex Mono), see `theme::term_fonts`.
+    pub term_font: String,
     pub scrollback: usize,
     pub theme: String,
     pub copy_on_select: bool,
@@ -450,6 +560,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             font_size: 14.0,
+            term_font: String::new(),
             scrollback: 5000,
             theme: "phosphor".into(),
             copy_on_select: true,

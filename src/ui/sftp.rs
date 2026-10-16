@@ -379,6 +379,8 @@ enum PaneAction {
     Reconnect,
     /// Open a remote file in the local editor.
     Edit(String),
+    /// Follow a remote file in a log tab.
+    FollowLog(String),
 }
 
 pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
@@ -390,6 +392,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
     let index = app.tabs.iter().position(|t| t.id == tab_id).unwrap_or(0) + 1;
     let mut toasts: Vec<(String, Color32)> = Vec::new();
     let mut source_change: Option<(usize, Option<Uuid>)> = None;
+    let mut follow_log: Option<(Option<Uuid>, String)> = None;
     let mut reconnect = false;
     // In a split only the active pane takes files dropped from the OS.
     let takes_drops = app.active == Some(tab_id);
@@ -603,6 +606,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
                 });
             }
             PaneAction::Reconnect => reconnect = true,
+            PaneAction::FollowLog(name) => {
+                let host = pane.remote.as_ref().and_then(|r| r.host_id);
+                follow_log = Some((host, pane.join(&name)));
+            }
         }
     }
 
@@ -667,6 +674,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
     if let Some((idx, host)) = source_change {
         let ctx = ui.ctx().clone();
         app.apply(Action::SetPaneSource(tab_id, idx, host), &ctx);
+    }
+    if let Some((host, path)) = follow_log {
+        if host
+            .and_then(|h| app.lib.host(h))
+            .is_some_and(|h| h.protocol == Protocol::Ssh)
+        {
+            let ctx = ui.ctx().clone();
+            app.apply(Action::OpenLog(host, path), &ctx);
+        } else {
+            app.toast(
+                t!("Log verfolgen geht nur bei gespeicherten SSH-Hosts"),
+                theme::amber(),
+            );
+        }
     }
 }
 
@@ -1082,6 +1103,10 @@ fn entry_row(
     resp.context_menu(|ui| {
         if remote && !e.is_dir && ui.button(t!("Bearbeiten (eigener Editor)")).clicked() {
             action = Some(PaneAction::Edit(e.name.clone()));
+            ui.close();
+        }
+        if remote && !e.is_dir && ui.button(t!("Als Log verfolgen")).clicked() {
+            action = Some(PaneAction::FollowLog(e.name.clone()));
             ui.close();
         }
         if e.is_dir && ui.button(t!("Öffnen")).clicked() {

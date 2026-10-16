@@ -34,8 +34,9 @@ fn sort_hosts(app: &App, hosts: &mut [Host]) {
 pub fn protocol_color(p: Protocol) -> Color32 {
     match p {
         Protocol::Ssh => theme::accent(),
-        Protocol::Rdp => theme::accent2(),
-        Protocol::Serial => theme::green(),
+        Protocol::Rdp | Protocol::Vnc => theme::accent2(),
+        Protocol::Serial | Protocol::Telnet => theme::green(),
+        Protocol::Docker | Protocol::Kubernetes => theme::amber(),
     }
 }
 
@@ -44,6 +45,10 @@ pub fn protocol_tag(p: Protocol) -> &'static str {
         Protocol::Ssh => "SSH",
         Protocol::Rdp => "RDP",
         Protocol::Serial => "COM",
+        Protocol::Telnet => "TELNET",
+        Protocol::Vnc => "VNC",
+        Protocol::Docker => "DOCKER",
+        Protocol::Kubernetes => "K8S",
     }
 }
 
@@ -62,14 +67,25 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 for (label, proto) in [
                     ("SSH-Host", Protocol::Ssh),
                     ("Remote Desktop", Protocol::Rdp),
+                    ("VNC", Protocol::Vnc),
+                    ("Telnet", Protocol::Telnet),
                     ("Serielles Gerät", Protocol::Serial),
+                    ("Docker-Container", Protocol::Docker),
+                    ("Kubernetes-Pod", Protocol::Kubernetes),
                 ] {
-                    if ui.button(crate::i18n::tr(label)).clicked() {
+                    if ui
+                        .button(format!("{}  {}", proto.icon(), crate::i18n::tr(label)))
+                        .clicked()
+                    {
                         actions.push(Action::NewHostOf(proto, None));
                         ui.close();
                     }
                 }
                 ui.separator();
+                if ui.button(t!("Container durchsuchen…")).clicked() {
+                    actions.push(Action::BrowseContainers(Protocol::Docker, None, false));
+                    ui.close();
+                }
                 if ui.button(t!("Gruppe")).clicked() {
                     actions.push(Action::NewGroup(None));
                     ui.close();
@@ -107,7 +123,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     ui.horizontal(|ui| {
         if let Some(i) = theme::segmented(
             ui,
-            &["Alle", "SSH", "RDP", "Seriell", "Favoriten"].map(crate::i18n::tr),
+            &[
+                "Alle",
+                "SSH",
+                "Desktop",
+                "Konsole",
+                "Container",
+                "Favoriten",
+            ]
+            .map(crate::i18n::tr),
             app.host_filter,
         ) {
             app.host_filter = i;
@@ -265,6 +289,8 @@ fn live_hosts(app: &App) -> Vec<String> {
             TabKind::Term(t) => matches!(t.state, ConnState::Connected),
             TabKind::Sftp(t) => matches!(t.state(), ConnState::Connected),
             TabKind::Rdp(t) => t.is_live(),
+            TabKind::Vnc(t) => matches!(t.view.state, ConnState::Connected),
+            TabKind::Log(_) => false,
         })
         .flat_map(|t| {
             [
@@ -278,9 +304,10 @@ fn live_hosts(app: &App) -> Vec<String> {
 fn passes_filter(filter: usize, h: &Host) -> bool {
     match filter {
         1 => h.protocol == Protocol::Ssh,
-        2 => h.protocol == Protocol::Rdp,
-        3 => h.protocol == Protocol::Serial,
-        4 => h.favorite,
+        2 => matches!(h.protocol, Protocol::Rdp | Protocol::Vnc),
+        3 => matches!(h.protocol, Protocol::Serial | Protocol::Telnet),
+        4 => h.protocol.is_container(),
+        5 => h.favorite,
         _ => true,
     }
 }
@@ -1062,6 +1089,18 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
             h.serial.port_name.clone(),
             format!(" {} Bd", h.serial.baud_rate),
         ),
+        Protocol::Docker | Protocol::Kubernetes => (
+            String::new(),
+            if named { h.subtitle() } else { String::new() },
+            format!(
+                "{}@ {}",
+                if named { "  " } else { "" },
+                match h.container.via.and_then(|v| app.lib.host(v)) {
+                    Some(v) => v.display_name().to_string(),
+                    None => t!("dieser PC").to_string(),
+                }
+            ),
+        ),
         _ => (
             h.username.clone(),
             if named {
@@ -1350,6 +1389,25 @@ fn host_row(app: &App, ui: &mut egui::Ui, h: &Host, live: &[String], actions: &m
         {
             actions.push(Action::OpenSftp(h.id));
             ui.close();
+        }
+        if (h.protocol == Protocol::Ssh || h.protocol.is_container())
+            && ui
+                .button(t!("Log ansehen…"))
+                .on_hover_text(t!("Logdatei oder journalctl live verfolgen, mit Filter"))
+                .clicked()
+        {
+            actions.push(Action::PickLog(Some(h.id)));
+            ui.close();
+        }
+        if h.protocol == Protocol::Ssh {
+            ui.menu_button(t!("Container auf diesem Host"), |ui| {
+                for p in [Protocol::Docker, Protocol::Kubernetes] {
+                    if ui.button(format!("{} {}", p.icon(), p.label())).clicked() {
+                        actions.push(Action::BrowseContainers(p, Some(h.id), false));
+                        ui.close();
+                    }
+                }
+            });
         }
         ui.separator();
         if ui

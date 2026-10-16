@@ -282,10 +282,12 @@ pub fn friendly_text(raw: &str) -> Option<String> {
     Some(msg.to_string())
 }
 
-/// Starts an interactive shell session; returns the command sender.
+/// Starts an interactive shell session (or `command` in a terminal, e.g.
+/// `docker exec -it …`); returns the command sender.
 pub fn spawn_shell(
     rt: &tokio::runtime::Runtime,
     params: SshParams,
+    command: Option<String>,
     cols: u16,
     rows: u16,
     events: Sink<TermEvent>,
@@ -293,7 +295,7 @@ pub fn spawn_shell(
 ) -> mpsc::UnboundedSender<TermCmd> {
     let (tx, rx) = mpsc::unbounded_channel();
     rt.spawn(async move {
-        let result = run_shell(&params, cols, rows, rx, &events, prompts).await;
+        let result = run_shell(&params, command, cols, rows, rx, &events, prompts).await;
         events.send(TermEvent::Closed(result.err().map(|e| format!("{e:#}"))));
     });
     tx
@@ -301,6 +303,7 @@ pub fn spawn_shell(
 
 async fn run_shell(
     p: &SshParams,
+    command: Option<String>,
     cols: u16,
     rows: u16,
     mut cmds: mpsc::UnboundedReceiver<TermCmd>,
@@ -317,9 +320,12 @@ async fn run_shell(
     channel
         .request_pty(false, "xterm-256color", cols as u32, rows as u32, 0, 0, &[])
         .await?;
-    channel.request_shell(false).await?;
+    match &command {
+        Some(cmd) => channel.exec(false, cmd.as_str()).await?,
+        None => channel.request_shell(false).await?,
+    }
     events.send(TermEvent::Connected);
-    {
+    if command.is_none() {
         // Facts for the host list run on a separate channel of the same connection.
         let (handle, events) = (handle.clone(), events.clone());
         tokio::spawn(async move {
@@ -330,6 +336,7 @@ async fn run_shell(
     }
 
     let (mut reader, writer) = channel.split();
+    let mut status = None;
     loop {
         tokio::select! {
             cmd = cmds.recv() => match cmd {
@@ -353,6 +360,9 @@ async fn run_shell(
                 Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
                     events.send(TermEvent::Output(data.to_vec()));
                 }
+                Some(ChannelMsg::ExitStatus { exit_status }) if exit_status != 0 && command.is_some() => {
+                    status = Some(exit_status);
+                }
                 Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
                 _ => {}
             },
@@ -361,7 +371,10 @@ async fn run_shell(
     let _ = handle
         .disconnect(Disconnect::ByApplication, "bye", "en")
         .await;
-    Ok(())
+    match status {
+        Some(code) => bail!("{}", t!("Beendet mit Code {}", code)),
+        None => Ok(()),
+    }
 }
 
 /// Read-only system facts: os-release, hostname, uptime, root disk, pending updates.

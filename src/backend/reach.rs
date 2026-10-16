@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use uuid::Uuid;
 
-use crate::model::{Host, Protocol};
+use crate::model::Host;
 
 const INTERVAL: Duration = Duration::from_secs(60);
 const TIMEOUT: Duration = Duration::from_secs(3);
@@ -42,7 +42,7 @@ impl Reachability {
         self.running.store(true, Ordering::Relaxed);
         let targets: Vec<(Uuid, String, u16)> = hosts
             .iter()
-            .filter(|h| matches!(h.protocol, Protocol::Ssh | Protocol::Rdp))
+            .filter(|h| h.protocol.is_network())
             .filter(|h| !h.hostname.trim().is_empty())
             .map(|h| (h.id, h.hostname.trim().to_string(), h.port))
             .collect();

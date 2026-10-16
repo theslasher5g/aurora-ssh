@@ -31,7 +31,12 @@ pub enum View {
 #[derive(Clone)]
 pub enum ConnectSpec {
     Ssh(SshParams),
+    /// A command in a terminal on the SSH host (container shell).
+    SshExec(SshParams, String),
     Serial(SerialSettings),
+    Telnet(crate::backend::telnet::TelnetParams),
+    /// A program on this PC in a pseudo terminal (container shell).
+    Local(Vec<String>),
 }
 
 pub enum ConnState {
@@ -56,6 +61,35 @@ pub struct TermTab {
     pub upload: Option<(String, u64, u64)>,
     /// Command typed once after the first login (not on reconnect).
     pub run_once: Option<String>,
+    /// Colors and font of this host's terminal.
+    pub profile: crate::model::TermProfile,
+}
+
+/// Log viewer tab: follows a file or command and shows it filtered and highlighted.
+pub struct LogTab {
+    pub source: backend::logs::LogSource,
+    /// SSH host that runs the source; `None` = this PC.
+    pub target_host: Option<Uuid>,
+    pub lines: VecDeque<String>,
+    /// Lines dropped at the top because of the limit.
+    pub dropped: usize,
+    pub state: ConnState,
+    pub rx: Option<UnboundedReceiver<backend::logs::LogEvent>>,
+    pub stop: Option<UnboundedSender<()>>,
+    pub filter: String,
+    /// Show only matching lines (otherwise matches are highlighted).
+    pub only_matches: bool,
+    /// 0 all, 1 warnings and errors, 2 errors.
+    pub level: u8,
+    pub paused: bool,
+    /// Lines that arrived while paused.
+    pub paused_at: usize,
+    pub follow: bool,
+    pub wrap: bool,
+}
+
+pub struct VncTab {
+    pub view: crate::ui::vnc::VncView,
 }
 
 pub struct Transfer {
@@ -189,6 +223,8 @@ pub enum TabKind {
     Term(Box<TermTab>),
     Sftp(Box<SftpTab>),
     Rdp(Box<RdpTab>),
+    Vnc(Box<VncTab>),
+    Log(Box<LogTab>),
 }
 
 pub struct Tab {
@@ -217,6 +253,34 @@ pub enum Purpose {
     Pane(u64, usize),
     /// Start the port forwarding with this id.
     Tunnel(Uuid),
+    /// Attach the log source of this (already open) log tab.
+    Log(u64),
+    /// Open the container/pod waiting in `pending_containers` under this key.
+    Container(u64),
+    /// List containers/pods for the container browser.
+    ListContainers,
+}
+
+/// "Container durchsuchen" dialog.
+pub struct ContainerBrowser {
+    pub proto: Protocol,
+    /// SSH host running docker/kubectl; `None` = this PC.
+    pub via: Option<Uuid>,
+    pub podman: bool,
+    pub context: String,
+    pub loading: bool,
+    pub items: Vec<backend::container::Item>,
+    pub error: Option<String>,
+    pub filter: String,
+    pub rx: Option<UnboundedReceiver<backend::container::ListEvent>>,
+    /// Opened from the host editor: the pick fills in this host instead of connecting.
+    pub for_editor: bool,
+}
+
+/// "Log ansehen" dialog for a host.
+pub struct LogPicker {
+    pub host: Option<Uuid>,
+    pub source: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -356,6 +420,8 @@ pub struct App {
     pub tour_step: usize,
     /// Terminal that gets the keyboard focus on the next frame.
     pub focus_term: Option<u64>,
+    /// Split pane clicked; its terminal gets the focus unless the click focused a widget.
+    pub pane_press: Option<u64>,
     /// Hosts whose last connection attempt failed (red LED).
     pub failed: std::collections::HashSet<Uuid>,
     /// Command for the next session of this host (e.g. "install updates").
@@ -373,6 +439,10 @@ pub struct App {
     pub export_pw: String,
     pub select_anchor: Option<Uuid>,
     pub tunnels: std::collections::HashMap<Uuid, TunnelRun>,
+    pub containers: Option<ContainerBrowser>,
+    /// Container hosts waiting for their SSH host's credentials (`Purpose::Container`).
+    pub pending_containers: std::collections::HashMap<u64, Host>,
+    pub log_picker: Option<LogPicker>,
     pub tunnel_sink: Sink<backend::tunnel::TunnelEvent>,
     pub tunnel_rx: UnboundedReceiver<backend::tunnel::TunnelEvent>,
     pub next_id: u64,
@@ -472,6 +542,14 @@ pub enum Action {
     DeleteHosts(Vec<Uuid>),
     /// Ask before running the inner (destructive) action.
     Confirm(String, Box<Action>),
+    /// Container browser: (Docker/Kubernetes, SSH host or this PC, pick for the host editor).
+    BrowseContainers(Protocol, Option<Uuid>, bool),
+    /// Log dialog for a host (`None` = this PC).
+    PickLog(Option<Uuid>),
+    /// Open a log tab: (host or this PC, file or command).
+    OpenLog(Option<Uuid>, String),
+    /// Open a container/pod (not necessarily saved): shell or logs.
+    OpenContainer(Box<Host>, bool),
 }
 
 impl App {
@@ -524,6 +602,7 @@ impl App {
             show_shortcuts: false,
             tour_step: 0,
             focus_term: None,
+            pane_press: None,
             failed: Default::default(),
             pending_command: None,
             key_setup: None,
@@ -539,6 +618,9 @@ impl App {
             export_pw: String::new(),
             select_anchor: None,
             tunnels: Default::default(),
+            containers: None,
+            pending_containers: Default::default(),
+            log_picker: None,
             tunnel_sink,
             tunnel_rx,
             next_id: 1,
@@ -646,6 +728,22 @@ impl App {
     // ------------------------------------------------------------------ connecting
 
     pub fn connect_host(&mut self, host: Host, purpose: Purpose, ctx: &egui::Context) {
+        // Containers on an SSH host: log in there (with its credentials) first.
+        if host.protocol.is_container() && purpose == Purpose::Terminal {
+            match host.container.via.and_then(|v| self.lib.host(v).cloned()) {
+                Some(via) => {
+                    let key = self.alloc_id();
+                    self.pending_containers.insert(key, host);
+                    self.connect_host(via, Purpose::Container(key), ctx);
+                }
+                None if host.container.via.is_some() => self.toast(
+                    t!("Der SSH-Host dieses Containers existiert nicht mehr"),
+                    theme::red(),
+                ),
+                None => self.open_session(&host, purpose, String::new(), None, None, ctx),
+            }
+            return;
+        }
         let (user, ident) = self.credentials(&host);
         let has_secret = ident.as_ref().is_some_and(|i| {
             !i.password.is_empty() || (host.protocol == Protocol::Ssh && !i.private_key.is_empty())
@@ -653,7 +751,9 @@ impl App {
         let needs_secret = match host.protocol {
             Protocol::Ssh => true,
             Protocol::Rdp => host.rdp.embedded,
-            Protocol::Serial => false,
+            // VNC asks once; an empty answer is fine for servers without a password.
+            Protocol::Vnc => ident.is_none(),
+            Protocol::Serial | Protocol::Telnet | Protocol::Docker | Protocol::Kubernetes => false,
         };
         if needs_secret && !has_secret {
             if self.password_prompt.is_some() {
@@ -707,6 +807,30 @@ impl App {
             }
             return;
         }
+        if let Purpose::Log(tab_id) = purpose {
+            let params = ssh_params();
+            self.start_log(tab_id, backend::container::Target::Ssh(params), ctx);
+            return;
+        }
+        if purpose == Purpose::ListContainers {
+            let params = ssh_params();
+            self.list_containers(backend::container::Target::Ssh(params), ctx);
+            return;
+        }
+        if let Purpose::Container(key) = purpose {
+            let params = ssh_params();
+            let Some(c) = self.pending_containers.remove(&key) else {
+                return;
+            };
+            let line = backend::container::shell_line(&backend::container::exec_argv(
+                c.protocol,
+                &c.container,
+            ));
+            let spec = ConnectSpec::SshExec(params, line);
+            let subtitle = format!("{} · {}", container_kind(&c), host.display_name());
+            self.push_term_tab(&c, spec, subtitle, ctx);
+            return;
+        }
         if let Purpose::Pane(tab_id, idx) = purpose {
             let conn = crate::ui::sftp::spawn_conn(
                 &self.rt,
@@ -719,7 +843,36 @@ impl App {
             self.set_pane(tab_id, idx, Some(conn), color);
             return;
         }
+        if host.protocol.is_container() {
+            // On this PC (containers on SSH hosts come through `Purpose::Container`).
+            let argv = backend::container::exec_argv(host.protocol, &host.container);
+            let subtitle = format!("{} · {}", container_kind(host), t!("dieser PC"));
+            self.push_term_tab(host, ConnectSpec::Local(argv), subtitle, ctx);
+            return;
+        }
         let kind = match (host.protocol, purpose) {
+            (Protocol::Docker | Protocol::Kubernetes, _) => unreachable!(),
+            (Protocol::Telnet, _) => {
+                let spec = ConnectSpec::Telnet(backend::telnet::TelnetParams {
+                    host: host.hostname.trim().to_string(),
+                    port: host.port,
+                    username: user.clone(),
+                    password: password.clone(),
+                });
+                let mut term = self.spawn_term(spec, None, ctx);
+                term.profile = host.term.clone();
+                TabKind::Term(Box::new(term))
+            }
+            (Protocol::Vnc, _) => {
+                let mut view = crate::ui::vnc::VncView::new(backend::vnc::VncParams {
+                    host: host.hostname.trim().to_string(),
+                    port: host.port,
+                    password: password.clone(),
+                    view_only: host.vnc.view_only,
+                });
+                view.start(&self.rt, ctx);
+                TabKind::Vnc(Box::new(VncTab { view }))
+            }
             (Protocol::Ssh, _) => {
                 let spec = ConnectSpec::Ssh(ssh_params());
                 let startup = host
@@ -728,6 +881,7 @@ impl App {
                     .filter(|s| s.variables().is_empty())
                     .map(|s| s.script.clone());
                 let mut term = self.spawn_term(spec, startup, ctx);
+                term.profile = host.term.clone();
                 if let Some((h, cmd)) = self.pending_command.take() {
                     if h == host.id {
                         term.run_once = Some(cmd);
@@ -739,7 +893,9 @@ impl App {
             }
             (Protocol::Serial, _) => {
                 let spec = ConnectSpec::Serial(host.serial.clone());
-                TabKind::Term(Box::new(self.spawn_term(spec, None, ctx)))
+                let mut term = self.spawn_term(spec, None, ctx);
+                term.profile = host.term.clone();
+                TabKind::Term(Box::new(term))
             }
             (Protocol::Rdp, _) => {
                 let launch = RdpLaunch {
@@ -784,6 +940,12 @@ impl App {
                 format!("{user}{}:{}", host.hostname.trim(), host.port)
             }
         };
+        self.push_tab(id, host, subtitle, color, kind);
+    }
+
+    /// Adds a session tab for `host` and makes it active (or puts it into the split
+    /// when its group is being opened side by side).
+    fn push_tab(&mut self, id: u64, host: &Host, subtitle: String, color: Color32, kind: TabKind) {
         self.tabs.push(Tab {
             id,
             title: host.display_name().to_string(),
@@ -794,8 +956,12 @@ impl App {
             env: self.lib.env_of(host),
             notes: host.notes.trim().to_string(),
             notes_open: !host.notes.trim().is_empty(),
-            unsaved: (self.lib.host(host.id).is_none() && host.protocol == Protocol::Ssh)
-                .then(|| host.clone()),
+            unsaved: (self.lib.host(host.id).is_none()
+                && matches!(
+                    host.protocol,
+                    Protocol::Ssh | Protocol::Docker | Protocol::Kubernetes
+                ))
+            .then(|| host.clone()),
             host_id: self.lib.host(host.id).map(|h| h.id),
         });
         if self.group_split.contains(&host.id) {
@@ -807,6 +973,26 @@ impl App {
             return;
         }
         self.active = Some(id);
+        self.focus_term = Some(id);
+    }
+
+    /// Terminal tab for a container shell (the host may be unsaved).
+    fn push_term_tab(
+        &mut self,
+        host: &Host,
+        spec: ConnectSpec,
+        subtitle: String,
+        ctx: &egui::Context,
+    ) {
+        if let Some(h) = self.lib.hosts.iter_mut().find(|h| h.id == host.id) {
+            h.last_connected = Some(chrono::Utc::now());
+            self.save_library();
+        }
+        let mut term = self.spawn_term(spec, None, ctx);
+        term.profile = host.term.clone();
+        let id = self.alloc_id();
+        let color = self.host_color(host);
+        self.push_tab(id, host, subtitle, color, TabKind::Term(Box::new(term)));
     }
 
     fn ssh_params(
@@ -944,12 +1130,24 @@ impl App {
             ConnectSpec::Ssh(p) => backend::ssh::spawn_shell(
                 &self.rt,
                 p.clone(),
+                None,
+                80,
+                24,
+                sink,
+                self.prompts_sink.clone(),
+            ),
+            ConnectSpec::SshExec(p, cmd) => backend::ssh::spawn_shell(
+                &self.rt,
+                p.clone(),
+                Some(cmd.clone()),
                 80,
                 24,
                 sink,
                 self.prompts_sink.clone(),
             ),
             ConnectSpec::Serial(s) => backend::serial::spawn(s.clone(), sink),
+            ConnectSpec::Telnet(p) => backend::telnet::spawn(&self.rt, p.clone(), 80, 24, sink),
+            ConnectSpec::Local(argv) => backend::local::spawn(argv.clone(), 80, 24, sink),
         };
         TermTab {
             spec,
@@ -964,6 +1162,7 @@ impl App {
             last_output: Instant::now(),
             upload: None,
             run_once: None,
+            profile: Default::default(),
         }
     }
 
@@ -974,8 +1173,13 @@ impl App {
         if let TabKind::Term(t) = &self.tabs[idx].kind {
             let mut fresh = self.spawn_term(t.spec.clone(), t.startup.clone(), ctx);
             fresh.show_snippets = t.show_snippets;
+            fresh.profile = t.profile.clone();
             fresh.term.feed(b"\r\n\x1b[2m--- reconnect ---\x1b[0m\r\n");
             self.tabs[idx].kind = TabKind::Term(Box::new(fresh));
+        } else if let TabKind::Vnc(t) = &mut self.tabs[idx].kind {
+            t.view.start(&self.rt, ctx);
+        } else if matches!(self.tabs[idx].kind, TabKind::Log(_)) {
+            self.reopen_log(tab_id, ctx);
         } else if let TabKind::Rdp(t) = &mut self.tabs[idx].kind {
             if let Some(v) = t.embedded.as_mut() {
                 v.reconnect();
@@ -996,6 +1200,142 @@ impl App {
                 }
             }
         }
+    }
+
+    // ------------------------------------------------------------------ logs & containers
+
+    /// New log tab for a file/command on an SSH host (`None` = this PC).
+    pub fn open_log(&mut self, host: Option<Uuid>, source: &str, ctx: &egui::Context) {
+        let source = backend::logs::LogSource::parse(source);
+        if source.text().is_empty() {
+            return;
+        }
+        let id = self.alloc_id();
+        let h = host.and_then(|h| self.lib.host(h)).cloned();
+        let (name, color, env) = match &h {
+            Some(h) => (
+                h.display_name().to_string(),
+                self.host_color(h),
+                self.lib.env_of(h),
+            ),
+            None => (t!("Dieser PC").to_string(), theme::accent(), Env::None),
+        };
+        self.tabs.push(Tab {
+            id,
+            title: t!("Log · {}", name),
+            subtitle: source.text().to_string(),
+            color,
+            attention: false,
+            env,
+            notes: String::new(),
+            notes_open: false,
+            unsaved: None,
+            host_id: h.as_ref().map(|h| h.id),
+            kind: TabKind::Log(Box::new(LogTab {
+                source,
+                target_host: h.map(|h| h.id),
+                lines: VecDeque::new(),
+                dropped: 0,
+                state: ConnState::Connecting(t!("Verbinde…").into()),
+                rx: None,
+                stop: None,
+                filter: String::new(),
+                only_matches: true,
+                level: 0,
+                paused: false,
+                paused_at: 0,
+                follow: true,
+                wrap: false,
+            })),
+        });
+        self.active = Some(id);
+        self.reopen_log(id, ctx);
+    }
+
+    /// (Re)starts the source of a log tab.
+    fn reopen_log(&mut self, tab_id: u64, ctx: &egui::Context) {
+        let Some(TabKind::Log(t)) = self
+            .tabs
+            .iter_mut()
+            .find(|t| t.id == tab_id)
+            .map(|t| &mut t.kind)
+        else {
+            return;
+        };
+        t.stop = None;
+        t.rx = None;
+        if !t.lines.is_empty() {
+            t.lines
+                .push_back(format!("──── {} ────", t!("neu verbunden")));
+        }
+        t.state = ConnState::Connecting(t!("Verbinde…").into());
+        match t.target_host.and_then(|h| self.lib.host(h).cloned()) {
+            Some(h) => self.connect_host(h, Purpose::Log(tab_id), ctx),
+            None if t.target_host.is_some() => {
+                t.state = ConnState::Closed(Some(t!("Host nicht mehr vorhanden").into()));
+            }
+            None => self.start_log(tab_id, backend::container::Target::Local, ctx),
+        }
+    }
+
+    fn start_log(&mut self, tab_id: u64, target: backend::container::Target, ctx: &egui::Context) {
+        let (sink, rx) = Sink::new(ctx.clone());
+        let Some(TabKind::Log(t)) = self
+            .tabs
+            .iter_mut()
+            .find(|t| t.id == tab_id)
+            .map(|t| &mut t.kind)
+        else {
+            return;
+        };
+        t.rx = Some(rx);
+        t.stop = Some(backend::logs::spawn(
+            &self.rt,
+            target,
+            t.source.clone(),
+            sink,
+            self.prompts_sink.clone(),
+        ));
+    }
+
+    /// Fetches the container/pod list for the browser dialog.
+    pub fn refresh_containers(&mut self, ctx: &egui::Context) {
+        let Some(b) = self.containers.as_mut() else {
+            return;
+        };
+        b.loading = true;
+        b.error = None;
+        match b.via {
+            None => self.list_containers(backend::container::Target::Local, ctx),
+            Some(v) => match self.lib.host(v).cloned() {
+                Some(h) => self.connect_host(h, Purpose::ListContainers, ctx),
+                None => {
+                    b.loading = false;
+                    b.error = Some(t!("Host nicht mehr vorhanden").into());
+                }
+            },
+        }
+    }
+
+    fn list_containers(&mut self, target: backend::container::Target, ctx: &egui::Context) {
+        let Some(b) = self.containers.as_mut() else {
+            return;
+        };
+        let (sink, rx) = Sink::new(ctx.clone());
+        b.rx = Some(rx);
+        let settings = crate::model::ContainerSettings {
+            podman: b.podman,
+            context: b.context.clone(),
+            ..Default::default()
+        };
+        backend::container::spawn_list(
+            &self.rt,
+            b.proto,
+            settings,
+            target,
+            sink,
+            self.prompts_sink.clone(),
+        );
     }
 
     fn apply_split(&mut self, op: crate::ui::chrome::SplitOp) {
@@ -1214,9 +1554,15 @@ impl App {
         self.tabs
             .iter()
             .filter_map(|t| {
+                let mut source = String::new();
                 let (host, kind) = match &t.kind {
                     TabKind::Term(_) => (t.host_id?, "term"),
                     TabKind::Rdp(_) => (t.host_id?, "rdp"),
+                    TabKind::Vnc(_) => (t.host_id?, "vnc"),
+                    TabKind::Log(l) => {
+                        source = l.source.text().to_string();
+                        (l.target_host.unwrap_or(Uuid::nil()), "log")
+                    }
                     TabKind::Sftp(f) => (
                         f.panes
                             .iter()
@@ -1229,6 +1575,12 @@ impl App {
                     host,
                     kind: kind.into(),
                     in_split: self.split.contains(&t.id),
+                    source,
+                    title: if kind == "log" {
+                        t.title.clone()
+                    } else {
+                        String::new()
+                    },
                 })
             })
             .collect()
@@ -1242,11 +1594,24 @@ impl App {
         }
         self.group_split = saved
             .iter()
-            .filter(|s| s.in_split && s.kind != "files")
+            .filter(|s| s.in_split && s.kind != "files" && s.kind != "log")
             .map(|s| s.host)
             .collect();
         let mut n = 0;
         for s in saved {
+            if s.kind == "log" {
+                let host = (!s.host.is_nil()).then_some(s.host);
+                if host.is_none_or(|h| self.lib.host(h).is_some()) {
+                    n += 1;
+                    self.open_log(host, &s.source, ctx);
+                    if let Some(tab) = self.tabs.last_mut()
+                        && !s.title.is_empty()
+                    {
+                        tab.title = s.title.clone();
+                    }
+                }
+                continue;
+            }
             let Some(h) = self.lib.host(s.host).cloned() else {
                 continue;
             };
@@ -1353,6 +1718,51 @@ impl App {
     }
 
     /// Coloured frame around PROD / STAGING sessions.
+    /// Keeps the highlighted pane and the keyboard focus together: the pane holding the
+    /// focused widget is the active one, and a click into a pane moves the focus there.
+    fn sync_split_focus(&mut self, ctx: &egui::Context, ids: &[u64], rects: &[egui::Rect]) {
+        let pane_of = |p: egui::Pos2| {
+            ids.iter()
+                .zip(rects)
+                .find(|(_, r)| r.contains(p))
+                .map(|(id, _)| *id)
+        };
+        if let Some(f) = self.focus_term
+            && !self
+                .tabs
+                .iter()
+                .any(|t| t.id == f && matches!(t.kind, TabKind::Term(_)))
+        {
+            self.focus_term = None;
+        }
+        let focused_pane = ctx
+            .memory(|m| m.focused())
+            .and_then(|f| ctx.read_response(f))
+            .and_then(|r| pane_of(r.rect.center()));
+        if ctx.input(|i| i.pointer.any_down()) {
+            return;
+        }
+        if let Some(pane) = self.pane_press.take()
+            && focused_pane != Some(pane)
+        {
+            // Clicked on something that takes no focus (header, empty space).
+            if self
+                .tabs
+                .iter()
+                .any(|t| t.id == pane && matches!(t.kind, TabKind::Term(_)))
+            {
+                self.focus_term = Some(pane);
+            }
+            return;
+        }
+        if self.focus_term.is_none()
+            && let Some(p) = focused_pane
+            && self.active != Some(p)
+        {
+            self.active = Some(p);
+        }
+    }
+
     fn env_frame(&self, painter: &egui::Painter, rect: egui::Rect, id: u64) {
         let Some(env) = self.tabs.iter().find(|t| t.id == id).map(|t| t.env) else {
             return;
@@ -1505,7 +1915,8 @@ impl App {
                         let _ = r.tx.send(SftpCmd::Close);
                     }
                 }
-                TabKind::Rdp(_) => {}
+                TabKind::Vnc(mut t) => t.view.close(),
+                TabKind::Log(_) | TabKind::Rdp(_) => {}
             }
             if self.active == Some(id) {
                 self.active = self
@@ -1797,6 +2208,61 @@ impl App {
                         }
                     }
                 }
+                TabKind::Vnc(t) => {
+                    let phase = |s: &ConnState| match s {
+                        ConnState::Connecting(_) => 0,
+                        ConnState::Connected => 1,
+                        ConnState::Closed(_) => 2,
+                    };
+                    let before = phase(&t.view.state);
+                    for text in t.view.pump() {
+                        toasts.push((text, theme::accent()));
+                    }
+                    match (before, &t.view.state) {
+                        (0, ConnState::Connected) => {
+                            if let Some(h) = tab.host_id {
+                                outcome.push((h, true));
+                            }
+                        }
+                        (0 | 1, ConnState::Closed(Some(e))) => {
+                            toasts.push((format!("{}: {e}", tab.title), theme::red()));
+                            if before == 0
+                                && let Some(h) = tab.host_id
+                            {
+                                outcome.push((h, false));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                TabKind::Log(t) => {
+                    use backend::logs::LogEvent;
+                    while let Some(ev) = t.rx.as_mut().and_then(|rx| rx.try_recv().ok()) {
+                        match ev {
+                            LogEvent::Status(s) => t.state = ConnState::Connecting(s),
+                            LogEvent::Connected => t.state = ConnState::Connected,
+                            LogEvent::Lines(lines) => {
+                                if t.paused {
+                                    t.paused_at += lines.len();
+                                }
+                                t.lines.extend(lines);
+                                let over =
+                                    t.lines.len().saturating_sub(crate::ui::logview::MAX_LINES);
+                                if over > 0 {
+                                    t.lines.drain(..over);
+                                    t.dropped += over;
+                                }
+                            }
+                            LogEvent::Closed(err) => {
+                                if let Some(e) = &err {
+                                    toasts.push((format!("{}: {e}", tab.title), theme::red()));
+                                }
+                                t.state = ConnState::Closed(err);
+                                t.stop = None;
+                            }
+                        }
+                    }
+                }
                 TabKind::Rdp(t) => {
                     if let Some(v) = t.embedded.as_mut() {
                         let host_id = format!("rdp://{}:{}", t.launch.host, t.launch.port);
@@ -1888,6 +2354,20 @@ impl App {
         while let Ok(r) = self.key_rx.try_recv() {
             self.finish_key_setup(r);
         }
+        if let Some(b) = self.containers.as_mut()
+            && let Some(Ok(backend::container::ListEvent::Done(r))) =
+                b.rx.as_mut().map(|rx| rx.try_recv())
+        {
+            b.loading = false;
+            b.rx = None;
+            match r {
+                Ok(items) => {
+                    b.items = items;
+                    b.error = None;
+                }
+                Err(e) => b.error = Some(e),
+            }
+        }
         if let Some(scan) = self.scan.as_mut()
             && let Some(rx) = scan.rx.as_mut()
         {
@@ -1929,6 +2409,59 @@ impl App {
 
     pub fn apply(&mut self, action: Action, ctx: &egui::Context) {
         match action {
+            Action::BrowseContainers(proto, via, for_editor) => {
+                let (podman, context) = match self.host_editor.as_ref().filter(|_| for_editor) {
+                    Some(ed) => (ed.host.container.podman, ed.host.container.context.clone()),
+                    None => (false, String::new()),
+                };
+                self.containers = Some(ContainerBrowser {
+                    proto,
+                    via,
+                    podman,
+                    context,
+                    loading: false,
+                    items: Vec::new(),
+                    error: None,
+                    filter: String::new(),
+                    rx: None,
+                    for_editor,
+                });
+                self.refresh_containers(ctx);
+            }
+            Action::PickLog(host) => {
+                let container = host
+                    .and_then(|h| self.lib.host(h))
+                    .filter(|h| h.protocol.is_container())
+                    .cloned();
+                if let Some(h) = container {
+                    self.apply(Action::OpenContainer(Box::new(h), true), ctx);
+                } else {
+                    let source = if host.is_some() { "journalctl -f" } else { "" };
+                    self.log_picker = Some(LogPicker {
+                        host,
+                        source: source.into(),
+                    });
+                }
+            }
+            Action::OpenLog(host, source) => {
+                self.log_picker = None;
+                self.open_log(host, &source, ctx);
+            }
+            Action::OpenContainer(host, logs) => {
+                if logs {
+                    let argv = backend::container::logs_argv(host.protocol, &host.container);
+                    self.open_log(
+                        host.container.via,
+                        &backend::container::shell_line(&argv),
+                        ctx,
+                    );
+                    if let Some(tab) = self.tabs.last_mut() {
+                        tab.title = t!("Log · {}", host.display_name());
+                    }
+                } else {
+                    self.connect_host(*host, Purpose::Terminal, ctx);
+                }
+            }
             Action::Connect(id) => {
                 if let Some(h) = self.lib.host(id).cloned() {
                     self.connect_host(h, Purpose::Terminal, ctx);
@@ -2559,7 +3092,20 @@ impl App {
                 });
         }
 
-        let term_bg = theme::palette().term_bg;
+        // Host terminal profile over the app settings.
+        let font_name = if t.profile.font.trim().is_empty() {
+            settings.term_font.clone()
+        } else {
+            t.profile.font.clone()
+        };
+        let family = theme::term_font(&ctx, &font_name);
+        let palette = (!t.profile.theme.is_empty()).then(|| theme::find(&t.profile.theme));
+        let font_size = if t.profile.font_size >= 6.0 {
+            t.profile.font_size
+        } else {
+            settings.font_size
+        };
+        let term_bg = palette.unwrap_or_else(theme::palette).term_bg;
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::NONE
@@ -2620,7 +3166,9 @@ impl App {
                     ui,
                     egui::Id::new(("term", tab_id)),
                     TermView {
-                        font_size: settings.font_size,
+                        font_size,
+                        family,
+                        palette,
                         accent,
                         copy_on_select: settings.copy_on_select,
                         glow: None,
@@ -2671,6 +3219,43 @@ impl App {
             self.send_input(tab_id, bytes);
         }
         if reconnect {
+            self.reconnect(tab_id, &ctx);
+        }
+    }
+
+    fn vnc_tab(&mut self, ui: &mut egui::Ui, tab_id: u64) {
+        let index = self.tabs.iter().position(|t| t.id == tab_id).unwrap_or(0) + 1;
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
+            return;
+        };
+        let (title, subtitle) = (tab.title.clone(), tab.subtitle.clone());
+        let TabKind::Vnc(t) = &mut tab.kind else {
+            return;
+        };
+        let state = crate::ui::chrome::state_pair(&t.view.state);
+        let closed = matches!(t.view.state, ConnState::Closed(_));
+        let mut reconnect = false;
+        crate::ui::chrome::session_header(
+            ui,
+            egui::Id::new(("vnc-bar", tab_id)),
+            index,
+            &title,
+            &subtitle,
+            state,
+            |ui| {
+                t.view.toolbar(ui);
+                if closed && theme::icon_button(ui, "⟳", t!("Neu verbinden")).clicked() {
+                    reconnect = true;
+                }
+            },
+        );
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(theme::bg_deep()))
+            .show(ui, |ui| {
+                t.view.show(ui, egui::Id::new(("vnc", tab_id)));
+            });
+        if reconnect {
+            let ctx = ui.ctx().clone();
             self.reconnect(tab_id, &ctx);
         }
     }
@@ -2823,16 +3408,21 @@ impl App {
             TabKind::Term(_) => 0,
             TabKind::Sftp(_) => 1,
             TabKind::Rdp(_) => 2,
+            TabKind::Vnc(_) => 3,
+            TabKind::Log(_) => 4,
         });
         match kind {
             Some(0) => self.terminal_tab(ui, id, actions),
             Some(1) => crate::ui::sftp::show(self, ui, id),
-            Some(_) => self.rdp_tab(ui, id),
-            None => {}
+            Some(2) => self.rdp_tab(ui, id),
+            Some(3) => self.vnc_tab(ui, id),
+            Some(4) => crate::ui::logview::show(self, ui, id),
+            _ => {}
         }
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
+        let before = self.active;
         let (palette, close_tab, next_tab) = ctx.input_mut(|i| {
             (
                 i.consume_key(egui::Modifiers::COMMAND, egui::Key::K),
@@ -2892,6 +3482,10 @@ impl App {
                 Some(i) if i + 1 < self.tabs.len() => Some(self.tabs[i + 1].id),
                 Some(_) => None,
             };
+        }
+        if self.active != before {
+            // The keyboard follows the session picked with a shortcut.
+            self.focus_term = self.active;
         }
     }
 }
@@ -2959,7 +3553,7 @@ impl eframe::App for App {
                     .frame(egui::Frame::NONE.fill(theme::border()))
                     .show(ui, |ui| {
                         let rects = crate::ui::chrome::split_rects(ui.max_rect(), ids.len());
-                        for (id, rect) in ids.iter().copied().zip(rects) {
+                        for (id, rect) in ids.iter().copied().zip(rects.iter().copied()) {
                             let mut child = ui.new_child(
                                 egui::UiBuilder::new()
                                     .max_rect(rect)
@@ -2974,10 +3568,16 @@ impl eframe::App for App {
                             });
                             if pressed {
                                 self.active = Some(id);
+                                self.pane_press = Some(id);
                             }
-                            self.env_frame(ui.painter(), rect, id);
+                        }
+                        self.sync_split_focus(&ctx, &ids, &rects);
+                        // Frames last, on top of the panes, for the final active pane.
+                        let painter = ui.painter().clone();
+                        for (id, rect) in ids.iter().copied().zip(rects) {
+                            self.env_frame(&painter, rect, id);
                             if self.active == Some(id) {
-                                ui.painter().rect_stroke(
+                                painter.rect_stroke(
                                     rect,
                                     CornerRadius::ZERO,
                                     Stroke::new(1.5, theme::accent().linear_multiply(0.8)),
@@ -3033,6 +3633,7 @@ impl eframe::App for App {
         crate::ui::editors::show_all(self, &ctx, &mut actions);
         crate::ui::palette::show(self, &ctx, &mut actions);
         crate::ui::dialogs::show(self, &ctx);
+        crate::ui::containers::show(self, &ctx, &mut actions);
         self.toasts_ui(&ctx);
 
         for a in actions {
@@ -3045,8 +3646,8 @@ impl eframe::App for App {
             self.lib.settings.last_session = self.session_snapshot();
             self.save_library();
         }
-        for tab in &self.tabs {
-            match &tab.kind {
+        for tab in &mut self.tabs {
+            match &mut tab.kind {
                 TabKind::Term(t) => {
                     let _ = t.tx.send(TermCmd::Close);
                 }
@@ -3055,7 +3656,8 @@ impl eframe::App for App {
                         let _ = r.tx.send(SftpCmd::Close);
                     }
                 }
-                TabKind::Rdp(_) => {}
+                TabKind::Vnc(t) => t.view.close(),
+                TabKind::Log(_) | TabKind::Rdp(_) => {}
             }
         }
     }
@@ -3188,6 +3790,15 @@ pub fn parse_quick(s: &str) -> Option<Host> {
         username: user,
         ..Default::default()
     })
+}
+
+/// "docker", "podman" or the pod path, shown under a container session's title.
+fn container_kind(h: &Host) -> String {
+    match h.protocol {
+        Protocol::Kubernetes => h.subtitle(),
+        _ if h.container.podman => "podman".into(),
+        _ => "docker".into(),
+    }
 }
 
 #[cfg(test)]

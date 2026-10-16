@@ -166,6 +166,8 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
     let mut save = false;
     let mut cancel = false;
     let mut new_identity = false;
+    let mut browse = None;
+    let fonts = theme::term_fonts();
 
     egui::Modal::new(egui::Id::new("host-editor")).show(ctx, |ui| {
         ui.set_width(520.0);
@@ -181,7 +183,7 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         egui::ScrollArea::vertical()
             .max_height(ctx.content_rect().height() * 0.7)
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     for p in Protocol::ALL {
                         if ui
                             .selectable_label(
@@ -207,7 +209,7 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                         ui.add(egui::TextEdit::singleline(&mut h.label).hint_text(t!("z.B. web-01")));
                         ui.end_row();
 
-                        if h.protocol != Protocol::Serial {
+                        if h.protocol.is_network() {
                             ui.label(t!("Adresse"));
                             ui.horizontal(|ui| {
                                 ui.add(
@@ -219,13 +221,19 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                 ui.add(egui::DragValue::new(&mut h.port).range(1..=65535));
                             });
                             ui.end_row();
-                            ui.label(t!("Benutzer"));
-                            ui.add(
-                                egui::TextEdit::singleline(&mut h.username)
-                                    .hint_text(t!("leer = Identität/Gruppe")),
-                            );
-                            ui.end_row();
-                            ui.label(t!("Identität"));
+                            if h.protocol != Protocol::Vnc {
+                                ui.label(t!("Benutzer"));
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut h.username)
+                                        .hint_text(t!("leer = Identität/Gruppe")),
+                                );
+                                ui.end_row();
+                            }
+                            ui.label(if h.protocol == Protocol::Vnc {
+                                t!("Passwort")
+                            } else {
+                                t!("Identität")
+                            });
                             ui.horizontal(|ui| {
                                 identity_combo(
                                     ui,
@@ -349,6 +357,84 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                         if ui.button("+ Tunnel").clicked() {
                             h.tunnels.push(crate::model::Tunnel::default());
                         }
+                    }
+                    Protocol::Telnet => {
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new(t!("Telnet ist unverschlüsselt – nur im eigenen Netz verwenden. Mit Benutzer und Identität meldet sich Aurora automatisch an."))
+                                .size(12.0)
+                                .color(theme::text_dim()),
+                        );
+                    }
+                    Protocol::Vnc => {
+                        ui.add_space(8.0);
+                        theme::section_title(ui, "VNC");
+                        ui.checkbox(&mut h.vnc.view_only, t!("Nur zusehen (keine Maus/Tastatur senden)"));
+                        ui.label(
+                            RichText::new(t!("Passwort über eine Identität im Keychain – oder beim Verbinden eingeben (leer lassen, wenn der Server keins verlangt). Port 5900 = Bildschirm :0."))
+                                .size(12.0)
+                                .color(theme::text_dim()),
+                        );
+                    }
+                    Protocol::Docker | Protocol::Kubernetes => {
+                        ui.add_space(8.0);
+                        let k8s = h.protocol == Protocol::Kubernetes;
+                        theme::section_title(ui, if k8s { t!("Pod") } else { t!("Container") });
+                        let c = &mut h.container;
+                        egui::Grid::new("ct-grid")
+                            .num_columns(2)
+                            .spacing([16.0, 10.0])
+                            .show(ui, |ui| {
+                                ui.label(t!("Läuft auf"));
+                                let sel = c
+                                    .via
+                                    .and_then(|id| ssh_hosts.iter().find(|(i, _)| *i == id))
+                                    .map(|(_, n)| n.clone())
+                                    .unwrap_or_else(|| t!("Dieser PC").to_string());
+                                egui::ComboBox::from_id_salt("ct-via-ed")
+                                    .selected_text(sel)
+                                    .width(220.0)
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut c.via, None, t!("Dieser PC"));
+                                        for (id, n) in &ssh_hosts {
+                                            ui.selectable_value(&mut c.via, Some(*id), n);
+                                        }
+                                    });
+                                ui.end_row();
+                                ui.label(if k8s { t!("Pod") } else { t!("Name") });
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut c.name)
+                                            .hint_text(if k8s { "api-7f9c…" } else { "nginx" })
+                                            .desired_width(200.0),
+                                    );
+                                    if ui.button(t!("Durchsuchen…")).clicked() {
+                                        browse = Some((h.protocol, c.via));
+                                    }
+                                });
+                                ui.end_row();
+                                if k8s {
+                                    ui.label("Namespace");
+                                    ui.add(egui::TextEdit::singleline(&mut c.namespace).hint_text("default"));
+                                    ui.end_row();
+                                    ui.label(t!("Container im Pod"));
+                                    ui.add(egui::TextEdit::singleline(&mut c.container).hint_text(t!("Standard")));
+                                    ui.end_row();
+                                    ui.label(t!("Kontext"));
+                                    ui.add(egui::TextEdit::singleline(&mut c.context).hint_text(t!("aktueller")));
+                                    ui.end_row();
+                                } else {
+                                    ui.label(t!("Benutzer"));
+                                    ui.add(egui::TextEdit::singleline(&mut c.user).hint_text(t!("wie im Image")));
+                                    ui.end_row();
+                                    ui.label("Runtime");
+                                    ui.checkbox(&mut c.podman, t!("Podman statt Docker"));
+                                    ui.end_row();
+                                }
+                                ui.label("Shell");
+                                ui.add(egui::TextEdit::singleline(&mut c.shell).hint_text(t!("bash, sonst sh")));
+                                ui.end_row();
+                            });
                     }
                     Protocol::Rdp => {
                         ui.add_space(8.0);
@@ -512,6 +598,11 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                             });
                     }
                 }
+                if h.protocol.is_terminal() {
+                    ui.add_space(8.0);
+                    theme::section_title(ui, t!("Terminal-Profil"));
+                    term_profile(ui, &mut h.term, &fonts);
+                }
                 ui.add_space(8.0);
                 theme::section_title(ui, t!("Notizen"));
                 ui.add(
@@ -523,6 +614,7 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
 
         let valid = match ed.host.protocol {
             Protocol::Serial => !ed.host.serial.port_name.trim().is_empty(),
+            Protocol::Docker | Protocol::Kubernetes => !ed.host.container.name.trim().is_empty(),
             _ => !ed.host.hostname.trim().is_empty(),
         };
         (save, cancel) = footer(ui, valid);
@@ -530,6 +622,9 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
 
     if new_identity {
         actions.push(Action::NewIdentity);
+    }
+    if let Some((proto, via)) = browse {
+        actions.push(Action::BrowseContainers(proto, via, true));
     }
     if cancel {
         app.host_editor = None;
@@ -547,6 +642,102 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         }
         app.save_library();
     }
+}
+
+/// Theme, font and size of a host's terminal; empty = like the settings.
+fn term_profile(ui: &mut egui::Ui, p: &mut crate::model::TermProfile, fonts: &[String]) {
+    egui::Grid::new("term-profile")
+        .num_columns(2)
+        .spacing([16.0, 10.0])
+        .show(ui, |ui| {
+            ui.label(t!("Farben"));
+            let current = if p.theme.is_empty() {
+                t!("— wie die App —").to_string()
+            } else {
+                theme::find(&p.theme).name.to_string()
+            };
+            egui::ComboBox::from_id_salt("tp-theme")
+                .selected_text(current)
+                .width(220.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut p.theme, String::new(), t!("— wie die App —"));
+                    for t in theme::THEMES.iter() {
+                        ui.horizontal(|ui| {
+                            let (r, _) =
+                                ui.allocate_exact_size(Vec2::new(26.0, 14.0), egui::Sense::hover());
+                            ui.painter().rect_filled(r, 3.0, t.term_bg);
+                            ui.painter().text(
+                                r.center(),
+                                egui::Align2::CENTER_CENTER,
+                                "$_",
+                                egui::FontId::monospace(10.0),
+                                t.term_fg,
+                            );
+                            ui.selectable_value(&mut p.theme, t.id.to_string(), t.name);
+                        });
+                    }
+                });
+            ui.end_row();
+            ui.label(t!("Schrift"));
+            ui.horizontal(|ui| {
+                let custom = !p.font.is_empty() && !fonts.contains(&p.font);
+                let current = if p.font.is_empty() {
+                    t!("— wie in den Einstellungen —").to_string()
+                } else if custom {
+                    t!("eigene Datei").to_string()
+                } else {
+                    p.font.clone()
+                };
+                egui::ComboBox::from_id_salt("tp-font")
+                    .selected_text(current)
+                    .width(220.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut p.font,
+                            String::new(),
+                            t!("— wie in den Einstellungen —"),
+                        );
+                        for f in fonts {
+                            ui.selectable_value(&mut p.font, f.clone(), f);
+                        }
+                        if ui
+                            .selectable_label(custom, t!("Eigene Schriftdatei…"))
+                            .clicked()
+                            && !custom
+                        {
+                            p.font = if cfg!(windows) {
+                                r"C:\Users\…\font.ttf".into()
+                            } else {
+                                "/path/to/font.ttf".into()
+                            };
+                        }
+                    });
+                ui.add(
+                    egui::DragValue::new(&mut p.font_size)
+                        .range(0.0..=40.0)
+                        .speed(0.25)
+                        .custom_formatter(|v, _| {
+                            if v < 6.0 {
+                                t!("Standard").to_string()
+                            } else {
+                                format!("{v:.1} pt")
+                            }
+                        }),
+                )
+                .on_hover_text(t!("Schriftgröße (0 = wie in den Einstellungen)"));
+            });
+            ui.end_row();
+            if !p.font.is_empty() && !fonts.contains(&p.font) {
+                ui.label("");
+                ui.add(
+                    egui::TextEdit::singleline(&mut p.font)
+                        .hint_text(".ttf / .otf")
+                        .desired_width(300.0),
+                )
+                .on_hover_text(t!("Pfad zu einer Monospace-Schrift (.ttf/.otf)"));
+                ui.end_row();
+            }
+        });
 }
 
 /// PROD / STAGING / TEST / DEV chips; `none` names the empty choice.

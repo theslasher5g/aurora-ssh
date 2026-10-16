@@ -1,5 +1,5 @@
 # Builds Windows, Linux and macOS packages and publishes them together in ONE release.
-#   tag v0.5.1 -> Windows installer + portable zip, .deb + portable tar.gz, SHA256SUMS.txt
+#   tag v0.5.2 -> Windows installer + portable zip, .deb + portable tar.gz, SHA256SUMS.txt
 # Either push the tag, or run the workflow manually (it then creates the tag itself).
 name: Release
 
@@ -11,7 +11,7 @@ on:
     inputs:
       version:
         description: Version (without v)
-        default: "0.5.1"
+        default: "0.5.2"
 
 permissions:
   contents: write
@@ -203,6 +203,8 @@ jobs:
           make_latest: true
           body: |
             **Aurora ${{ env.VERSION }}** – Windows, Linux and macOS
+
+            **New:** VNC and Telnet sessions · Docker/Kubernetes containers as a session type (on this PC or via an SSH host, with a container browser) · live log viewer with filter, levels and pause · terminal profile per host (colors, font, size) · split screen: the highlighted pane is always the one that gets the keyboard.
 
             | System | File | Install |
             |---|---|---|

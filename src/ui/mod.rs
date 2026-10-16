@@ -1,14 +1,17 @@
 pub mod chrome;
+pub mod containers;
 pub mod dialogs;
 pub mod editors;
 pub mod hosts;
 pub mod keychain;
 pub mod lock;
+pub mod logview;
 pub mod palette;
 pub mod rdp;
 pub mod settings;
 pub mod sftp;
 pub mod snippets;
+pub mod vnc;
 
 /// Case-insensitive subsequence match; returns a score (higher is better).
 pub fn fuzzy(query: &str, text: &str) -> Option<i32> {

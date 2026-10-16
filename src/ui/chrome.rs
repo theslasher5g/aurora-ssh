@@ -204,7 +204,15 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     (View::Files, "🗀", "Dateien (SFTP)"),
                     (View::Snippets, "⚡", "Snippets"),
                 ] {
-                    if rail_button(ui, glyph, crate::i18n::tr(tip), home && app.view == view, None).clicked() {
+                    if rail_button(
+                        ui,
+                        glyph,
+                        crate::i18n::tr(tip),
+                        home && app.view == view,
+                        None,
+                    )
+                    .clicked()
+                    {
                         actions.push(Action::Navigate(view));
                     }
                 }
@@ -243,13 +251,29 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                                 t!("getrennt").into()
                             },
                         ),
+                        TabKind::Vnc(t) => (
+                            crate::app::state_color(&t.view.state),
+                            matches!(t.view.state, ConnState::Connected),
+                            state_text(&t.view.state),
+                        ),
+                        TabKind::Log(t) => (
+                            crate::app::state_color(&t.state),
+                            matches!(t.state, ConnState::Connected),
+                            state_text(&t.state),
+                        ),
                     };
                     let kind = match &tab.kind {
                         TabKind::Term(_) => "Terminal",
                         TabKind::Sftp(_) => t!("Dateien"),
-                        TabKind::Rdp(_) => "Desktop",
+                        TabKind::Rdp(_) | TabKind::Vnc(_) => "Desktop",
+                        TabKind::Log(_) => "Log",
                     };
-                    let dead = matches!(&tab.kind, TabKind::Term(t) if matches!(t.state, ConnState::Closed(_)));
+                    let dead = match &tab.kind {
+                        TabKind::Term(t) => matches!(t.state, ConnState::Closed(_)),
+                        TabKind::Vnc(t) => matches!(t.view.state, ConnState::Closed(_)),
+                        TabKind::Log(t) => matches!(t.state, ConnState::Closed(_)),
+                        _ => false,
+                    };
                     let resp = port_tile(
                         ui,
                         app.split.len() >= 2 && app.split.contains(&tab.id),
@@ -368,7 +392,9 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         egui::Popup::menu(&resp).show(|ui| {
                             ui.set_min_width(260.0);
                             for (tid, run) in &app.tunnels {
-                                let Some(h) = app.lib.host(run.host) else { continue };
+                                let Some(h) = app.lib.host(run.host) else {
+                                    continue;
+                                };
                                 let Some(t) = h.tunnels.iter().find(|t| t.id == *tid) else {
                                     continue;
                                 };
@@ -388,7 +414,9 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                             }
                         });
                     }
-                    if rail_button(ui, "?", t!("Tastenkürzel (F1)"), app.show_shortcuts, None).clicked() {
+                    if rail_button(ui, "?", t!("Tastenkürzel (F1)"), app.show_shortcuts, None)
+                        .clicked()
+                    {
                         app.show_shortcuts = true;
                     }
                     if let Some(rel) = &app.update.latest {

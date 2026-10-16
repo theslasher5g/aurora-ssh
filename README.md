@@ -1,7 +1,8 @@
 # Aurora
 
-A modern client for **SSH, SFTP, RDP and serial consoles**, written in Rust: clean, fast, with an
-encrypted keychain, snippets, host groups, tunnels and switchable themes. UI in English and German.
+A modern client for **SSH, SFTP, RDP, VNC, Telnet, serial consoles and Docker/Kubernetes
+containers**, written in Rust: clean, fast, with an encrypted keychain, snippets, host groups,
+tunnels, a live log viewer and switchable themes. UI in English and German.
 
 ![Hosts](docs/screenshots/hosts.png)
 
@@ -30,7 +31,12 @@ The macOS app is not notarized: on first start right-click Aurora → *Open*
 | **Split screen** | Up to **4 sessions side by side** (terminal, files, RDP mixed) – drag a port from the rail into the window (a preview shows where it lands), ◫ menu or right-click. Double-click a header to maximize, "type into all panes", × ends a session, ↗ only detaches it |
 | **Tunnels & jump host** | Port forwardings per host as switches in the list (status LED, optionally open the browser); "connect via" another SSH host (ProxyJump) – used for terminal, files and tunnels |
 | **RDP** | Inside the tab (IronRDP): follows the window size, **clipboard in both directions** (automatic + "copy from host"/"send to host" buttons), **Ctrl+Alt+Del**, Windows key, type the clipboard as keystrokes (for login screens/consoles). Optionally in the system client (mstsc, FreeRDP, Remmina) |
+| **VNC** | Inside the tab (own RFB client: ZRLE, CopyRect, Raw, resize, VNC password): fit or 1:1, Ctrl+Alt+Del, clipboard in both directions, type the clipboard as keystrokes, view-only mode |
+| **Telnet** | For switches, routers and old devices: option negotiation (echo, window size, terminal type) and optional auto-login with the stored user and password |
 | **Serial** | Port detection, baud rate, format, flow control, line ending, local echo |
+| **Docker & Kubernetes** | Containers and pods as their own session type – on this PC or on any SSH host. "Browse containers" lists `docker ps` / `kubectl get pods` (Podman and kube contexts supported); one click opens a shell (bash, else sh) or the logs, or saves the container to the host list |
+| **Log viewer** | Follow a file (`tail -F`), `journalctl -f` or container logs live in their own tab: filter (`nginx \| timeout`), only matches or highlighting, errors/warnings colored and filterable, pause with a counter of waiting lines, copy, wrap. From the host menu ("View log…") or right-click a file in the file browser ("Follow as log") |
+| **Terminal profile** | Per host: own color theme (e.g. PROD always in a different look), font and font size. Fonts: IBM Plex Mono, Hack, installed monospace fonts (Cascadia, Consolas, Menlo, DejaVu, JetBrains Mono …) or any .ttf/.otf file |
 | **Host list** | After the first login it shows **OS, uptime, disk usage and pending updates** (one click: "install updates"), latency and status (green = reachable, ring = no answer, red = last connection failed). Hosts without a name take the server's hostname, rename with `F2`. Multi-select (Ctrl/Shift+click) with bulk actions, drag hosts into groups, compact view, sorting. Groups show "x/y online"; hosts in the same subnet can be grouped with one click |
 | **Network scan** | Finds SSH/RDP devices in the local network (with an OS hint from the SSH banner) and adds them |
 | **SSH key setup** | Generates a key, installs it on the server, verifies the login – no more passwords |
@@ -111,8 +117,10 @@ src/
 ├── update.rs          update check (GitHub releases) and self-update
 ├── i18n/              English texts for the German source strings
 ├── model.rs / store.rs  data, persistence, vault, export
-├── backend/           ssh (incl. jump host), sftp (incl. server⇄server), tunnel, scan, serial, rdp, reach
-└── ui/                rail (chrome), hosts, keychain, snippets, files, RDP, settings, dialogs, palette
+├── backend/           ssh (incl. jump host), sftp (incl. server⇄server), tunnel, scan, serial, rdp, reach,
+│                      vnc (RFB client), telnet, local (pseudo terminal), container, logs
+└── ui/                rail (chrome), hosts, keychain, snippets, files, RDP, VNC, log viewer, containers,
+                       settings, dialogs, palette
 assets/fonts/          IBM Plex Sans/Mono (SIL OFL)
 crates/aurora-rdp/     IronRDP helper process (stdio protocol)
 packaging/             .deb/.tar.gz script, Inno Setup installer, macOS .app/.dmg script

@@ -12,6 +12,8 @@ mod ui_core;
 mod ui_files;
 mod ui_forms;
 mod ui_hosts;
+mod ui_v052;
+mod ui_vnc;
 
 static ENGLISH: AtomicBool = AtomicBool::new(false);
 
@@ -22,6 +24,8 @@ const TABLES: &[&[(&str, &str)]] = &[
     ui_files::T,
     ui_forms::T,
     ui_hosts::T,
+    ui_v052::T,
+    ui_vnc::T,
 ];
 
 /// "de", "en" or "" (follow the system: German for German locales, English otherwise).

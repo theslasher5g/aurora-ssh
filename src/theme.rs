@@ -498,7 +498,185 @@ pub fn install_fonts(ctx: &egui::Context) {
         FontFamily::Name(MONO_MEDIUM.into()),
         family(&[MONO_MEDIUM, MONO, "Hack"]),
     );
-    ctx.set_fonts(fonts);
+    fonts.families.insert(
+        FontFamily::Name(term_family_name("Hack").into()),
+        family(&["Hack", MONO]),
+    );
+    ctx.set_fonts(fonts.clone());
+    *FONT_DEFS.lock().unwrap() = Some(fonts);
+}
+
+static FONT_DEFS: std::sync::Mutex<Option<FontDefinitions>> = std::sync::Mutex::new(None);
+/// Terminal fonts loaded from disk: name → pass in which it was loaded (`None` = file
+/// missing or unusable). A font is usable from the pass after `set_fonts`.
+static TERM_FONTS: std::sync::Mutex<Vec<(String, Option<u64>)>> = std::sync::Mutex::new(Vec::new());
+
+pub const DEFAULT_TERM_FONT: &str = "IBM Plex Mono";
+
+/// Monospace fonts commonly installed with the OS: (name, file, collection index).
+fn system_fonts() -> Vec<(&'static str, String, u32)> {
+    let mut v: Vec<(&'static str, String, u32)> = Vec::new();
+    if cfg!(windows) {
+        let dir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
+        for (name, file) in [
+            ("Cascadia Mono", "CascadiaMono.ttf"),
+            ("Cascadia Code", "CascadiaCode.ttf"),
+            ("Consolas", "consola.ttf"),
+            ("Courier New", "cour.ttf"),
+            ("Lucida Console", "lucon.ttf"),
+        ] {
+            v.push((name, format!(r"{dir}\Fonts\{file}"), 0));
+        }
+    } else if cfg!(target_os = "macos") {
+        for (name, file, idx) in [
+            ("Menlo", "/System/Library/Fonts/Menlo.ttc", 0),
+            ("Monaco", "/System/Library/Fonts/Monaco.ttf", 0),
+            ("SF Mono", "/System/Library/Fonts/SFNSMono.ttf", 0),
+            (
+                "Courier New",
+                "/System/Library/Fonts/Supplemental/Courier New.ttf",
+                0,
+            ),
+        ] {
+            v.push((name, file.into(), idx));
+        }
+    } else {
+        for (name, files) in [
+            (
+                "DejaVu Sans Mono",
+                &[
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+                    "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf",
+                    "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+                    "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
+                ][..],
+            ),
+            (
+                "Liberation Mono",
+                &[
+                    "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+                    "/usr/share/fonts/liberation-mono/LiberationMono-Regular.ttf",
+                    "/usr/share/fonts/liberation/LiberationMono-Regular.ttf",
+                ][..],
+            ),
+            (
+                "Ubuntu Mono",
+                &["/usr/share/fonts/truetype/ubuntu/UbuntuMono-R.ttf"][..],
+            ),
+            (
+                "Noto Sans Mono",
+                &[
+                    "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
+                    "/usr/share/fonts/noto/NotoSansMono-Regular.ttf",
+                ][..],
+            ),
+            (
+                "JetBrains Mono",
+                &[
+                    "/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Regular.ttf",
+                    "/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf",
+                ][..],
+            ),
+            (
+                "Fira Code",
+                &[
+                    "/usr/share/fonts/truetype/firacode/FiraCode-Regular.ttf",
+                    "/usr/share/fonts/TTF/FiraCode-Regular.ttf",
+                ][..],
+            ),
+        ] {
+            if let Some(f) = files.iter().find(|f| std::path::Path::new(f).exists()) {
+                v.push((name, f.to_string(), 0));
+            }
+        }
+    }
+    v.retain(|(_, f, _)| std::path::Path::new(f).exists());
+    v
+}
+
+/// Font names for the terminal font pickers.
+pub fn term_fonts() -> Vec<String> {
+    let mut v = vec![DEFAULT_TERM_FONT.to_string(), "Hack".to_string()];
+    v.extend(system_fonts().into_iter().map(|(n, _, _)| n.to_string()));
+    v
+}
+
+fn term_family_name(name: &str) -> String {
+    format!("term:{name}")
+}
+
+/// Font family for a terminal font name or font file path; loads it on first use.
+/// Unknown names and unreadable files fall back to IBM Plex Mono.
+pub fn term_font(ctx: &egui::Context, name: &str) -> FontFamily {
+    let name = name.trim();
+    if name.is_empty() || name == DEFAULT_TERM_FONT {
+        return FontFamily::Monospace;
+    }
+    let family = FontFamily::Name(term_family_name(name).into());
+    if name == "Hack" {
+        return family;
+    }
+    let pass = ctx.cumulative_pass_nr();
+    let mut loaded = TERM_FONTS.lock().unwrap();
+    let at = match loaded.iter().find(|(n, _)| n == name) {
+        Some((_, at)) => *at,
+        None => {
+            let at = load_term_font(ctx, name).then_some(pass);
+            loaded.push((name.to_string(), at));
+            ctx.request_repaint();
+            at
+        }
+    };
+    match at {
+        Some(p) if pass > p => family,
+        _ => FontFamily::Monospace,
+    }
+}
+
+fn load_term_font(ctx: &egui::Context, name: &str) -> bool {
+    let (file, index) = match system_fonts().into_iter().find(|(n, _, _)| *n == name) {
+        Some((_, f, i)) => (f, i),
+        None => (name.to_string(), 0),
+    };
+    let lower = file.to_lowercase();
+    if ![".ttf", ".otf", ".ttc"].iter().any(|e| lower.ends_with(e)) {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(&file) else {
+        log::warn!("terminal font {file}: unreadable");
+        return false;
+    };
+    // egui panics on fonts it can't parse, so check first.
+    let usable = skrifa::FontRef::from_index(&bytes, index).is_ok_and(|f| {
+        use skrifa::MetadataProvider;
+        f.charmap().map('M').is_some()
+    });
+    if !usable {
+        log::warn!("terminal font {file}: not a usable font");
+        return false;
+    }
+    let mut defs = FONT_DEFS.lock().unwrap();
+    let Some(fonts) = defs.as_mut() else {
+        return false;
+    };
+    let key = term_family_name(name);
+    let mut data = FontData::from_owned(bytes);
+    data.index = index;
+    fonts
+        .font_data
+        .insert(key.clone(), std::sync::Arc::new(data));
+    fonts.families.insert(
+        FontFamily::Name(key.clone().into()),
+        vec![
+            key,
+            MONO.to_owned(),
+            "Hack".to_owned(),
+            "NotoEmoji-Regular".to_owned(),
+            "emoji-icon-font".to_owned(),
+        ],
+    );
+    ctx.set_fonts(fonts.clone());
+    true
 }
 
 pub fn semibold(size: f32) -> FontId {
