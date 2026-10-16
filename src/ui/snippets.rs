@@ -87,8 +87,19 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 let y1 = rect.top() + 23.0;
                 let y2 = rect.top() + 46.0;
                 let name_g = p.layout_no_wrap(s.name.clone(), theme::semibold(15.0), theme::text());
-                let nw = name_g.size().x;
+                let mut nw = name_g.size().x;
                 p.galley(Pos2::new(left, y1 - name_g.size().y / 2.0), name_g, theme::text());
+                if s.shell == crate::model::ShellKind::PowerShell {
+                    // Small "PS" tag after the name.
+                    let g = p.layout_no_wrap("PS".into(), theme::bold(10.5), theme::accent2());
+                    let r = Rect::from_min_size(
+                        Pos2::new(left + nw + 8.0, y1 - 9.0),
+                        Vec2::new(g.size().x + 12.0, 18.0),
+                    );
+                    p.rect_filled(r, CornerRadius::same(5), theme::soft(theme::accent2()));
+                    p.galley(r.center() - g.size() / 2.0, g, theme::accent2());
+                    nw += r.width() + 8.0;
+                }
                 if !s.description.is_empty() {
                     p.text(
                         Pos2::new(left + nw + 10.0, y1),
@@ -102,7 +113,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 p.text(
                     Pos2::new(left, y2),
                     egui::Align2::LEFT_CENTER,
-                    "$",
+                    if s.shell == crate::model::ShellKind::PowerShell {
+                        ">"
+                    } else {
+                        "$"
+                    },
                     theme::mono_medium(13.0),
                     theme::accent(),
                 );

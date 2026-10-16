@@ -9,7 +9,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::Sink;
 
@@ -29,17 +29,47 @@ pub struct RdpConnect {
 #[derive(Serialize, Debug, Clone, PartialEq)]
 #[serde(tag = "t")]
 pub enum RdpCmd {
-    Key { code: u16, down: bool },
-    Unicode { ch: char, down: bool },
-    Move { x: u16, y: u16 },
-    Button { b: u8, down: bool },
-    Wheel { vertical: bool, units: i16 },
-    Resize { w: u16, h: u16 },
-    ClipSet { text: String },
+    Key {
+        code: u16,
+        down: bool,
+    },
+    Unicode {
+        ch: char,
+        down: bool,
+    },
+    Move {
+        x: u16,
+        y: u16,
+    },
+    Button {
+        b: u8,
+        down: bool,
+    },
+    Wheel {
+        vertical: bool,
+        units: i16,
+    },
+    Resize {
+        w: u16,
+        h: u16,
+    },
+    ClipSet {
+        text: String,
+    },
     ClipGet,
+    /// Offer local files/folders to the host through the clipboard.
+    OfferFiles {
+        paths: Vec<String>,
+    },
+    /// Save the files on the host's clipboard into `dir`.
+    FetchFiles {
+        dir: String,
+    },
     CtrlAltDel,
     ReleaseAll,
-    Trust { accept: bool },
+    Trust {
+        accept: bool,
+    },
     Close,
 }
 
@@ -50,12 +80,43 @@ pub enum RdpEvent {
     /// The shared framebuffer has new content.
     Frame,
     ClipFromHost(String),
+    Files(FileEv),
     /// The server key is unknown or changed; answer with [`RdpCmd::Trust`].
     Cert {
         fingerprint: String,
         previous: Option<String>,
     },
     Closed(Option<String>),
+}
+
+/// File transfer events of the helper (see `FileEv` in `crates/aurora-rdp`).
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "ev", rename_all = "snake_case")]
+pub enum FileEv {
+    Offered {
+        files: usize,
+        bytes: u64,
+        #[serde(default)]
+        skipped: Vec<String>,
+    },
+    Accepted,
+    Progress {
+        up: bool,
+        done: u64,
+        total: u64,
+    },
+    Remote {
+        files: bool,
+    },
+    Saved {
+        dir: String,
+        files: usize,
+    },
+    Error {
+        code: String,
+        #[serde(default)]
+        detail: String,
+    },
 }
 
 #[derive(Default)]
@@ -243,6 +304,11 @@ pub fn spawn(
                         });
                     }
                 }
+                7 => {
+                    if let Ok(ev) = serde_json::from_slice::<FileEv>(&payload) {
+                        events.send(RdpEvent::Files(ev));
+                    }
+                }
                 5 => {
                     let msg = text();
                     events.send(RdpEvent::Closed((!msg.is_empty()).then_some(msg)));
@@ -414,5 +480,28 @@ mod tests {
         assert_eq!(j, r#"{"t":"Key","code":57427,"down":true}"#);
         assert_eq!(scancode(egui::Key::A), Some(0x1E));
         assert!(is_text_key(egui::Key::A) && !is_text_key(egui::Key::Enter));
+        let j = serde_json::to_string(&RdpCmd::OfferFiles {
+            paths: vec!["/tmp/a".into()],
+        })
+        .unwrap();
+        assert_eq!(j, r#"{"t":"OfferFiles","paths":["/tmp/a"]}"#);
+        let ev: FileEv =
+            serde_json::from_str(r#"{"ev":"progress","up":true,"done":1,"total":2}"#).unwrap();
+        assert_eq!(
+            ev,
+            FileEv::Progress {
+                up: true,
+                done: 1,
+                total: 2
+            }
+        );
+        let ev: FileEv = serde_json::from_str(r#"{"ev":"saved","dir":"/d","files":3}"#).unwrap();
+        assert_eq!(
+            ev,
+            FileEv::Saved {
+                dir: "/d".into(),
+                files: 3
+            }
+        );
     }
 }

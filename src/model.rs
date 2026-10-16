@@ -447,6 +447,19 @@ pub struct Snippet {
     pub tags: Vec<String>,
     /// Press enter after pasting the snippet.
     pub auto_run: bool,
+    /// Where the script runs; PowerShell snippets can also run on RDP hosts.
+    pub shell: ShellKind,
+}
+
+/// Script language of a snippet.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ShellKind {
+    /// Pasted into a terminal session (bash, zsh, cmd …).
+    #[default]
+    Shell,
+    /// Windows PowerShell: in a terminal, or started on an RDP host via Win+R.
+    PowerShell,
 }
 
 impl Default for Snippet {
@@ -458,6 +471,7 @@ impl Default for Snippet {
             script: String::new(),
             tags: Vec::new(),
             auto_run: true,
+            shell: ShellKind::Shell,
         }
     }
 }
@@ -1055,6 +1069,20 @@ mod tests {
         v.insert("user".to_string(), "root".to_string());
         v.insert("host".to_string(), "box".to_string());
         assert_eq!(s.render(&v), "ssh root@box -p {{port}} # root");
+    }
+
+    #[test]
+    fn snippet_shell_kind_defaults_for_old_data() {
+        let old: Snippet = serde_json::from_str(r#"{"name":"x","script":"ls"}"#).unwrap();
+        assert_eq!(old.shell, ShellKind::Shell);
+        let ps = Snippet {
+            shell: ShellKind::PowerShell,
+            ..Default::default()
+        };
+        let j = serde_json::to_string(&ps).unwrap();
+        assert!(j.contains(r#""shell":"powershell""#));
+        let back: Snippet = serde_json::from_str(&j).unwrap();
+        assert_eq!(back.shell, ShellKind::PowerShell);
     }
 
     #[test]

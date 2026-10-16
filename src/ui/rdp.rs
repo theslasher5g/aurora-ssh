@@ -1,5 +1,6 @@
 //! Embedded RDP viewer tab: renders the helper's framebuffer and forwards input.
 
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -9,11 +10,86 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use crate::app::ConnState;
 use crate::backend::rdp::RdpLaunch;
 use crate::backend::rdp_embed::{
-    self, FrameBuffer, RdpCmd, RdpConnect, RdpEvent, RdpHandle, SC_ENTER, SC_LALT, SC_LCTRL,
-    SC_LSHIFT, SC_LWIN,
+    self, FileEv, FrameBuffer, RdpCmd, RdpConnect, RdpEvent, RdpHandle, SC_ENTER, SC_LALT,
+    SC_LCTRL, SC_LSHIFT, SC_LWIN,
 };
 use crate::backend::{HostKeyPrompt, Sink};
-use crate::theme;
+use crate::theme::{self, Btn};
+use crate::ui::icons::Icon;
+
+/// Scancode of V (for Ctrl+V) and R (for Win+R).
+const SC_V: u16 = 0x2F;
+const SC_R: u16 = 0x13;
+/// The Windows Run dialog takes at most this many characters.
+const RUN_DIALOG_MAX: usize = 259;
+/// Longest command typed into the PowerShell window (fallback for long scripts).
+const TYPED_MAX: usize = 9_000;
+
+/// One queued input step, sent once its time has come (never blocks the UI thread).
+enum Step {
+    Cmds(Vec<RdpCmd>),
+    Text(String),
+}
+
+/// Running or just finished clipboard file transfer, for the badge.
+struct Transfer {
+    up: bool,
+    files: usize,
+    done: u64,
+    total: u64,
+    finished: Option<Instant>,
+    /// Last change, to hide an offer the host never reads.
+    touched: Instant,
+}
+
+/// `powershell -NoExit -EncodedCommand …` for `script` (Base64 of UTF-16LE).
+pub fn encoded_command(script: &str) -> String {
+    use base64::Engine;
+    let script = script.replace("\r\n", "\n");
+    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    format!(
+        "powershell -NoExit -EncodedCommand {}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    )
+}
+
+/// Line for an open PowerShell window that runs the Base64-encoded `script`.
+fn typed_command(script: &str) -> String {
+    let b64 = encoded_command(script)
+        .rsplit(' ')
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    format!("iex ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('{b64}')))")
+}
+
+/// `Downloads/Aurora` (home directory if there is no download folder).
+pub fn download_target() -> std::path::PathBuf {
+    directories::UserDirs::new()
+        .map(|d| {
+            d.download_dir()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| d.home_dir().to_path_buf())
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("Aurora")
+}
+
+fn file_error_text(code: &str, detail: &str) -> String {
+    match code {
+        "unsupported" => t!("Der Host erlaubt keine Dateiübertragung über die Zwischenablage"),
+        "empty" => t!("Keine übertragbaren Dateien"),
+        "rejected" => t!("Der Host hat die Dateiliste abgelehnt"),
+        "busy" => t!("Es läuft bereits eine Übertragung"),
+        "no_files" => t!("Die Zwischenablage des Hosts enthält keine Dateien"),
+        "list" => t!("Dateiliste des Hosts konnte nicht gelesen werden"),
+        "read" => return t!("Datei konnte nicht gelesen werden: {}", detail),
+        "write" => return t!("Datei konnte nicht gespeichert werden: {}", detail),
+        "too_big" => t!("Datei zu groß für diesen Host (über 2 GB)"),
+        _ => t!("Übertragung vom Host abgebrochen"),
+    }
+    .to_string()
+}
 
 pub struct RdpView {
     pub handle: Option<RdpHandle>,
@@ -38,13 +114,24 @@ pub struct RdpView {
     /// Pinned TLS key fingerprint for this server (`rdp://host:port` in known hosts).
     pub known_fingerprint: Option<String>,
     /// Sync the clipboard automatically (host setting); the buttons always work.
+    /// Also the switch for file transfer through the clipboard.
     pub auto_clipboard: bool,
+    /// Remote position to click before pasting dropped files.
+    pending_drop: Option<Option<(u16, u16)>>,
+    /// Files are on offer: "Dateien einfügen" pastes them again.
+    files_offered: bool,
+    /// The host's clipboard holds files.
+    remote_files: bool,
+    transfer: Option<Transfer>,
+    steps: VecDeque<(Instant, Step)>,
 }
 
 /// What the tab wants the app to do.
 pub enum RdpAction {
     None,
     OpenExternal,
+    /// Run this PowerShell snippet on the host (after asking for its variables).
+    RunSnippet(uuid::Uuid),
 }
 
 impl RdpView {
@@ -69,7 +156,131 @@ impl RdpView {
             pending_paste: None,
             had_focus: false,
             start_requested: true,
+            pending_drop: None,
+            files_offered: false,
+            remote_files: false,
+            transfer: None,
+            steps: VecDeque::new(),
         }
+    }
+
+    /// Queues `step` `delay` after the previously queued one.
+    fn queue(&mut self, delay: Duration, step: Step) {
+        let base = self
+            .steps
+            .back()
+            .map(|(t, _)| *t)
+            .unwrap_or_else(Instant::now)
+            .max(Instant::now());
+        self.steps.push_back((base + delay, step));
+    }
+
+    /// Sends the queued steps that are due; returns when the next one is.
+    fn run_steps(&mut self) -> Option<Duration> {
+        if !self.connected() {
+            self.steps.clear();
+            return None;
+        }
+        while let Some((due, _)) = self.steps.front() {
+            if *due > Instant::now() {
+                return Some(due.saturating_duration_since(Instant::now()));
+            }
+            let Some((_, step)) = self.steps.pop_front() else {
+                break;
+            };
+            match step {
+                Step::Cmds(cmds) => {
+                    for c in cmds {
+                        self.send(c);
+                    }
+                }
+                Step::Text(t) => self.type_text(&t),
+            }
+        }
+        None
+    }
+
+    fn ctrl_v() -> Vec<RdpCmd> {
+        vec![
+            RdpCmd::Key {
+                code: SC_LCTRL,
+                down: true,
+            },
+            RdpCmd::Key {
+                code: SC_V,
+                down: true,
+            },
+            RdpCmd::Key {
+                code: SC_V,
+                down: false,
+            },
+            RdpCmd::Key {
+                code: SC_LCTRL,
+                down: false,
+            },
+        ]
+    }
+
+    /// Pastes the offered files: click at the drop position (if known), then Ctrl+V.
+    fn paste_files(&mut self, at: Option<(u16, u16)>) {
+        // Release whatever the local keyboard holds, so Ctrl+V is clean.
+        self.send(RdpCmd::ReleaseAll);
+        self.mods = [false; 3];
+        if let Some((x, y)) = at {
+            self.queue(
+                Duration::ZERO,
+                Step::Cmds(vec![
+                    RdpCmd::Move { x, y },
+                    RdpCmd::Button { b: 0, down: true },
+                    RdpCmd::Button { b: 0, down: false },
+                ]),
+            );
+        }
+        self.queue(Duration::from_millis(250), Step::Cmds(Self::ctrl_v()));
+    }
+
+    /// Runs `script` in PowerShell on the Windows host: Win+R, then the encoded command.
+    /// Long scripts open PowerShell first and are typed into its window.
+    pub fn run_powershell(&mut self, script: &str) -> Result<(), String> {
+        if !self.connected() {
+            return Err(t!("Nicht verbunden").into());
+        }
+        let direct = encoded_command(script);
+        let typed = typed_command(script);
+        if direct.chars().count() > RUN_DIALOG_MAX && typed.chars().count() > TYPED_MAX {
+            return Err(t!("Snippet ist zu lang zum Eintippen").into());
+        }
+        self.send(RdpCmd::ReleaseAll);
+        self.mods = [false; 3];
+        let win_r = vec![
+            RdpCmd::Key {
+                code: SC_LWIN,
+                down: true,
+            },
+            RdpCmd::Key {
+                code: SC_R,
+                down: true,
+            },
+            RdpCmd::Key {
+                code: SC_R,
+                down: false,
+            },
+            RdpCmd::Key {
+                code: SC_LWIN,
+                down: false,
+            },
+        ];
+        self.queue(Duration::ZERO, Step::Cmds(win_r));
+        if direct.chars().count() <= RUN_DIALOG_MAX {
+            self.queue(Duration::from_millis(700), Step::Text(direct + "\n"));
+        } else {
+            self.queue(
+                Duration::from_millis(700),
+                Step::Text("powershell -NoExit\n".into()),
+            );
+            self.queue(Duration::from_millis(2500), Step::Text(typed + "\n"));
+        }
+        Ok(())
     }
 
     fn send(&self, cmd: RdpCmd) {
@@ -129,6 +340,11 @@ impl RdpView {
     pub fn reconnect(&mut self) {
         self.handle = None;
         self.rx = None;
+        self.steps.clear();
+        self.files_offered = false;
+        self.remote_files = false;
+        self.transfer = None;
+        self.pending_drop = None;
         self.start_requested = true;
         self.state = ConnState::Connecting(t!("Verbinde…").into());
     }
@@ -141,7 +357,11 @@ impl RdpView {
         toasts: &mut Vec<(String, Color32)>,
         prompts: &mut Vec<HostKeyPrompt>,
     ) {
+        if let Some(next) = self.run_steps() {
+            ctx.request_repaint_after(next);
+        }
         let Some(rx) = self.rx.as_mut() else { return };
+        let mut file_events = Vec::new();
         let mut closed = None;
         while let Ok(ev) = rx.try_recv() {
             match ev {
@@ -183,8 +403,12 @@ impl RdpView {
                         }
                     }
                 }
+                RdpEvent::Files(ev) => file_events.push(ev),
                 RdpEvent::Closed(err) => closed = Some(err),
             }
+        }
+        for ev in file_events {
+            self.file_event(ev, ctx, toasts);
         }
         if let Some(err) = closed {
             if let Some(e) = &err {
@@ -194,6 +418,165 @@ impl RdpView {
             self.handle = None;
             self.rx = None;
         }
+    }
+
+    fn file_event(&mut self, ev: FileEv, ctx: &egui::Context, toasts: &mut Vec<(String, Color32)>) {
+        match ev {
+            FileEv::Offered {
+                files,
+                bytes,
+                skipped,
+            } => {
+                self.files_offered = true;
+                self.transfer = Some(Transfer {
+                    up: true,
+                    files,
+                    done: 0,
+                    total: bytes,
+                    finished: None,
+                    touched: Instant::now(),
+                });
+                if !skipped.is_empty() {
+                    toasts.push((
+                        t!(
+                            "{} übersprungen (Links nach außen oder ungültige Namen)",
+                            skipped.len()
+                        ),
+                        theme::amber(),
+                    ));
+                }
+            }
+            FileEv::Accepted => {
+                if let Some(at) = self.pending_drop.take() {
+                    self.paste_files(at);
+                    ctx.request_repaint();
+                }
+            }
+            FileEv::Progress { up, done, total } => {
+                let t = self.transfer.get_or_insert(Transfer {
+                    up,
+                    files: 0,
+                    done: 0,
+                    total,
+                    finished: None,
+                    touched: Instant::now(),
+                });
+                t.up = up;
+                t.touched = Instant::now();
+                t.done = done;
+                t.total = total;
+                t.finished = (up && total > 0 && done >= total).then(Instant::now);
+            }
+            FileEv::Remote { files } => self.remote_files = files,
+            FileEv::Saved { dir, files } => {
+                if let Some(t) = &mut self.transfer {
+                    t.finished = Some(Instant::now());
+                }
+                toasts.push((
+                    t!("{} Dateien gespeichert in {}", files, dir),
+                    theme::accent(),
+                ));
+            }
+            FileEv::Error { code, detail } => {
+                self.pending_drop = None;
+                if code == "rejected" || code == "unsupported" {
+                    self.files_offered = false;
+                }
+                self.transfer = None;
+                toasts.push((file_error_text(&code, &detail), theme::red()));
+            }
+        }
+    }
+
+    /// Small pill at the bottom right while files go over the clipboard.
+    fn transfer_badge(&mut self, ui: &egui::Ui, area: Rect) {
+        let Some(t) = &self.transfer else { return };
+        let idle = t.done == 0 && t.touched.elapsed() > Duration::from_secs(20);
+        if idle
+            || t.finished
+                .is_some_and(|f| f.elapsed() > Duration::from_millis(2500))
+        {
+            self.transfer = None;
+            return;
+        }
+        let arrow = if t.up { "↑" } else { "↓" };
+        let what = if t.files > 0 {
+            t!("{} Dateien", t.files)
+        } else {
+            t!("Dateien").to_string()
+        };
+        let text = format!(
+            "{arrow} {what}  {} / {}",
+            crate::ui::human_size(t.done),
+            crate::ui::human_size(t.total)
+        );
+        let painter = ui.painter();
+        let g = painter.layout_no_wrap(text, egui::FontId::proportional(12.0), theme::text());
+        let size = g.size() + Vec2::new(24.0, 14.0);
+        let pill = Rect::from_min_size(
+            egui::pos2(area.right() - size.x - 12.0, area.bottom() - size.y - 10.0),
+            size,
+        );
+        painter.rect_filled(
+            pill,
+            CornerRadius::same(12),
+            theme::lerp(theme::surface(), theme::accent(), 0.16),
+        );
+        let frac = if t.total > 0 {
+            (t.done as f32 / t.total as f32).min(1.0)
+        } else {
+            0.0
+        };
+        let bar = Rect::from_min_size(
+            pill.left_bottom() + Vec2::new(12.0, -4.0),
+            Vec2::new((pill.width() - 24.0) * frac, 2.0),
+        );
+        painter.rect_filled(bar, CornerRadius::same(1), theme::accent());
+        painter.galley(pill.min + Vec2::new(12.0, 6.0), g, theme::text());
+        ui.ctx().request_repaint_after(Duration::from_millis(200));
+    }
+
+    /// Veil with a hint while OS files hover over the session.
+    fn drop_overlay(ui: &egui::Ui, area: Rect, msg: &str, hint: Option<&str>) {
+        let painter = ui.painter();
+        painter.rect_filled(
+            area.shrink(6.0),
+            CornerRadius::same(10),
+            Color32::from_rgba_unmultiplied(10, 12, 18, 200),
+        );
+        painter.rect_stroke(
+            area.shrink(6.0),
+            CornerRadius::same(10),
+            egui::Stroke::new(1.5, theme::accent()),
+            egui::StrokeKind::Inside,
+        );
+        painter.text(
+            area.center(),
+            egui::Align2::CENTER_CENTER,
+            msg,
+            egui::FontId::proportional(16.0),
+            theme::text(),
+        );
+        if let Some(h) = hint {
+            painter.text(
+                area.center() + Vec2::new(0.0, 24.0),
+                egui::Align2::CENTER_CENTER,
+                h,
+                egui::FontId::proportional(12.5),
+                theme::text_dim(),
+            );
+        }
+    }
+
+    /// Offers dropped files to the host and remembers where to paste them.
+    fn drop_files(&mut self, paths: Vec<std::path::PathBuf>, at: Option<(u16, u16)>) {
+        let paths = paths
+            .into_iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        self.pending_drop = Some(at);
+        self.transfer = None;
+        self.send(RdpCmd::OfferFiles { paths });
     }
 
     /// Offers new local clipboard text to the host (polled, since there is no change event).
@@ -239,6 +622,7 @@ impl RdpView {
         title: &str,
         subtitle: &str,
         launch: &RdpLaunch,
+        ps_snippets: &[(uuid::Uuid, String)],
         toasts: &mut Vec<(String, Color32)>,
     ) -> RdpAction {
         let mut action = RdpAction::None;
@@ -308,6 +692,46 @@ impl RdpView {
                         .clicked()
                     {
                         self.send(RdpCmd::CtrlAltDel);
+                    }
+                    let ps = theme::icon_btn(ui, Icon::Bolt, t!("PowerShell-Snippet ausführen"));
+                    egui::Popup::menu(&ps).show(|ui| {
+                        ui.set_min_width(220.0);
+                        if ps_snippets.is_empty() {
+                            ui.label(
+                                RichText::new(t!(
+                                    "Keine PowerShell-Snippets – im Snippet-Editor „PowerShell“ wählen"
+                                ))
+                                .color(theme::text_dim()),
+                            );
+                        }
+                        for (sid, name) in ps_snippets {
+                            if ui.button(name).clicked() {
+                                action = RdpAction::RunSnippet(*sid);
+                                ui.close();
+                            }
+                        }
+                    });
+                    if self.auto_clipboard && self.remote_files {
+                        let r = theme::btn(
+                            ui,
+                            Btn::Small,
+                            Some(Icon::Download),
+                            t!("Dateien vom Host speichern"),
+                        )
+                        .on_hover_text(t!("Kopierte Dateien des Hosts in Downloads/Aurora speichern"));
+                        if r.clicked() {
+                            self.transfer = None;
+                            self.send(RdpCmd::FetchFiles {
+                                dir: download_target().display().to_string(),
+                            });
+                        }
+                    }
+                    if self.auto_clipboard && self.files_offered {
+                        let r = theme::btn(ui, Btn::Small, Some(Icon::File), t!("Dateien einfügen"))
+                            .on_hover_text(t!("Abgelegte Dateien erneut einfügen (Strg+V auf dem Host)"));
+                        if r.clicked() {
+                            self.paste_files(None);
+                        }
                     }
                 });
             },
@@ -416,6 +840,55 @@ impl RdpView {
                     }
                     ui.ctx().request_repaint_after(Duration::from_millis(650));
                 }
+
+                // Files from the local desktop: overlay while hovering, offer on drop.
+                let (hovering, dropped, pointer) = ui.input(|i| {
+                    (
+                        !i.raw.hovered_files.is_empty(),
+                        i.raw
+                            .dropped_files
+                            .iter()
+                            .map(|f| f.path().to_path_buf())
+                            .filter(|p| !p.as_os_str().is_empty())
+                            .collect::<Vec<_>>(),
+                        i.pointer.latest_pos(),
+                    )
+                });
+                let over_me = pointer.is_none_or(|p| area.contains(p));
+                if hovering && over_me {
+                    let (msg, hint) = if !connected {
+                        (t!("Nicht verbunden").to_string(), None)
+                    } else if !self.auto_clipboard {
+                        (
+                            t!("Zwischenablage ist für diesen Host ausgeschaltet").to_string(),
+                            None,
+                        )
+                    } else {
+                        (
+                            t!("Loslassen zum Kopieren auf {}", title),
+                            Some(t!("Große Dateien gehen per Dateibrowser (SFTP) schneller")),
+                        )
+                    };
+                    Self::drop_overlay(ui, area, &msg, hint);
+                }
+                if !dropped.is_empty() && over_me && connected {
+                    if self.auto_clipboard {
+                        let at = pointer.filter(|p| rect.contains(*p)).map(|p| {
+                            let x = ((p.x - rect.left()) / rect.width() * tw as f32)
+                                .clamp(0.0, tw as f32 - 1.0);
+                            let y = ((p.y - rect.top()) / rect.height() * th as f32)
+                                .clamp(0.0, th as f32 - 1.0);
+                            (x as u16, y as u16)
+                        });
+                        self.drop_files(dropped, at);
+                    } else {
+                        toasts.push((
+                            t!("Zwischenablage ist für diesen Host ausgeschaltet").into(),
+                            theme::amber(),
+                        ));
+                    }
+                }
+                self.transfer_badge(ui, area);
 
                 if !connected {
                     return;
@@ -606,5 +1079,34 @@ impl RdpView {
 
         self.sync_local_clipboard(false);
         ui.ctx().request_repaint_after(Duration::from_millis(900));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn b64_of(s: &str) -> String {
+        encoded_command(s).rsplit(' ').next().unwrap().to_string()
+    }
+
+    #[test]
+    fn powershell_command_is_utf16le_base64() {
+        use base64::Engine;
+        let b64 = b64_of("Get-Date\r\nWrite-Host 'Grüße'");
+        assert!(encoded_command("x").starts_with("powershell -NoExit -EncodedCommand "));
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&b64)
+            .unwrap();
+        let units: Vec<u16> = bytes
+            .chunks(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        assert_eq!(
+            String::from_utf16(&units).unwrap(),
+            "Get-Date\nWrite-Host 'Grüße'"
+        );
+        assert!(typed_command("x").contains(&b64_of("x")));
+        assert!(download_target().ends_with("Aurora"));
     }
 }

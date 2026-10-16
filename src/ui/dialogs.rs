@@ -415,7 +415,10 @@ fn snippet_vars(app: &mut App, ctx: &egui::Context) {
     } else if submit && let Some(run) = app.snippet_run.take() {
         let values = run.values.into_iter().collect();
         let text = run.snippet.render(&values);
-        app.run_snippet_text(&text, run.snippet.auto_run, run.all);
+        match run.rdp_tab {
+            Some(tab) => app.run_powershell(tab, &text),
+            None => app.run_snippet_text(&text, run.snippet.auto_run, run.all),
+        }
     }
 }
 

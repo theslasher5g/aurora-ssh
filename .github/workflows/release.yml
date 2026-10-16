@@ -204,7 +204,7 @@ jobs:
           body: |
             **Aurora ${{ env.VERSION }}** – Windows, Linux and macOS
 
-            **New in 0.6:** a completely new design (sidebar with labels, cards, sheets for all editors, settings in tabs, help page) · 14 more themes (26 in total, dark and light) · full screen (F11) · open a session in its own window · tunnels in the sidebar. Full list: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/v${{ env.VERSION }}/CHANGELOG.md)
+            **New in 0.6.1:** Proxmox VE page with all VMs and containers · logs docked next to the terminal with own log commands · session recording (asciinema) · persistent tmux sessions · open files at the terminal's folder · files over RDP (drop to copy, save from host) · PowerShell snippets for RDP hosts. Full list: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/v${{ env.VERSION }}/CHANGELOG.md)
 
             | System | File | Install |
             |---|---|---|

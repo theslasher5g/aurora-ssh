@@ -25,6 +25,14 @@
   tmux (or screen) on the server, a reconnect lands in the same session with its jobs.
 - **Open files at the terminal's folder:** a header button opens the file browser in the
   shell's current directory on the same login.
+- **Files over RDP:** drop files and folders onto an embedded RDP session to copy them to the
+  Windows machine (through the clipboard channel, no SFTP needed). Aurora clicks at the drop
+  position and pastes; *Paste files* pastes again. Files the host copied can be saved with
+  *Save files from host* into `Downloads/Aurora` (never overwrites). A badge shows progress.
+  Follows the host's *Clipboard* setting.
+- **PowerShell snippets:** snippets have a shell kind (*Shell* / *PowerShell*). The bolt button
+  in an RDP session runs a PowerShell snippet on the Windows host (Win+R and an encoded
+  command, placeholders are asked first). PowerShell snippets carry a *PS* tag.
 - Terminal settings show a live preview of font, size and colours; the host editor's terminal
   profile has the same preview.
 - Scrollback is picked from a list (1,000 to 100,000 lines); the font size has a slider with a
