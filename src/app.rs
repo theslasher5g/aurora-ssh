@@ -559,6 +559,8 @@ pub struct App {
     pub host_filter: usize,
     pub snippet_search: String,
     pub keychain_search: String,
+    /// Keys page: group editor sheet.
+    pub keys_ui: crate::ui::keychain::KeysUi,
     pub broadcast: bool,
     /// Typing goes to every terminal shown in the split.
     pub split_broadcast: bool,
@@ -622,6 +624,8 @@ pub enum Action {
     NewIdentity,
     EditIdentity(Uuid),
     DeleteIdentity(Uuid),
+    /// Groups on the keys page (see `ui::keychain::apply`).
+    KeyGroup(crate::ui::keychain::KeyGroupOp),
     NewSnippet,
     EditSnippet(Uuid),
     DeleteSnippet(Uuid),
@@ -750,6 +754,7 @@ impl App {
             host_filter: 0,
             snippet_search: String::new(),
             keychain_search: String::new(),
+            keys_ui: Default::default(),
             broadcast: false,
             split_broadcast: false,
             maximized: None,
@@ -1894,6 +1899,7 @@ impl App {
             snippets: self.lib.snippets.clone(),
             identities: self.keychain.identities.clone(),
             known_hosts: self.lib.known_hosts.clone(),
+            key_groups: self.keychain.groups.clone(),
         };
         let path = PathBuf::from(self.export_path.trim());
         let r = serde_json::to_vec(&bundle)
@@ -1951,6 +1957,11 @@ impl App {
             if self.lib.snippet(sn.id).is_none() {
                 self.lib.snippets.push(sn);
                 n += 1;
+            }
+        }
+        for g in bundle.key_groups {
+            if self.keychain.key_group(g.id).is_none() {
+                self.keychain.groups.push(g);
             }
         }
         for i in bundle.identities {
@@ -2858,6 +2869,7 @@ impl App {
                 self.save_keychain();
                 self.save_library();
             }
+            Action::KeyGroup(op) => crate::ui::keychain::apply(self, op),
             Action::NewSnippet => {
                 self.snippet_editor = Some((Snippet::default(), true, String::new()))
             }

@@ -523,6 +523,8 @@ pub struct Identity {
     /// OpenSSH / PEM private key text.
     pub private_key: String,
     pub passphrase: String,
+    /// Keychain group (`Keychain::groups`); `None` = "Ohne Gruppe".
+    pub group_id: Option<Uuid>,
 }
 
 impl Identity {
@@ -540,6 +542,68 @@ pub struct Keychain {
     pub identities: Vec<Identity>,
     /// Proxmox server id → API token secret or password.
     pub pve_secrets: HashMap<Uuid, String>,
+    /// Groups on the keys page, in display order.
+    pub groups: Vec<KeyGroup>,
+}
+
+impl Keychain {
+    pub fn key_group(&self, id: Uuid) -> Option<&KeyGroup> {
+        self.groups.iter().find(|g| g.id == id)
+    }
+
+    /// Group of an identity; dangling ids count as "no group".
+    pub fn group_of(&self, ident: &Identity) -> Option<&KeyGroup> {
+        ident.group_id.and_then(|g| self.key_group(g))
+    }
+
+    /// Identities in display order: by group (in group order), ungrouped last, each
+    /// list sorted by name.
+    pub fn grouped(&self) -> Vec<(Option<&KeyGroup>, Vec<&Identity>)> {
+        fn sorted(mut v: Vec<&Identity>) -> Vec<&Identity> {
+            v.sort_by_key(|i| i.label.to_lowercase());
+            v
+        }
+        let mut out: Vec<(Option<&KeyGroup>, Vec<&Identity>)> = self
+            .groups
+            .iter()
+            .map(|g| {
+                let members = self
+                    .identities
+                    .iter()
+                    .filter(|i| i.group_id == Some(g.id))
+                    .collect();
+                (Some(g), sorted(members))
+            })
+            .collect();
+        let loose = self
+            .identities
+            .iter()
+            .filter(|i| self.group_of(i).is_none())
+            .collect();
+        out.push((None, sorted(loose)));
+        out
+    }
+}
+
+/// A group of keys on the keychain page (stored in the encrypted keychain).
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[serde(default)]
+pub struct KeyGroup {
+    pub id: Uuid,
+    pub name: String,
+    pub color: [u8; 3],
+    pub collapsed: bool,
+}
+
+impl Default for KeyGroup {
+    fn default() -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: String::new(),
+            color: [139, 92, 246],
+            collapsed: false,
+        }
+    }
 }
 
 /// A Proxmox VE server (or cluster) shown on the Proxmox page. The secret lives in the

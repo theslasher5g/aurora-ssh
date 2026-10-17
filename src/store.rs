@@ -196,6 +196,7 @@ pub struct ExportBundle {
     pub snippets: Vec<crate::model::Snippet>,
     pub identities: Vec<crate::model::Identity>,
     pub known_hosts: std::collections::HashMap<String, String>,
+    pub key_groups: Vec<crate::model::KeyGroup>,
 }
 
 /// Encrypts with a password of its own (same Argon2id + XChaCha20-Poly1305 scheme as the
@@ -273,5 +274,47 @@ mod tests {
         assert_eq!(loaded.identities[0].password, "s3cret");
         assert!(store.unlock_vault("wrong").is_err());
         fs::remove_dir_all(dir).ok();
+    }
+
+    /// Keychains written before key groups existed load unchanged, without groups.
+    #[test]
+    fn old_keychain_loads_without_groups() {
+        let id = uuid::Uuid::new_v4();
+        let old = format!(
+            r#"{{"identities":[{{"id":"{id}","label":"deploy","username":"root",
+                "password":"pw","private_key":"","passphrase":""}}],
+                "pve_secrets":{{}}}}"#
+        );
+        let kc: Keychain = serde_json::from_str(&old).unwrap();
+        assert!(kc.groups.is_empty());
+        let ident = &kc.identities[0];
+        assert_eq!((ident.id, ident.label.as_str()), (id, "deploy"));
+        assert_eq!(
+            (ident.username.as_str(), ident.password.as_str()),
+            ("root", "pw")
+        );
+        assert_eq!(ident.group_id, None);
+        let grouped = kc.grouped();
+        assert_eq!(grouped.len(), 1);
+        assert!(grouped[0].0.is_none());
+        assert_eq!(grouped[0].1.len(), 1);
+
+        // Round trip with a group; a dangling group id counts as ungrouped.
+        let mut kc = kc;
+        let g = crate::model::KeyGroup {
+            name: "Prod".into(),
+            ..Default::default()
+        };
+        kc.identities[0].group_id = Some(g.id);
+        kc.groups.push(g.clone());
+        let mut stray = Identity::new();
+        stray.group_id = Some(uuid::Uuid::new_v4());
+        kc.identities.push(stray);
+        let back: Keychain = serde_json::from_str(&serde_json::to_string(&kc).unwrap()).unwrap();
+        assert_eq!(back.groups, vec![g.clone()]);
+        let grouped = back.grouped();
+        assert_eq!(grouped[0].0.map(|x| x.id), Some(g.id));
+        assert_eq!(grouped[0].1[0].label, "deploy");
+        assert_eq!(grouped[1].1.len(), 1);
     }
 }

@@ -480,13 +480,18 @@ fn key_setup(app: &mut App, ctx: &egui::Context) {
         .host(ks.host)
         .map(|h| h.display_name().to_string())
         .unwrap_or_default();
-    let keys: Vec<(uuid::Uuid, String)> = app
-        .keychain
-        .identities
-        .iter()
-        .filter(|i| !i.private_key.trim().is_empty())
-        .map(|i| (i.id, i.label.clone()))
-        .collect();
+    // In keys-page order, as "Gruppe / Name".
+    let keys: Vec<(uuid::Uuid, String)> =
+        crate::ui::keychain::choices(&app.keychain, |i| !i.private_key.trim().is_empty())
+            .into_iter()
+            .map(
+                |(id, name, group)| match (group.is_empty(), name.is_empty()) {
+                    (true, _) => (id, name),
+                    (false, true) => (id, format!("{group} / {}", t!("(ohne Namen)"))),
+                    (false, false) => (id, format!("{group} / {name}")),
+                },
+            )
+            .collect();
     let mut start = false;
     let mut close = false;
     let ks = app.key_setup.as_mut().expect("checked above");
