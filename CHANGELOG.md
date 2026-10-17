@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.6.2
+
+### New features
+- **Port scan per host** (right-click → *Ports scannen…*): from this PC (well-known ports,
+  1–1024, all 65535 or your own list like `22, 80, 8000-8100`, with banners and latency) or
+  *listening on the server* over SSH (`ss`, `netstat` or `/proc/net/tcp`), which also shows
+  services bound to localhost only. One click opens a web port in the browser or creates and
+  starts an SSH tunnel to it.
+- **Key groups and search:** keys can be sorted into coloured groups (collapsible, drag &
+  drop, "move to group" menu); the search finds keys by name, user, type, comment,
+  fingerprint or group. Key pickers in the host editor show the groups. Groups are stored in
+  the encrypted vault and travel with the export.
+
+### Fixes
+- Persistent sessions: every tab to the same host gets its own tmux session; server facts
+  are collected again; hosts without tmux/screen or with a non-POSIX login shell (fish,
+  Windows) fall back to a plain shell instead of closing; leaving tmux is no longer reported
+  as an error.
+- Recordings that start in the same second no longer overwrite each other.
+- The delete button of own log commands no longer flickers.
+- RDP: with several RDP panes only one takes a dropped file (the one under the pointer, or
+  the active one); a host that stops answering during a file transfer times out after 15 s
+  instead of blocking further transfers; file reads and writes run on their own thread, so the
+  picture no longer stutters during big transfers.
+
 ## 0.6.1
 
 ### New features

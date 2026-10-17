@@ -44,9 +44,10 @@ What's new in each version: [CHANGELOG.md](CHANGELOG.md) · planned: [ROADMAP.md
 | **Persistent sessions** | Optional per host: the shell runs in `tmux` (or `screen`) on the server, a reconnect lands in the same session with its running jobs |
 | **Terminal profile** | Per host: own color theme (e.g. PROD always in a different look), font and font size. Fonts: IBM Plex Mono, Hack, installed monospace fonts (Cascadia, Consolas, Menlo, DejaVu, JetBrains Mono …) or any .ttf/.otf file |
 | **Host list** | Groups as cards with "x of y online". After the first login it shows **OS, uptime, disk usage and pending updates** (one click: "install updates"), latency and status (green = reachable, ring = no answer, red = last connection failed). Hosts without a name take the server's hostname, rename with `F2`. Multi-select (Ctrl/Shift+click) with bulk actions, drag hosts into groups, compact view, sorting. Groups show "x/y online"; hosts in the same subnet can be grouped with one click |
+| **Port scan** | Per host: TCP scan from this PC (well-known, 1–1024, all or a custom list) or the ports listening on the server (also localhost-only services); open a web port in the browser or tunnel to it with one click |
 | **Network scan** | Finds SSH/RDP devices in the local network (with an OS hint from the SSH banner) and adds them |
 | **SSH key setup** | Generates a key, installs it on the server, verifies the login – no more passwords |
-| **Keychain** | Passwords & SSH keys, Ed25519 generator, encrypted with Argon2id + XChaCha20-Poly1305 |
+| **Keychain** | Passwords & SSH keys in coloured groups with search, Ed25519 generator, encrypted with Argon2id + XChaCha20-Poly1305 |
 | **Snippets** | Shell or PowerShell, `{{variable}}` placeholders with live preview, snippet panel in the terminal, run in all sessions, startup snippet per host, save selected terminal text as a snippet |
 | **Groups** | Nested, colour & icon, inherited default user/identity, favourites, recently used, tags |
 | **Productivity** | **Quick connect**: `user@host`, `host:port` or `ssh -p 2222 user@host` in `Ctrl+K`, then "save as host" · **open a whole group** side by side · **search in the terminal** (`Ctrl+Shift+F`, incl. scrollback) · **font size with `Ctrl` + mouse wheel** per pane · import from `~/.ssh/config` · sessions and split layout are **restored on the next start** |

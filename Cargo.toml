@@ -1,6 +1,6 @@
 [package]
 name = "aurora-term"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2024"
 description = "Aurora – moderner SSH/SFTP/RDP/Serial-Client mit Keychain, Snippets und Host-Gruppen"
 
