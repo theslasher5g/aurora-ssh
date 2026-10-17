@@ -133,7 +133,7 @@ enum FileEv {
         files: usize,
     },
     /// `code`: unsupported, empty, rejected, busy, no_files, list, read, remote_read,
-    /// write, too_big.
+    /// write, too_big, timeout.
     Error {
         code: String,
         detail: String,
@@ -164,10 +164,18 @@ fn send(out: &Out, tag: u8, payload: Vec<u8>) {
 
 // ---------------------------------------------------------------- clipboard
 
+/// A download gives up when the host has not answered a request for this long.
+const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
+/// A new fetch replaces one that has waited this long for an answer (the user retries).
+const FETCH_STALE: Duration = Duration::from_secs(5);
+
+/// Protocol state of the clipboard channel. Only cheap bookkeeping happens under its
+/// mutex; file I/O runs on the [`Worker`] thread.
 struct ClipShared {
     local_text: Option<String>,
     input: Option<mpsc::UnboundedSender<RdpInputEvent>>,
     out: Out,
+    jobs: std::sync::mpsc::Sender<Job>,
     ready: bool,
     caps: ClipboardGeneralCapabilityFlags,
     /// Files currently on offer, and snapshots the host locked (`clipDataId`).
@@ -175,47 +183,77 @@ struct ClipShared {
     locks: HashMap<u32, Arc<Vec<files::LocalEntry>>>,
     /// Waiting for the host's answer to our file list.
     offer_pending: bool,
-    offer_error_sent: bool,
-    open_file: Option<(PathBuf, std::fs::File)>,
-    /// Highest byte served per (list, index), for the progress badge.
-    served: HashMap<(usize, usize), u64>,
-    last_progress: Instant,
     /// Format id of `FileGroupDescriptorW` on the remote clipboard.
     remote_files: Option<ClipboardFormatId>,
-    pending_fetch: Option<PathBuf>,
-    download: Option<files::Download>,
-    /// Outstanding request of the download: (stream id, is SIZE).
-    download_stream: Option<(u32, bool)>,
-    next_stream: u32,
+}
+
+/// How to answer a `FileContentsRequest`.
+enum Serve {
+    /// No file access needed (size, error).
+    Now(FileContentsResponse<'static>),
+    /// Read a range on the worker.
+    Read(ReadJob),
+}
+
+#[derive(Debug)]
+struct ReadJob {
+    stream_id: u32,
+    list: Arc<Vec<files::LocalEntry>>,
+    index: usize,
+    position: u64,
+    requested: u32,
+}
+
+/// Work for the file I/O thread.
+enum Job {
+    Read(ReadJob),
+    /// A new list is on offer: forget the open file and the progress.
+    NewOffer,
+    /// The host unlocked everything: close the open file.
+    CloseFile,
+    /// Ask the host for its file list and save the files into `dir`.
+    Fetch {
+        dir: PathBuf,
+        format: ClipboardFormatId,
+        huge: bool,
+    },
+    /// The host could not deliver its file list.
+    ListFailed,
+    RemoteList {
+        entries: Vec<(Option<String>, String, bool, Option<u64>)>,
+        clip_data_id: Option<u32>,
+    },
+    Contents {
+        stream_id: u32,
+        error: bool,
+        data: Vec<u8>,
+    },
+    /// Session over: remove a half-written download and stop.
+    Shutdown,
 }
 
 impl ClipShared {
-    fn new(out: Out) -> Self {
+    fn new(out: Out, jobs: std::sync::mpsc::Sender<Job>) -> Self {
         Self {
             local_text: None,
             input: None,
             out,
+            jobs,
             ready: false,
             caps: ClipboardGeneralCapabilityFlags::empty(),
             offer: None,
             locks: HashMap::new(),
             offer_pending: false,
-            offer_error_sent: false,
-            open_file: None,
-            served: HashMap::new(),
-            last_progress: Instant::now(),
             remote_files: None,
-            pending_fetch: None,
-            download: None,
-            download_stream: None,
-            next_stream: 1,
         }
     }
 
     fn post(&self, msg: ClipboardMessage) {
-        if let Some(tx) = &self.input {
-            let _ = tx.send(RdpInputEvent::Clipboard(msg));
-        }
+        post(self.input.as_ref(), msg);
+    }
+
+    fn job(&self, job: Job) {
+        let _ = self.jobs.send(job);
     }
 
     fn advertise(&self) {
@@ -234,14 +272,7 @@ impl ClipShared {
                 .contains(ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED)
     }
 
-    fn progress(&mut self, up: bool, done: u64, total: u64, force: bool) {
-        if force || self.last_progress.elapsed() > Duration::from_millis(150) {
-            self.last_progress = Instant::now();
-            file_event(&self.out, &FileEv::Progress { up, done, total });
-        }
-    }
-
-    /// Announces `list` to the host (from the stdin thread).
+    /// Announces `list` to the host (from the file list thread).
     fn offer_files(&mut self, list: files::FileList) {
         if !self.can_transfer() {
             return file_error(&self.out, "unsupported", "");
@@ -256,10 +287,8 @@ impl ClipShared {
             .collect();
         let (count, bytes) = (list.file_count(), list.total_bytes());
         self.offer = Some(Arc::new(list.entries));
-        self.open_file = None;
-        self.served.clear();
+        self.job(Job::NewOffer);
         self.offer_pending = true;
-        self.offer_error_sent = false;
         self.post(ClipboardMessage::SendInitiateFileCopy(descriptors));
         file_event(
             &self.out,
@@ -271,8 +300,8 @@ impl ClipShared {
         );
     }
 
-    /// Answers a `FileContentsRequest` for our offer.
-    fn serve(&mut self, req: &FileContentsRequest) -> FileContentsResponse<'static> {
+    /// Looks up what a `FileContentsRequest` asks for; reading is left to the worker.
+    fn serve(&self, req: &FileContentsRequest) -> Serve {
         let list = req
             .data_id
             .and_then(|id| self.locks.get(&id).cloned())
@@ -280,16 +309,165 @@ impl ClipShared {
         let index = usize::try_from(req.index).unwrap_or(usize::MAX);
         let Some((list, entry)) = list
             .as_ref()
-            .and_then(|l| l.get(index).cloned().map(|e| (l.clone(), e)))
+            .and_then(|l| l.get(index).map(|e| (l.clone(), e)))
         else {
-            return FileContentsResponse::new_error(req.stream_id);
+            return Serve::Now(FileContentsResponse::new_error(req.stream_id));
         };
         if entry.is_dir {
-            return FileContentsResponse::new_error(req.stream_id);
+            return Serve::Now(FileContentsResponse::new_error(req.stream_id));
         }
         if req.flags.contains(FileContentsFlags::SIZE) {
-            return FileContentsResponse::new_size_response(req.stream_id, entry.size);
+            return Serve::Now(FileContentsResponse::new_size_response(
+                req.stream_id,
+                entry.size,
+            ));
         }
+        Serve::Read(ReadJob {
+            stream_id: req.stream_id,
+            list,
+            index,
+            position: req.position,
+            requested: req.requested_size,
+        })
+    }
+
+    /// Starts saving the remote clipboard's files into `dir` (from the stdin thread).
+    fn fetch_files(&self, dir: PathBuf) {
+        if !self.can_transfer() {
+            return file_error(&self.out, "unsupported", "");
+        }
+        let Some(format) = self.remote_files else {
+            return file_error(&self.out, "no_files", "");
+        };
+        let huge = self
+            .caps
+            .contains(ClipboardGeneralCapabilityFlags::HUGE_FILE_SUPPORT_ENABLED);
+        self.job(Job::Fetch { dir, format, huge });
+    }
+}
+
+fn post(input: Option<&mpsc::UnboundedSender<RdpInputEvent>>, msg: ClipboardMessage) {
+    if let Some(tx) = input {
+        let _ = tx.send(RdpInputEvent::Clipboard(msg));
+    }
+}
+
+/// Where the download stands.
+enum Fetch {
+    Idle,
+    /// Paste request for the host's file list sent at `since`.
+    Waiting {
+        root: PathBuf,
+        huge: bool,
+        since: Instant,
+    },
+    /// `stream`: outstanding request (stream id, is SIZE), sent at `since`.
+    Running {
+        dl: files::Download,
+        huge: bool,
+        stream: Option<(u32, bool)>,
+        since: Instant,
+    },
+}
+
+/// File I/O thread: reads ranges of the offered files and writes downloads, so neither
+/// the RDP session nor the input thread ever waits for the disk. Answers and requests
+/// go back to the session loop through its input channel.
+struct Worker {
+    out: Out,
+    input: Option<mpsc::UnboundedSender<RdpInputEvent>>,
+    open_file: Option<(PathBuf, std::fs::File)>,
+    /// Highest byte served per (list, index), for the progress badge.
+    served: HashMap<(usize, usize), u64>,
+    last_progress: Instant,
+    read_error_sent: bool,
+    fetch: Fetch,
+    next_stream: u32,
+}
+
+impl Worker {
+    fn new(out: Out, input: Option<mpsc::UnboundedSender<RdpInputEvent>>) -> Self {
+        Self {
+            out,
+            input,
+            open_file: None,
+            served: HashMap::new(),
+            last_progress: Instant::now(),
+            read_error_sent: false,
+            fetch: Fetch::Idle,
+            next_stream: 1,
+        }
+    }
+
+    fn run(mut self, jobs: std::sync::mpsc::Receiver<Job>) {
+        use std::sync::mpsc::RecvTimeoutError;
+        loop {
+            // Only a fetch has deadlines; otherwise just wait for work.
+            let wait = if matches!(self.fetch, Fetch::Idle) {
+                Duration::from_secs(3600)
+            } else {
+                Duration::from_millis(500)
+            };
+            match jobs.recv_timeout(wait) {
+                Ok(Job::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
+                    self.cancel();
+                    return;
+                }
+                Ok(job) => self.handle(job),
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+            self.check_timeout();
+        }
+    }
+
+    fn post(&self, msg: ClipboardMessage) {
+        post(self.input.as_ref(), msg);
+    }
+
+    fn handle(&mut self, job: Job) {
+        match job {
+            Job::Read(r) => {
+                let response = self.read(&r);
+                self.post(ClipboardMessage::SendFileContentsResponse(response));
+            }
+            Job::NewOffer => {
+                self.open_file = None;
+                self.served.clear();
+                self.read_error_sent = false;
+            }
+            Job::CloseFile => self.open_file = None,
+            Job::Fetch { dir, format, huge } => self.start_fetch(dir, format, huge),
+            Job::ListFailed => {
+                if matches!(self.fetch, Fetch::Waiting { .. }) {
+                    self.fetch = Fetch::Idle;
+                    file_error(&self.out, "list", "");
+                }
+            }
+            Job::RemoteList {
+                entries,
+                clip_data_id,
+            } => self.got_list(&entries, clip_data_id),
+            Job::Contents {
+                stream_id,
+                error,
+                data,
+            } => self.got_contents(stream_id, error, &data),
+            Job::Shutdown => self.cancel(),
+        }
+    }
+
+    fn progress(&mut self, up: bool, done: u64, total: u64, force: bool) {
+        if force || self.last_progress.elapsed() > Duration::from_millis(150) {
+            self.last_progress = Instant::now();
+            file_event(&self.out, &FileEv::Progress { up, done, total });
+        }
+    }
+
+    /// Reads the requested range, at most [`files::MAX_CHUNK`] of it.
+    fn read(&mut self, r: &ReadJob) -> FileContentsResponse<'static> {
+        let Some(entry) = r.list.get(r.index) else {
+            return FileContentsResponse::new_error(r.stream_id);
+        };
         // Files are opened when the host asks, not when they are dropped.
         if self
             .open_file
@@ -299,97 +477,187 @@ impl ClipShared {
             match std::fs::File::open(&entry.path) {
                 Ok(f) => self.open_file = Some((entry.path.clone(), f)),
                 Err(e) => {
-                    self.read_failed(&entry, &e);
-                    return FileContentsResponse::new_error(req.stream_id);
+                    self.read_failed(entry, &e);
+                    return FileContentsResponse::new_error(r.stream_id);
                 }
             }
         }
         let (_, f) = self.open_file.as_mut().expect("opened above");
-        match files::read_range(f, req.position, req.requested_size) {
+        match files::read_range(f, r.position, r.requested) {
             Ok(data) => {
-                let key = (Arc::as_ptr(&list) as usize, index);
-                let end = req.position + data.len() as u64;
+                let key = (Arc::as_ptr(&r.list) as usize, r.index);
+                let end = r.position.saturating_add(data.len() as u64);
                 let seen = self.served.entry(key).or_default();
                 *seen = (*seen).max(end.min(entry.size));
                 let done: u64 = self.served.values().sum();
-                let total: u64 = list.iter().filter(|e| !e.is_dir).map(|e| e.size).sum();
+                let total: u64 = r.list.iter().filter(|e| !e.is_dir).map(|e| e.size).sum();
                 self.progress(true, done.min(total), total, done >= total);
-                FileContentsResponse::new_data_response(req.stream_id, data)
+                FileContentsResponse::new_data_response(r.stream_id, data)
             }
             Err(e) => {
-                self.read_failed(&entry, &e);
-                FileContentsResponse::new_error(req.stream_id)
+                self.read_failed(entry, &e);
+                FileContentsResponse::new_error(r.stream_id)
             }
         }
     }
 
     fn read_failed(&mut self, entry: &files::LocalEntry, e: &std::io::Error) {
-        if !std::mem::replace(&mut self.offer_error_sent, true) {
+        if !std::mem::replace(&mut self.read_error_sent, true) {
             file_error(&self.out, "read", format!("{}: {e}", entry.rel.join("/")));
         }
     }
 
-    /// Starts saving the remote clipboard's files into `dir` (from the stdin thread).
-    fn fetch_files(&mut self, dir: PathBuf) {
-        if !self.can_transfer() {
-            return file_error(&self.out, "unsupported", "");
+    /// When the outstanding request (or the paste request) was sent.
+    fn waiting_since(&self) -> Option<Instant> {
+        match &self.fetch {
+            Fetch::Idle => None,
+            Fetch::Waiting { since, .. } => Some(*since),
+            Fetch::Running { stream, since, .. } => stream.map(|_| *since),
         }
-        if self.download.is_some() || self.pending_fetch.is_some() {
+    }
+
+    /// A new fetch replaces one the host has not answered for [`FETCH_STALE`]; a
+    /// download that still gets answers is left alone.
+    fn start_fetch(&mut self, dir: PathBuf, format: ClipboardFormatId, huge: bool) {
+        let busy = match &self.fetch {
+            Fetch::Idle => false,
+            _ => self
+                .waiting_since()
+                .is_none_or(|t| t.elapsed() < FETCH_STALE),
+        };
+        if busy {
             return file_error(&self.out, "busy", "");
         }
-        let Some(format) = self.remote_files else {
-            return file_error(&self.out, "no_files", "");
+        self.cancel();
+        self.fetch = Fetch::Waiting {
+            root: dir,
+            huge,
+            since: Instant::now(),
         };
-        self.pending_fetch = Some(dir);
         self.post(ClipboardMessage::SendInitiatePaste(format));
     }
 
-    /// Issues the next request of the running download, or finishes it.
-    fn drive_download(&mut self) {
-        let Some(dl) = self.download.as_mut() else {
-            return;
-        };
-        let huge = self
-            .caps
-            .contains(ClipboardGeneralCapabilityFlags::HUGE_FILE_SUPPORT_ENABLED);
-        let step = dl.advance();
-        let clip_data_id = dl.clip_data_id;
-        let (done, total) = (dl.done_bytes, dl.total_bytes);
-        let request =
-            |stream_id, index: usize, flags, position, requested_size| FileContentsRequest {
-                stream_id,
-                index: i32::try_from(index).unwrap_or(i32::MAX),
-                flags,
-                position,
-                requested_size,
-                data_id: clip_data_id,
-            };
-        let stream_id = self.next_stream;
-        self.next_stream = self.next_stream.wrapping_add(1).max(1);
-        match step {
-            Ok(files::Step::Size { index }) => {
-                self.download_stream = Some((stream_id, true));
-                let r = request(stream_id, index, FileContentsFlags::SIZE, 0, 8);
-                self.post(ClipboardMessage::SendFileContentsRequest(r));
-            }
-            Ok(files::Step::Range { index, pos, len }) => {
-                if pos >= 0x8000_0000 && !huge {
-                    self.end_download(Some(("too_big", String::new())));
-                    return;
-                }
-                self.download_stream = Some((stream_id, false));
-                let r = request(stream_id, index, FileContentsFlags::RANGE, pos, len);
-                self.post(ClipboardMessage::SendFileContentsRequest(r));
-                self.progress(false, done, total, false);
-            }
-            Ok(files::Step::Finished) => self.end_download(None),
-            Err(e) => self.end_download(Some(("write", e.to_string()))),
+    /// Gives up on a fetch the host stopped answering.
+    fn check_timeout(&mut self) {
+        if self
+            .waiting_since()
+            .is_some_and(|t| t.elapsed() >= FETCH_TIMEOUT)
+        {
+            self.cancel();
+            file_error(&self.out, "timeout", "");
         }
     }
 
-    fn end_download(&mut self, error: Option<(&str, String)>) {
-        self.download_stream = None;
-        let Some(mut dl) = self.download.take() else {
+    /// Drops the running fetch and removes a half-written file.
+    fn cancel(&mut self) {
+        if let Fetch::Running { mut dl, .. } = std::mem::replace(&mut self.fetch, Fetch::Idle) {
+            dl.abort();
+        }
+    }
+
+    fn got_list(
+        &mut self,
+        entries: &[(Option<String>, String, bool, Option<u64>)],
+        clip_data_id: Option<u32>,
+    ) {
+        let Fetch::Waiting { root, huge, .. } = std::mem::replace(&mut self.fetch, Fetch::Idle)
+        else {
+            return;
+        };
+        if let Err(e) = std::fs::create_dir_all(&root) {
+            return file_error(&self.out, "write", format!("{}: {e}", root.display()));
+        }
+        let plan = files::plan_download(&root, entries);
+        self.fetch = Fetch::Running {
+            dl: files::Download::new(root, plan, clip_data_id),
+            huge,
+            stream: None,
+            since: Instant::now(),
+        };
+        self.drive();
+    }
+
+    fn got_contents(&mut self, stream_id: u32, error: bool, data: &[u8]) {
+        let Fetch::Running { dl, stream, .. } = &mut self.fetch else {
+            return;
+        };
+        // Late answers of a cancelled or timed-out request are ignored.
+        let Some((expected, is_size)) = *stream else {
+            return;
+        };
+        if stream_id != expected {
+            return;
+        }
+        *stream = None;
+        if error {
+            return self.end(Some(("remote_read", String::new())));
+        }
+        let result = if is_size {
+            match <[u8; 8]>::try_from(data) {
+                Ok(b) => {
+                    dl.got_size(u64::from_le_bytes(b));
+                    Ok(())
+                }
+                Err(_) => Err(format!("size answer of {} bytes", data.len())),
+            }
+        } else {
+            dl.got_data(data).map_err(|e| e.to_string())
+        };
+        match result {
+            Ok(()) => self.drive(),
+            Err(e) => self.end(Some(("remote_read", e))),
+        }
+    }
+
+    /// Issues the next request of the running download, or finishes it.
+    fn drive(&mut self) {
+        let stream_id = self.next_stream;
+        let Fetch::Running {
+            dl,
+            huge,
+            stream,
+            since,
+        } = &mut self.fetch
+        else {
+            return;
+        };
+        let step = dl.advance();
+        let clip_data_id = dl.clip_data_id;
+        let (done, total) = (dl.done_bytes, dl.total_bytes);
+        let request = |index: usize, flags, position, requested_size| FileContentsRequest {
+            stream_id,
+            index: i32::try_from(index).unwrap_or(i32::MAX),
+            flags,
+            position,
+            requested_size,
+            data_id: clip_data_id,
+        };
+        let msg = match step {
+            Ok(files::Step::Size { index }) => {
+                *stream = Some((stream_id, true));
+                request(index, FileContentsFlags::SIZE, 0, 8)
+            }
+            Ok(files::Step::Range { index, pos, len }) => {
+                if pos >= 0x8000_0000 && !*huge {
+                    return self.end(Some(("too_big", String::new())));
+                }
+                *stream = Some((stream_id, false));
+                request(index, FileContentsFlags::RANGE, pos, len)
+            }
+            Ok(files::Step::Finished) => return self.end(None),
+            Err(e) => return self.end(Some(("write", e.to_string()))),
+        };
+        *since = Instant::now();
+        self.next_stream = self.next_stream.wrapping_add(1).max(1);
+        let is_range = msg.flags.contains(FileContentsFlags::RANGE);
+        self.post(ClipboardMessage::SendFileContentsRequest(msg));
+        if is_range {
+            self.progress(false, done, total, false);
+        }
+    }
+
+    fn end(&mut self, error: Option<(&str, String)>) {
+        let Fetch::Running { mut dl, .. } = std::mem::replace(&mut self.fetch, Fetch::Idle) else {
             return;
         };
         match error {
@@ -411,8 +679,9 @@ impl ClipShared {
     }
 }
 
-/// Text-only clipboard bridge: remote copies are fetched and forwarded to the UI,
-/// local text offered by the UI is served on request.
+/// Text clipboard bridge plus file lists: remote copies are fetched and forwarded to
+/// the UI, local text offered by the UI is served on request. File data is read and
+/// written on the [`Worker`].
 #[derive(Debug)]
 struct Bridge {
     #[allow(dead_code)]
@@ -472,30 +741,24 @@ impl CliprdrBackend for Bridge {
     }
 
     fn on_remote_copy(&mut self, available_formats: &[ClipboardFormat]) {
-        {
-            let mut s = self.shared.0.lock().unwrap();
-            s.remote_files = available_formats
-                .iter()
-                .find(|f| {
-                    f.name
-                        .as_ref()
-                        .is_some_and(|n| n.value() == ClipboardFormatName::FILE_LIST.value())
-                })
-                .map(|f| f.id);
-            let files = s.remote_files.is_some() && s.can_transfer();
-            file_event(&s.out, &FileEv::Remote { files });
-        }
+        let s = &mut *self.shared.0.lock().unwrap();
+        s.remote_files = available_formats
+            .iter()
+            .find(|f| {
+                f.name
+                    .as_ref()
+                    .is_some_and(|n| n.value() == ClipboardFormatName::FILE_LIST.value())
+            })
+            .map(|f| f.id);
+        let files = s.remote_files.is_some() && s.can_transfer();
+        file_event(&s.out, &FileEv::Remote { files });
         if available_formats
             .iter()
             .any(|f| f.id == ClipboardFormatId::CF_UNICODETEXT)
         {
-            self.shared
-                .0
-                .lock()
-                .unwrap()
-                .post(ClipboardMessage::SendInitiatePaste(
-                    ClipboardFormatId::CF_UNICODETEXT,
-                ));
+            s.post(ClipboardMessage::SendInitiatePaste(
+                ClipboardFormatId::CF_UNICODETEXT,
+            ));
         }
     }
 
@@ -513,10 +776,7 @@ impl CliprdrBackend for Bridge {
 
     fn on_format_data_response(&mut self, response: FormatDataResponse<'_>) {
         if response.is_error() {
-            let mut s = self.shared.0.lock().unwrap();
-            if s.pending_fetch.take().is_some() {
-                file_error(&s.out, "list", "");
-            }
+            self.shared.0.lock().unwrap().job(Job::ListFailed);
             return;
         }
         if let Ok(text) = response.to_unicode_string() {
@@ -526,38 +786,20 @@ impl CliprdrBackend for Bridge {
     }
 
     fn on_file_contents_request(&mut self, request: FileContentsRequest) {
-        let mut s = self.shared.0.lock().unwrap();
-        let response = s.serve(&request);
-        s.post(ClipboardMessage::SendFileContentsResponse(response));
+        let s = self.shared.0.lock().unwrap();
+        match s.serve(&request) {
+            Serve::Now(response) => s.post(ClipboardMessage::SendFileContentsResponse(response)),
+            Serve::Read(job) => s.job(Job::Read(job)),
+        }
     }
 
     fn on_file_contents_response(&mut self, response: FileContentsResponse<'_>) {
-        let mut s = self.shared.0.lock().unwrap();
-        let Some((stream, is_size)) = s.download_stream else {
-            return;
+        let job = Job::Contents {
+            stream_id: response.stream_id(),
+            error: response.is_error(),
+            data: response.data().to_vec(),
         };
-        if response.stream_id() != stream {
-            return;
-        }
-        s.download_stream = None;
-        if response.is_error() {
-            return s.end_download(Some(("remote_read", String::new())));
-        }
-        let Some(dl) = s.download.as_mut() else {
-            return;
-        };
-        let result = if is_size {
-            response
-                .data_as_size()
-                .map(|n| dl.got_size(n))
-                .map_err(|e| e.to_string())
-        } else {
-            dl.got_data(response.data()).map_err(|e| e.to_string())
-        };
-        match result {
-            Ok(()) => s.drive_download(),
-            Err(e) => s.end_download(Some(("remote_read", e))),
-        }
+        self.shared.0.lock().unwrap().job(job);
     }
 
     fn on_lock(&mut self, data_id: LockDataId) {
@@ -571,19 +813,12 @@ impl CliprdrBackend for Bridge {
         let mut s = self.shared.0.lock().unwrap();
         s.locks.remove(&data_id.0);
         if s.locks.is_empty() {
-            s.open_file = None;
+            s.job(Job::CloseFile);
         }
     }
 
     fn on_remote_file_list(&mut self, list: &[FileDescriptor], clip_data_id: Option<u32>) {
-        let mut s = self.shared.0.lock().unwrap();
-        let Some(root) = s.pending_fetch.take() else {
-            return;
-        };
-        if let Err(e) = std::fs::create_dir_all(&root) {
-            return file_error(&s.out, "write", format!("{}: {e}", root.display()));
-        }
-        let entries: Vec<_> = list
+        let entries = list
             .iter()
             .map(|f| {
                 let is_dir = f
@@ -592,9 +827,10 @@ impl CliprdrBackend for Bridge {
                 (f.relative_path.clone(), f.name.clone(), is_dir, f.file_size)
             })
             .collect();
-        let plan = files::plan_download(&root, &entries);
-        s.download = Some(files::Download::new(root, plan, clip_data_id));
-        s.drive_download();
+        self.shared.0.lock().unwrap().job(Job::RemoteList {
+            entries,
+            clip_data_id,
+        });
     }
 }
 
@@ -785,7 +1021,11 @@ fn run(out: Out) -> anyhow::Result<()> {
     }
     let connect: Connect = serde_json::from_str(&first)?;
 
-    let shared = SharedClip(Arc::new(Mutex::new(ClipShared::new(out.clone()))));
+    let (jobs_tx, jobs_rx) = std::sync::mpsc::channel::<Job>();
+    let shared = SharedClip(Arc::new(Mutex::new(ClipShared::new(
+        out.clone(),
+        jobs_tx.clone(),
+    ))));
     let bridge_shared = shared.clone();
     let bridge_out = out.clone();
     let mut builder = ConfigBuilder::new()
@@ -830,6 +1070,8 @@ fn run(out: Out) -> anyhow::Result<()> {
     let client = RdpClient::new(config, event_tx);
     let input = client.input_sender();
     shared.0.lock().unwrap().input = Some(input.clone());
+    let worker = Worker::new(out.clone(), Some(input.clone()));
+    let worker = std::thread::spawn(move || worker.run(jobs_rx));
 
     // stdin commands -> RDP input events
     let input_cmds = input.clone();
@@ -952,6 +1194,9 @@ fn run(out: Out) -> anyhow::Result<()> {
             _ => {}
         }
     }
+    // Remove a half-written download before reporting the end.
+    let _ = jobs_tx.send(Job::Shutdown);
+    let _ = worker.join();
     result
 }
 
@@ -1017,14 +1262,45 @@ mod tests {
         assert_eq!(j, r#"{"ev":"accepted"}"#);
     }
 
+    type Input = mpsc::UnboundedReceiver<RdpInputEvent>;
+
+    fn worker() -> (Worker, std::sync::mpsc::Receiver<(u8, Vec<u8>)>, Input) {
+        let (tx, rx) = std::sync::mpsc::sync_channel(256);
+        let (in_tx, in_rx) = mpsc::unbounded_channel();
+        (Worker::new(tx, Some(in_tx)), rx, in_rx)
+    }
+
+    fn file_events(rx: &std::sync::mpsc::Receiver<(u8, Vec<u8>)>) -> Vec<String> {
+        rx.try_iter()
+            .filter(|(t, _)| *t == tag::FILES)
+            .map(|(_, p)| String::from_utf8(p).unwrap())
+            .collect()
+    }
+
+    fn posted(rx: &mut Input) -> Vec<ClipboardMessage> {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|ev| match ev {
+                RdpInputEvent::Clipboard(m) => Some(m),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("aurora-rdp-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
     #[test]
     fn serves_sizes_and_ranges_of_the_offer() {
-        let dir = std::env::temp_dir().join(format!("aurora-rdp-serve-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = tmp("serve");
         std::fs::create_dir_all(dir.join("d")).unwrap();
         std::fs::write(dir.join("d/f.txt"), b"abcdef").unwrap();
         let (tx, rx) = std::sync::mpsc::sync_channel(64);
-        let mut s = ClipShared::new(tx);
+        let (jobs_tx, jobs_rx) = std::sync::mpsc::channel();
+        let mut s = ClipShared::new(tx.clone(), jobs_tx);
         // Not ready yet: refused, nothing posted.
         s.offer_files(files::build_file_list(&[dir.join("d")]));
         assert!(s.offer.is_none());
@@ -1032,6 +1308,7 @@ mod tests {
         s.caps = ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED;
         s.offer_files(files::build_file_list(&[dir.join("d")]));
         assert_eq!(s.offer.as_ref().unwrap().len(), 2);
+        assert!(matches!(jobs_rx.try_recv(), Ok(Job::NewOffer)));
         let req = |index, flags, position, requested_size| FileContentsRequest {
             stream_id: 7,
             index,
@@ -1040,30 +1317,209 @@ mod tests {
             requested_size,
             data_id: None,
         };
-        let r = s.serve(&req(1, FileContentsFlags::SIZE, 0, 8));
+        let (mut w, _, _) = worker();
+        w.out = tx;
+        assert!(matches!(
+            s.serve(&req(1, FileContentsFlags::RANGE, 2, 3)),
+            Serve::Read(_)
+        ));
+        // Sizes and errors are answered on the spot, ranges are read by the worker.
+        let mut serve = |s: &ClipShared, r: &FileContentsRequest| match s.serve(r) {
+            Serve::Now(resp) => resp,
+            Serve::Read(job) => w.read(&job),
+        };
+        let r = serve(&s, &req(1, FileContentsFlags::SIZE, 0, 8));
         assert_eq!(r.data_as_size().unwrap(), 6);
-        let r = s.serve(&req(1, FileContentsFlags::RANGE, 2, 3));
+        let r = serve(&s, &req(1, FileContentsFlags::RANGE, 2, 3));
         assert_eq!(r.data(), b"cde");
-        let r = s.serve(&req(1, FileContentsFlags::RANGE, 5, 100));
+        let r = serve(&s, &req(1, FileContentsFlags::RANGE, 5, 100));
         assert_eq!(r.data(), b"f");
-        let r = s.serve(&req(1, FileContentsFlags::RANGE, 6, 100));
+        let r = serve(&s, &req(1, FileContentsFlags::RANGE, 6, 100));
         assert!(!r.is_error() && r.data().is_empty());
-        assert!(s.serve(&req(0, FileContentsFlags::SIZE, 0, 8)).is_error());
-        assert!(s.serve(&req(9, FileContentsFlags::SIZE, 0, 8)).is_error());
+        assert!(serve(&s, &req(0, FileContentsFlags::SIZE, 0, 8)).is_error());
+        assert!(serve(&s, &req(9, FileContentsFlags::SIZE, 0, 8)).is_error());
+        assert!(serve(&s, &req(-1, FileContentsFlags::RANGE, 0, 8)).is_error());
         // A locked snapshot keeps serving after a new offer.
         s.locks.insert(3, s.offer.clone().unwrap());
         s.offer = None;
         let mut locked = req(1, FileContentsFlags::RANGE, 0, 2);
         locked.data_id = Some(3);
-        assert_eq!(s.serve(&locked).data(), b"ab");
-        let events: Vec<String> = rx
-            .try_iter()
-            .filter(|(t, _)| *t == tag::FILES)
-            .map(|(_, p)| String::from_utf8(p).unwrap())
-            .collect();
+        assert_eq!(serve(&s, &locked).data(), b"ab");
+        let events = file_events(&rx);
         assert!(events[0].contains("unsupported"));
         assert!(events[1].contains("offered"));
         assert!(events.iter().any(|e| e.contains(r#""done":6,"total":6"#)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn served_ranges_are_capped() {
+        let dir = tmp("cap");
+        let f = dir.join("big.bin");
+        std::fs::write(&f, vec![1u8; files::MAX_CHUNK as usize + 100]).unwrap();
+        let list = Arc::new(files::build_file_list(&[f]).entries);
+        let (mut w, _, _) = worker();
+        let job = |position| ReadJob {
+            stream_id: 1,
+            list: list.clone(),
+            index: 0,
+            position,
+            requested: u32::MAX,
+        };
+        assert_eq!(w.read(&job(0)).data().len(), files::MAX_CHUNK as usize);
+        assert_eq!(w.read(&job(u64::from(files::MAX_CHUNK))).data().len(), 100);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Stream id and SIZE flag of the last request the worker posted.
+    fn last_request(msgs: &[ClipboardMessage]) -> (u32, bool) {
+        msgs.iter()
+            .rev()
+            .find_map(|m| match m {
+                ClipboardMessage::SendFileContentsRequest(r) => {
+                    Some((r.stream_id, r.flags.contains(FileContentsFlags::SIZE)))
+                }
+                _ => None,
+            })
+            .expect("a request")
+    }
+
+    fn ago(d: Duration) -> Instant {
+        Instant::now().checked_sub(d).unwrap()
+    }
+
+    fn fetch_job(dir: &std::path::Path) -> Job {
+        Job::Fetch {
+            dir: dir.to_path_buf(),
+            format: ClipboardFormatId::new(0xC0DE),
+            huge: true,
+        }
+    }
+
+    #[test]
+    fn download_runs_and_ignores_foreign_answers() {
+        let dir = tmp("dl-run");
+        let (mut w, out, mut input) = worker();
+        w.handle(fetch_job(&dir.join("in")));
+        assert!(matches!(
+            posted(&mut input)[..],
+            [ClipboardMessage::SendInitiatePaste(f)] if f == ClipboardFormatId::new(0xC0DE)
+        ));
+        // A second click right away: still busy.
+        w.handle(fetch_job(&dir.join("in")));
+        assert!(file_events(&out).iter().any(|e| e.contains("busy")));
+        w.handle(Job::RemoteList {
+            entries: vec![(None, "a.txt".into(), false, None)],
+            clip_data_id: None,
+        });
+        let (id, is_size) = last_request(&posted(&mut input));
+        assert!(is_size);
+        // Answer for another stream: ignored.
+        w.handle(Job::Contents {
+            stream_id: id + 100,
+            error: true,
+            data: Vec::new(),
+        });
+        assert!(matches!(w.fetch, Fetch::Running { .. }));
+        w.handle(Job::Contents {
+            stream_id: id,
+            error: false,
+            data: 3u64.to_le_bytes().to_vec(),
+        });
+        let (id, is_size) = last_request(&posted(&mut input));
+        assert!(!is_size);
+        w.handle(Job::Contents {
+            stream_id: id,
+            error: false,
+            data: b"xyz".to_vec(),
+        });
+        assert!(matches!(w.fetch, Fetch::Idle));
+        assert_eq!(std::fs::read(dir.join("in/a.txt")).unwrap(), b"xyz");
+        assert!(file_events(&out).iter().any(|e| e.contains("saved")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn silent_host_times_out_and_cleans_up() {
+        let dir = tmp("dl-timeout");
+        let (mut w, out, mut input) = worker();
+        // No answer to the paste request.
+        w.handle(fetch_job(&dir));
+        w.check_timeout();
+        assert!(matches!(w.fetch, Fetch::Waiting { .. }));
+        if let Fetch::Waiting { since, .. } = &mut w.fetch {
+            *since = ago(FETCH_TIMEOUT);
+        }
+        w.check_timeout();
+        assert!(matches!(w.fetch, Fetch::Idle));
+        assert!(
+            file_events(&out)
+                .iter()
+                .any(|e| e.contains(r#""code":"timeout""#))
+        );
+
+        // No answer in the middle of a file: the partial file goes away.
+        w.handle(fetch_job(&dir));
+        w.handle(Job::RemoteList {
+            entries: vec![(None, "half.bin".into(), false, Some(4 << 20))],
+            clip_data_id: None,
+        });
+        let (id, _) = last_request(&posted(&mut input));
+        w.handle(Job::Contents {
+            stream_id: id,
+            error: false,
+            data: vec![0; 1000],
+        });
+        assert!(dir.join("half.bin").exists());
+        if let Fetch::Running { since, .. } = &mut w.fetch {
+            *since = ago(FETCH_TIMEOUT);
+        }
+        w.check_timeout();
+        assert!(matches!(w.fetch, Fetch::Idle));
+        assert!(!dir.join("half.bin").exists());
+        assert!(file_events(&out).iter().any(|e| e.contains("timeout")));
+        // A late answer changes nothing.
+        let (id, _) = last_request(&posted(&mut input));
+        w.handle(Job::Contents {
+            stream_id: id,
+            error: false,
+            data: vec![0; 10],
+        });
+        assert!(!dir.join("half.bin").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn new_fetch_replaces_a_stale_one() {
+        let dir = tmp("dl-stale");
+        let (mut w, out, mut input) = worker();
+        w.handle(fetch_job(&dir));
+        w.handle(Job::RemoteList {
+            entries: vec![(None, "stuck.bin".into(), false, Some(10))],
+            clip_data_id: None,
+        });
+        let old = last_request(&posted(&mut input)).0;
+        assert!(dir.join("stuck.bin").exists());
+        if let Fetch::Running { since, .. } = &mut w.fetch {
+            *since = ago(FETCH_STALE);
+        }
+        w.handle(fetch_job(&dir));
+        assert!(matches!(w.fetch, Fetch::Waiting { .. }));
+        assert!(!dir.join("stuck.bin").exists());
+        assert!(matches!(
+            posted(&mut input)[..],
+            [ClipboardMessage::SendInitiatePaste(_)]
+        ));
+        assert!(!file_events(&out).iter().any(|e| e.contains("busy")));
+        // The old request's answer does not touch the new fetch.
+        w.handle(Job::Contents {
+            stream_id: old,
+            error: true,
+            data: Vec::new(),
+        });
+        assert!(matches!(w.fetch, Fetch::Waiting { .. }));
+        w.handle(Job::Shutdown);
+        assert!(matches!(w.fetch, Fetch::Idle));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

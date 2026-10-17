@@ -42,6 +42,12 @@ struct Transfer {
     touched: Instant,
 }
 
+/// The badge goes away when the host has not asked for (or sent) data this long; the
+/// helper gives up on a download after the same time.
+const TRANSFER_IDLE: Duration = Duration::from_secs(15);
+/// An offer the host never reads at all is hidden a bit later (pasting takes a moment).
+const OFFER_IDLE: Duration = Duration::from_secs(20);
+
 /// `powershell -NoExit -EncodedCommand …` for `script` (Base64 of UTF-16LE).
 pub fn encoded_command(script: &str) -> String {
     use base64::Engine;
@@ -86,6 +92,7 @@ fn file_error_text(code: &str, detail: &str) -> String {
         "read" => return t!("Datei konnte nicht gelesen werden: {}", detail),
         "write" => return t!("Datei konnte nicht gespeichert werden: {}", detail),
         "too_big" => t!("Datei zu groß für diesen Host (über 2 GB)"),
+        "timeout" => t!("Der Host antwortet nicht – Übertragung abgebrochen"),
         _ => t!("Übertragung vom Host abgebrochen"),
     }
     .to_string()
@@ -488,10 +495,25 @@ impl RdpView {
         }
     }
 
+    /// Whether this view takes an OS file drop. The pane under the pointer does; when
+    /// the position is unknown (Wayland reports none while dragging) only the active
+    /// pane does, so exactly one view handles a drop.
+    fn takes_drop(pointer: Option<Pos2>, area: Rect, active: bool) -> bool {
+        match pointer {
+            Some(p) => area.contains(p),
+            None => active,
+        }
+    }
+
     /// Small pill at the bottom right while files go over the clipboard.
     fn transfer_badge(&mut self, ui: &egui::Ui, area: Rect) {
         let Some(t) = &self.transfer else { return };
-        let idle = t.done == 0 && t.touched.elapsed() > Duration::from_secs(20);
+        let idle = t.touched.elapsed()
+            > if t.done == 0 {
+                OFFER_IDLE
+            } else {
+                TRANSFER_IDLE
+            };
         if idle
             || t.finished
                 .is_some_and(|f| f.elapsed() > Duration::from_millis(2500))
@@ -623,6 +645,7 @@ impl RdpView {
         subtitle: &str,
         launch: &RdpLaunch,
         ps_snippets: &[(uuid::Uuid, String)],
+        active: bool,
         toasts: &mut Vec<(String, Color32)>,
     ) -> RdpAction {
         let mut action = RdpAction::None;
@@ -854,7 +877,7 @@ impl RdpView {
                         i.pointer.latest_pos(),
                     )
                 });
-                let over_me = pointer.is_none_or(|p| area.contains(p));
+                let over_me = Self::takes_drop(pointer, area, active);
                 if hovering && over_me {
                     let (msg, hint) = if !connected {
                         (t!("Nicht verbunden").to_string(), None)
@@ -1108,5 +1131,30 @@ mod tests {
         );
         assert!(typed_command("x").contains(&b64_of("x")));
         assert!(download_target().ends_with("Aurora"));
+    }
+
+    #[test]
+    fn exactly_one_pane_takes_a_drop() {
+        let left = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(100.0, 100.0));
+        let right = Rect::from_min_max(Pos2::new(110.0, 0.0), Pos2::new(210.0, 100.0));
+        let panes = [(left, false), (right, true)];
+        let takers = |pointer: Option<Pos2>| {
+            panes
+                .iter()
+                .filter(|(area, active)| RdpView::takes_drop(pointer, *area, *active))
+                .count()
+        };
+        // Position known: the pane under the pointer, even if it is not the active one.
+        assert!(RdpView::takes_drop(
+            Some(Pos2::new(50.0, 50.0)),
+            left,
+            false
+        ));
+        assert_eq!(takers(Some(Pos2::new(50.0, 50.0))), 1);
+        assert_eq!(takers(Some(Pos2::new(105.0, 50.0))), 0);
+        // Unknown (Wayland while dragging): only the active pane.
+        assert!(!RdpView::takes_drop(None, left, false));
+        assert!(RdpView::takes_drop(None, right, true));
+        assert_eq!(takers(None), 1);
     }
 }

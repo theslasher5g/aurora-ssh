@@ -16,8 +16,9 @@ use ironrdp::cliprdr::pdu::{ClipboardFileAttributes, FileDescriptor};
 const MAX_WIRE_NAME: usize = 259;
 /// Same bound as `PackedFileList` decoding on the other side.
 const MAX_ENTRIES: usize = 100_000;
-/// Upper bound for one range answer, whatever the server asks for.
-pub const MAX_CHUNK: u32 = 32 * 1024 * 1024;
+/// Upper bound for one range answer, whatever the server asks for. `cbRequested` is a
+/// maximum (MS-RDPECLIP 2.2.5.3): the host asks again for the rest.
+pub const MAX_CHUNK: u32 = 4 * 1024 * 1024;
 
 /// One file or folder offered to the host.
 #[derive(Debug, Clone, PartialEq)]
@@ -449,9 +450,9 @@ impl Download {
                         len,
                     });
                 }
-                if let Some(f) = cur.file.take() {
-                    f.sync_all()?;
-                }
+                // `File` is unbuffered: the data is with the OS already. No fsync per
+                // file, it would stall big folders of small files.
+                cur.file = None;
                 self.files_written += 1;
                 self.current = None;
             }
@@ -608,6 +609,19 @@ mod tests {
         assert_eq!(read_range(&mut f, 1 << 40, 5).unwrap(), b"");
         // Huge requests are capped instead of allocating gigabytes.
         assert_eq!(read_range(&mut f, 0, u32::MAX).unwrap().len(), 10);
+        let big = d.join("big");
+        std::fs::write(&big, vec![7u8; MAX_CHUNK as usize + 10]).unwrap();
+        let mut f = File::open(&big).unwrap();
+        assert_eq!(
+            read_range(&mut f, 0, u32::MAX).unwrap().len(),
+            MAX_CHUNK as usize
+        );
+        assert_eq!(
+            read_range(&mut f, u64::from(MAX_CHUNK), u32::MAX)
+                .unwrap()
+                .len(),
+            10
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
