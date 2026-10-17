@@ -3831,6 +3831,9 @@ impl App {
             .map(|s| (s.id, s.name.clone()))
             .collect();
         let index = self.tabs.iter().position(|t| t.id == tab_id).unwrap_or(0) + 1;
+        // Takes OS file drops when the pointer position is unknown (a popped-out window
+        // gets its own drops).
+        let drop_target = self.active == Some(tab_id) || self.popped.contains(&tab_id);
         let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) else {
             return;
         };
@@ -3848,6 +3851,7 @@ impl App {
                 &subtitle,
                 &t.launch,
                 &ps_snippets,
+                drop_target,
                 &mut toasts,
             );
             match action {
