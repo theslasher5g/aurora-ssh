@@ -26,6 +26,10 @@ use uuid::Uuid;
 
 use super::Sink;
 
+#[path = "proxmox_ops.rs"]
+mod ops;
+pub use ops::*;
+
 // ------------------------------------------------------------------ data
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -182,11 +186,13 @@ impl std::fmt::Display for Error {
 pub enum PveEvent {
     Fetched {
         server: Uuid,
+        epoch: Epoch,
         result: Result<Snapshot, Error>,
         session: Option<Session>,
     },
     PowerDone {
         server: Uuid,
+        epoch: Epoch,
         vmid: u32,
         power: Power,
         result: Result<(), Error>,
@@ -194,6 +200,14 @@ pub enum PveEvent {
     },
     /// "Verbindung testen" in the editor: version string or the error.
     Tested(Result<String, Error>),
+    /// Result or progress of a job about one guest (snapshots, backups, tasks, …).
+    Guest {
+        server: Uuid,
+        epoch: Epoch,
+        vmid: u32,
+        session: Option<Session>,
+        payload: GuestPayload,
+    },
 }
 
 // ------------------------------------------------------------------ TLS pinning
@@ -489,11 +503,22 @@ impl Client {
 
     /// GET or POST `path` (below `/api2/json`) and return the `data` member.
     fn call(&mut self, post: bool, path: &str) -> Result<Value, Error> {
+        let method = if post { Method::Post } else { Method::Get };
+        self.request(method, path, &[])
+    }
+
+    /// Any request with optional form parameters (POST only); returns the `data` member.
+    fn request(
+        &mut self,
+        method: Method,
+        path: &str,
+        form: &[(&str, String)],
+    ) -> Result<Value, Error> {
         if matches!(self.auth, Auth::Password { .. }) && self.session.is_none() {
             self.login()?;
         }
         for attempt in 0..2 {
-            let (status, body) = self.send(post, path)?;
+            let (status, body) = self.send(method, path, form)?;
             if status == 401 && attempt == 0 && matches!(self.auth, Auth::Password { .. }) {
                 // Ticket expired: log in again once.
                 self.session = None;
@@ -517,7 +542,12 @@ impl Client {
         Err(Error::Auth(t!("Benutzer oder Passwort falsch").into()))
     }
 
-    fn send(&self, post: bool, path: &str) -> Result<(u16, String), Error> {
+    fn send(
+        &self,
+        method: Method,
+        path: &str,
+        form: &[(&str, String)],
+    ) -> Result<(u16, String), Error> {
         let url = format!("{}{path}", self.base);
         let mut headers: Vec<(&str, String)> = Vec::new();
         match (&self.auth, &self.session) {
@@ -526,30 +556,48 @@ impl Client {
             }
             (Auth::Password { .. }, Some(s)) => {
                 headers.push(("Cookie", format!("PVEAuthCookie={}", s.ticket)));
-                if post {
+                if method != Method::Get {
                     headers.push(("CSRFPreventionToken", s.csrf.clone()));
                 }
             }
             (Auth::Password { .. }, None) => {}
         }
-        let result = if post {
-            let mut req = self.agent.post(&url);
-            for (k, v) in &headers {
-                req = req.header(*k, v);
+        let result = match method {
+            Method::Post => {
+                let mut req = self.agent.post(&url);
+                for (k, v) in &headers {
+                    req = req.header(*k, v);
+                }
+                if form.is_empty() {
+                    req.send_empty()
+                } else {
+                    req.send_form(form.iter().map(|(k, v)| (*k, v.as_str())))
+                }
             }
-            req.send_empty()
-        } else {
-            let mut req = self.agent.get(&url);
-            for (k, v) in &headers {
-                req = req.header(*k, v);
+            Method::Get | Method::Delete => {
+                let mut req = if method == Method::Get {
+                    self.agent.get(&url)
+                } else {
+                    self.agent.delete(&url)
+                };
+                for (k, v) in &headers {
+                    req = req.header(*k, v);
+                }
+                req.call()
             }
-            req.call()
         };
         let mut resp = result.map_err(|e| self.net_error(e))?;
         let status = resp.status().as_u16();
         let body = resp.body_mut().read_to_string().unwrap_or_default();
         Ok((status, body))
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Method {
+    Get,
+    Post,
+    Delete,
 }
 
 /// First line of an error body, shortened.
@@ -661,65 +709,24 @@ pub fn parse_nodes(data: &Value) -> Vec<Node> {
     out
 }
 
-/// Useful addresses: no loopback, no IPv6 link-local; IPv4 first.
-fn keep_ips(mut ips: Vec<String>) -> Vec<String> {
-    ips.retain(|ip| {
-        let ip = ip.to_lowercase();
-        !(ip.is_empty() || ip.starts_with("127.") || ip == "::1" || ip.starts_with("fe80:"))
-    });
-    ips.dedup();
-    ips.sort_by_key(|ip| ip.contains(':'));
-    ips
+fn ranked(cands: &[IpCandidate], near: Option<std::net::IpAddr>) -> Vec<String> {
+    rank_ips(cands, near)
+        .iter()
+        .map(|ip| ip.to_string())
+        .collect()
 }
 
-/// `data` of `qemu/{vmid}/agent/network-get-interfaces` (`{"result": [...]}`).
+/// `data` of `qemu/{vmid}/agent/network-get-interfaces` (`{"result": [...]}`): usable
+/// addresses, best first.
+#[cfg(test)]
 pub fn parse_agent_ips(data: &Value) -> Vec<String> {
-    let list = data.get("result").unwrap_or(data);
-    let mut ips = Vec::new();
-    for iface in list.as_array().map(|a| a.as_slice()).unwrap_or_default() {
-        if iface["name"].as_str() == Some("lo") {
-            continue;
-        }
-        for a in iface["ip-addresses"]
-            .as_array()
-            .map(|a| a.as_slice())
-            .unwrap_or_default()
-        {
-            if let Some(ip) = a["ip-address"].as_str() {
-                ips.push(ip.to_string());
-            }
-        }
-    }
-    keep_ips(ips)
+    ranked(&agent_candidates(data), None)
 }
 
 /// `data` of `lxc/{vmid}/interfaces` (`inet`/`inet6` with prefix, or `ip-addresses`).
+#[cfg(test)]
 pub fn parse_lxc_ips(data: &Value) -> Vec<String> {
-    let mut ips = Vec::new();
-    for iface in data.as_array().map(|a| a.as_slice()).unwrap_or_default() {
-        if iface["name"].as_str() == Some("lo") {
-            continue;
-        }
-        for key in ["inet", "inet6"] {
-            if let Some(s) = iface[key].as_str() {
-                ips.extend(
-                    s.split([',', ' '])
-                        .filter(|p| !p.is_empty())
-                        .map(|p| p.split('/').next().unwrap_or_default().to_string()),
-                );
-            }
-        }
-        for a in iface["ip-addresses"]
-            .as_array()
-            .map(|a| a.as_slice())
-            .unwrap_or_default()
-        {
-            if let Some(ip) = a["ip-address"].as_str() {
-                ips.push(ip.to_string());
-            }
-        }
-    }
-    keep_ips(ips)
+    ranked(&lxc_candidates(data), None)
 }
 
 // ------------------------------------------------------------------ console
@@ -760,11 +767,13 @@ pub fn console_command(kind: Kind, vmid: u32, node: &str, ip: Option<&str>) -> O
 pub fn spawn_fetch(
     rt: &tokio::runtime::Runtime,
     server: Uuid,
+    epoch: Epoch,
     conn: Conn,
     ips_for: Vec<(String, Kind, u32)>,
     sink: Sink<PveEvent>,
 ) {
     rt.spawn_blocking(move || {
+        let near = host_ip(&conn.host, conn.port);
         let mut c = Client::new(&conn);
         let result = (|| {
             let guests = parse_resources(&c.call(false, "/cluster/resources?type=vm")?);
@@ -781,10 +790,10 @@ pub fn spawn_fetch(
                 };
                 match (kind, c.call(false, &path)) {
                     (Kind::Qemu, Ok(d)) => {
-                        ips.insert(vmid, Ips::Found(parse_agent_ips(&d)));
+                        ips.insert(vmid, Ips::Found(ranked(&agent_candidates(&d), near)));
                     }
                     (Kind::Lxc, Ok(d)) => {
-                        ips.insert(vmid, Ips::Found(parse_lxc_ips(&d)));
+                        ips.insert(vmid, Ips::Found(ranked(&lxc_candidates(&d), near)));
                     }
                     // No (running) guest agent: Proxmox answers with a 500.
                     (Kind::Qemu, Err(Error::Http(..))) => {
@@ -800,6 +809,7 @@ pub fn spawn_fetch(
         })();
         sink.send(PveEvent::Fetched {
             server,
+            epoch,
             result,
             session: c.session.clone(),
         });
@@ -809,6 +819,7 @@ pub fn spawn_fetch(
 pub fn spawn_power(
     rt: &tokio::runtime::Runtime,
     server: Uuid,
+    epoch: Epoch,
     conn: Conn,
     guest: (String, Kind, u32),
     power: Power,
@@ -828,6 +839,7 @@ pub fn spawn_power(
         };
         sink.send(PveEvent::PowerDone {
             server,
+            epoch,
             vmid,
             power,
             result,
