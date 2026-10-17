@@ -3,6 +3,18 @@
 ## 0.6.2
 
 ### New features
+- **Proxmox snapshots:** per guest a sheet with the snapshot tree (time, description, RAM),
+  create (optionally with RAM for running VMs), roll back and delete – each with
+  confirmation and live task status.
+- **Proxmox backups:** all backups of a guest from every backup storage (date, size,
+  storage, notes, protected), *Backup now* with storage and mode, and restore to a new VMID
+  (confirmed by typing it; never overwrites the original).
+- **Proxmox consoles:** noVNC in the browser for VMs and containers, SPICE via
+  `remote-viewer` (virt-viewer) for VMs with a SPICE display.
+- **Proxmox "save as host" with the right IP:** the address is looked up at click time –
+  IPv4 first, the server's subnet preferred, docker/bridge/link-local addresses skipped,
+  the static config (cloud-init / container net) for stopped guests, otherwise a short
+  question. Saving again updates the existing host instead of adding a second one.
 - **Port scan per host** (right-click → *Ports scannen…*): from this PC (well-known ports,
   1–1024, all 65535 or your own list like `22, 80, 8000-8100`, with banners and latency) or
   *listening on the server* over SSH (`ss`, `netstat` or `/proc/net/tcp`), which also shows
@@ -14,6 +26,8 @@
   the encrypted vault and travel with the export.
 
 ### Fixes
+- Proxmox: after start/stop the list refreshes 2 s and 6 s later; locking the vault while a
+  request is running no longer brings the login ticket back.
 - Persistent sessions: every tab to the same host gets its own tmux session; server facts
   are collected again; hosts without tmux/screen or with a non-POSIX login shell (fish,
   Windows) fall back to a plain shell instead of closing; leaving tmux is no longer reported

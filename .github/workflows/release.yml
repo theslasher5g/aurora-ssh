@@ -204,7 +204,7 @@ jobs:
           body: |
             **Aurora ${{ env.VERSION }}** – Windows, Linux and macOS
 
-            **New in 0.6.1:** Proxmox VE page with all VMs and containers · logs docked next to the terminal with own log commands · session recording (asciinema) · persistent tmux sessions · open files at the terminal's folder · files over RDP (drop to copy, save from host) · PowerShell snippets for RDP hosts. Full list: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/v${{ env.VERSION }}/CHANGELOG.md)
+            **New in 0.6.2:** Proxmox snapshots and backups, noVNC/SPICE consoles, "save as host" with the right IP · port scan per host with one-click tunnels · key groups with search · fixes for persistent sessions, recordings and RDP file transfer. Full list: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/v${{ env.VERSION }}/CHANGELOG.md)
 
             | System | File | Install |
             |---|---|---|
