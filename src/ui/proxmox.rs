@@ -12,12 +12,17 @@ use uuid::Uuid;
 use crate::app::{Action, App, Purpose};
 use crate::backend::Sink;
 use crate::backend::proxmox::{
-    self as pve, Auth, Conn, Console, Error, Guest, Ips, Kind, Power, PveEvent, Session, Snapshot,
+    self as pve, Auth, Conn, Console, Epoch, Error, Guest, GuestId, GuestPayload, Ips, Kind, Op,
+    Power, PveEvent, Session, Snapshot,
 };
 use crate::model::{Group, Host, Protocol, PveServer};
 use crate::theme;
 use crate::ui::fuzzy;
 use crate::ui::icons::{self, Icon};
+
+#[path = "proxmox_guest.rs"]
+mod guest;
+pub use guest::{GuestPanel, TaskView};
 
 const ROW_H: f32 = 66.0;
 /// Refresh period while the page is visible.
@@ -36,6 +41,8 @@ pub struct Live {
     /// Guests with a power action in flight.
     pub busy: HashSet<u32>,
     pub last: Option<Instant>,
+    /// Follow-up refreshes (after a power action), earliest first.
+    pub refresh_at: Vec<Instant>,
 }
 
 pub struct Editor {
@@ -69,6 +76,32 @@ pub struct PveState {
     pub show_templates: bool,
     pub editor: Option<Editor>,
     pub trust: Option<Trust>,
+    /// Snapshots / backups sheet of one guest.
+    pub panel: Option<GuestPanel>,
+    /// Proxmox tasks started from Aurora (snapshot, backup, restore).
+    pub tasks: Vec<TaskView>,
+    next_task: u64,
+    /// "Als Host speichern" without a known address: ask for it.
+    pub ip_prompt: Option<IpPrompt>,
+    /// Guests whose address is being looked up, and what for.
+    resolving: HashMap<(Uuid, u32), (GuestRef, AddressFor)>,
+    /// Generation counter: see [`PveState::epoch`].
+    counter: Epoch,
+    base: Epoch,
+    gens: HashMap<Uuid, Epoch>,
+}
+
+/// Asks for the address of a guest that reported none.
+pub struct IpPrompt {
+    pub guest: GuestRef,
+    pub text: String,
+    pub invalid: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum AddressFor {
+    SaveHost,
+    Console,
 }
 
 impl PveState {
@@ -83,14 +116,65 @@ impl PveState {
             show_templates: false,
             editor: None,
             trust: None,
+            panel: None,
+            tasks: Vec::new(),
+            next_task: 1,
+            ip_prompt: None,
+            resolving: HashMap::new(),
+            counter: 0,
+            base: 0,
+            gens: HashMap::new(),
         }
     }
 
-    /// Vault locked: forget tickets and anything showing secrets.
+    /// Vault locked: forget tickets and anything showing secrets. Jobs still running
+    /// were started under the old epoch; their results are dropped.
     pub fn lock(&mut self) {
         self.live.clear();
         self.editor = None;
         self.trust = None;
+        self.panel = None;
+        self.ip_prompt = None;
+        self.resolving.clear();
+        for t in &self.tasks {
+            t.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.tasks.clear();
+        self.counter += 1;
+        self.base = self.counter;
+        self.gens.clear();
+    }
+
+    /// Current generation of a server's live state; jobs carry it and their results
+    /// only count while it is unchanged.
+    pub fn epoch(&self, server: Uuid) -> Epoch {
+        self.gens.get(&server).copied().unwrap_or(self.base)
+    }
+
+    /// The server was edited or deleted: invalidate its running jobs and data.
+    fn reset_server(&mut self, server: Uuid) {
+        self.counter += 1;
+        self.gens.insert(server, self.counter);
+        self.live.remove(&server);
+        self.resolving.retain(|(s, _), _| *s != server);
+        for t in self.tasks.iter().filter(|t| t.server == server) {
+            t.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.tasks.retain(|t| t.server != server);
+        if self
+            .panel
+            .as_ref()
+            .is_some_and(|p| p.guest.server == server)
+        {
+            self.panel = None;
+        }
+        if self
+            .ip_prompt
+            .as_ref()
+            .is_some_and(|p| p.guest.server == server)
+        {
+            self.ip_prompt = None;
+        }
     }
 }
 
@@ -118,6 +202,22 @@ impl GuestRef {
     fn label(&self) -> String {
         format!("{} {} {}", kind_tag(self.kind), self.vmid, self.name)
     }
+
+    fn id(&self) -> GuestId {
+        GuestId {
+            node: self.node.clone(),
+            kind: self.kind,
+            vmid: self.vmid,
+        }
+    }
+
+    fn display(&self) -> String {
+        if self.name.is_empty() {
+            format!("{} {}", kind_tag(self.kind), self.vmid)
+        } else {
+            self.name.clone()
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -129,6 +229,14 @@ pub enum PveAction {
     Power(GuestRef, Power),
     Console(GuestRef),
     SaveAsHost(GuestRef),
+    /// Snapshots (tab 0) or backups (tab 1) of a guest.
+    OpenGuest(GuestRef, usize),
+    /// Snapshot, rollback, backup, restore: runs as a tracked Proxmox task.
+    Task(GuestRef, Op),
+    /// Proxmox' noVNC console in the system browser.
+    BrowserConsole(GuestRef),
+    /// SPICE console in virt-viewer.
+    Spice(GuestRef),
 }
 
 impl PveAction {
@@ -138,6 +246,12 @@ impl PveAction {
             PveAction::Power(_, Power::Stop) => Some((t!("Hart stoppen?"), t!("Stoppen"))),
             PveAction::Power(_, Power::Shutdown) => {
                 Some((t!("Herunterfahren?"), t!("Herunterfahren")))
+            }
+            PveAction::Task(_, Op::Rollback(_)) => {
+                Some((t!("Snapshot zurücksetzen?"), t!("Zurücksetzen")))
+            }
+            PveAction::Task(_, Op::DeleteSnapshot(_)) => {
+                Some((t!("Snapshot löschen?"), t!("Löschen")))
             }
             _ => None,
         }
@@ -223,7 +337,8 @@ fn refresh(app: &mut App, id: Uuid) {
                 .collect()
         })
         .unwrap_or_default();
-    pve::spawn_fetch(&app.rt, id, c, ips_for, app.pve.sink.clone());
+    let epoch = app.pve.epoch(id);
+    pve::spawn_fetch(&app.rt, id, epoch, c, ips_for, app.pve.sink.clone());
 }
 
 fn refresh_all(app: &mut App) {
@@ -233,15 +348,25 @@ fn refresh_all(app: &mut App) {
     }
 }
 
+/// Whether a job result still belongs to the current state of an existing server.
+fn current(app: &App, server: Uuid, epoch: Epoch) -> bool {
+    app.pve.epoch(server) == epoch && app.lib.pve_servers.iter().any(|s| s.id == server)
+}
+
 /// Applies backend results; called every frame.
 pub fn pump(app: &mut App) {
     while let Ok(ev) = app.pve.rx.try_recv() {
         match ev {
             PveEvent::Fetched {
                 server,
+                epoch,
                 result,
                 session,
             } => {
+                // Locked, edited or deleted meanwhile: the result (and its ticket) is stale.
+                if !current(app, server, epoch) {
+                    continue;
+                }
                 let first_ips = {
                     let live = app.pve.live.entry(server).or_default();
                     live.loading = false;
@@ -291,11 +416,15 @@ pub fn pump(app: &mut App) {
             }
             PveEvent::PowerDone {
                 server,
+                epoch,
                 vmid,
                 power,
                 result,
                 session,
             } => {
+                if !current(app, server, epoch) {
+                    continue;
+                }
                 if let Some(live) = app.pve.live.get_mut(&server) {
                     live.busy.remove(&vmid);
                     live.session = session;
@@ -311,11 +440,9 @@ pub fn pump(app: &mut App) {
                             Power::Resume => t!("Fortsetzen"),
                         };
                         app.toast(t!("{}: {} ausgelöst", vmid, what), theme::green());
-                        // Show the new state soon (the task runs asynchronously).
-                        if let Some(live) = app.pve.live.get_mut(&server) {
-                            live.last = Some(Instant::now() - POLL + Duration::from_secs(2));
-                        }
-                        refresh(app, server);
+                        // The task runs asynchronously: show the new state in 2 s, and
+                        // once more in 6 s for slower guests.
+                        schedule_refresh(app, server, &[2, 6]);
                     }
                     Err(e) => app.toast(t!("{}: {}", vmid, e), theme::red()),
                 }
@@ -338,7 +465,58 @@ pub fn pump(app: &mut App) {
                     Err(e) => ed.result = Some(Err(e.to_string())),
                 }
             }
+            PveEvent::Guest {
+                server,
+                epoch,
+                vmid,
+                session,
+                payload,
+            } => {
+                if !current(app, server, epoch) {
+                    continue;
+                }
+                if let Some(live) = app.pve.live.get_mut(&server) {
+                    live.session = session;
+                }
+                match payload {
+                    GuestPayload::Address(result) => address_found(app, server, vmid, result),
+                    GuestPayload::Spice(result) => spice_ready(app, result),
+                    other => guest::on_payload(app, server, vmid, other),
+                }
+            }
         }
+    }
+    // Follow-up refreshes that are due.
+    let now = Instant::now();
+    let due: Vec<Uuid> = app
+        .pve
+        .live
+        .iter_mut()
+        .filter(|(_, l)| !l.loading && l.refresh_at.first().is_some_and(|t| *t <= now))
+        .map(|(id, l)| {
+            l.refresh_at.retain(|t| *t > now);
+            l.last = None;
+            *id
+        })
+        .collect();
+    for id in due {
+        refresh(app, id);
+    }
+}
+
+/// Refreshes `server` after each of `secs` seconds.
+fn schedule_refresh(app: &mut App, server: Uuid, secs: &[u64]) {
+    let Some(live) = app.pve.live.get_mut(&server) else {
+        return;
+    };
+    let now = Instant::now();
+    for s in secs {
+        live.refresh_at.push(now + Duration::from_secs(*s));
+    }
+    live.refresh_at.sort();
+    let ctx = app.pve.sink.ctx();
+    for s in secs {
+        ctx.request_repaint_after(Duration::from_secs(*s) + Duration::from_millis(50));
     }
 }
 
@@ -347,6 +525,10 @@ fn first_ip(app: &App, server: Uuid, vmid: u32) -> Option<String> {
         Some((Ips::Found(v), _)) => v.first().cloned(),
         _ => None,
     }
+}
+
+fn server_of(app: &App, id: Uuid) -> Option<PveServer> {
+    app.lib.pve_servers.iter().find(|s| s.id == id).cloned()
 }
 
 pub fn apply(app: &mut App, action: PveAction, ctx: &egui::Context) {
@@ -381,7 +563,7 @@ pub fn apply(app: &mut App, action: PveAction, ctx: &egui::Context) {
         }
         PveAction::DeleteServer(id) => {
             app.lib.pve_servers.retain(|s| s.id != id);
-            app.pve.live.remove(&id);
+            app.pve.reset_server(id);
             if app.keychain.pve_secrets.remove(&id).is_some() {
                 app.save_keychain();
             }
@@ -394,13 +576,7 @@ pub fn apply(app: &mut App, action: PveAction, ctx: &egui::Context) {
             refresh_all(app);
         }
         PveAction::Power(g, power) => {
-            let Some(s) = app
-                .lib
-                .pve_servers
-                .iter()
-                .find(|s| s.id == g.server)
-                .cloned()
-            else {
+            let Some(s) = server_of(app, g.server) else {
                 return;
             };
             let c = conn(app, &s);
@@ -408,36 +584,126 @@ pub fn apply(app: &mut App, action: PveAction, ctx: &egui::Context) {
             pve::spawn_power(
                 &app.rt,
                 s.id,
+                app.pve.epoch(s.id),
                 c,
                 (g.node.clone(), g.kind, g.vmid),
                 power,
                 app.pve.sink.clone(),
             );
         }
-        PveAction::Console(g) => console(app, &g, ctx),
-        PveAction::SaveAsHost(g) => save_as_host(app, &g),
+        PveAction::Console(g) => match g.kind {
+            // Containers open on the node; no address needed.
+            Kind::Lxc => console(app, &g, None, ctx),
+            Kind::Qemu => lookup_address(app, &g, AddressFor::Console),
+        },
+        PveAction::SaveAsHost(g) => lookup_address(app, &g, AddressFor::SaveHost),
+        PveAction::OpenGuest(g, tab) => guest::open(app, g, tab),
+        PveAction::Task(g, op) => guest::start_task(app, &g, op),
+        PveAction::BrowserConsole(g) => {
+            let Some(s) = server_of(app, g.server) else {
+                return;
+            };
+            let url = pve::novnc_url(&s.host, s.port, &g.id(), &g.name);
+            crate::update::open_url(&url);
+            app.toast(
+                t!("Konsole von „{}“ im Browser geöffnet", g.display()),
+                theme::green(),
+            );
+        }
+        PveAction::Spice(g) => {
+            if pve::find_remote_viewer().is_none() {
+                app.toast(
+                    t!("remote-viewer nicht gefunden – installiere virt-viewer für SPICE-Konsolen"),
+                    theme::amber(),
+                );
+                return;
+            }
+            let Some(s) = server_of(app, g.server) else {
+                return;
+            };
+            let c = conn(app, &s);
+            pve::spawn_spice(
+                &app.rt,
+                s.id,
+                app.pve.epoch(s.id),
+                c,
+                g.id(),
+                app.pve.sink.clone(),
+            );
+            app.toast(t!("SPICE-Konsole wird geöffnet…"), theme::accent());
+        }
     }
 }
 
-fn console(app: &mut App, g: &GuestRef, ctx: &egui::Context) {
-    let Some(s) = app
-        .lib
-        .pve_servers
-        .iter()
-        .find(|s| s.id == g.server)
-        .cloned()
-    else {
+/// Asks the server for the guest's addresses now; continues in [`address_found`].
+fn lookup_address(app: &mut App, g: &GuestRef, what: AddressFor) {
+    let Some(s) = server_of(app, g.server) else {
         return;
     };
-    let ip = first_ip(app, g.server, g.vmid);
+    let key = (g.server, g.vmid);
+    if app.pve.resolving.contains_key(&key) {
+        return;
+    }
+    app.pve.resolving.insert(key, (g.clone(), what));
+    let c = conn(app, &s);
+    pve::spawn_address(
+        &app.rt,
+        s.id,
+        app.pve.epoch(s.id),
+        c,
+        g.id(),
+        app.pve.sink.clone(),
+    );
+}
+
+fn address_found(
+    app: &mut App,
+    server: Uuid,
+    vmid: u32,
+    result: Result<Option<std::net::IpAddr>, Error>,
+) {
+    let Some((g, what)) = app.pve.resolving.remove(&(server, vmid)) else {
+        return;
+    };
+    let ip = match result {
+        Ok(ip) => ip,
+        Err(e @ (Error::Untrusted(_) | Error::PinChanged { .. } | Error::Auth(_))) => {
+            app.toast(t!("{}: {}", g.label(), e), theme::red());
+            return;
+        }
+        // Anything else (no agent, stopped guest, no permission for the config):
+        // treat as "no address known".
+        Err(e) => {
+            log::info!("Proxmox: Adresse von {} unbekannt: {e}", g.vmid);
+            None
+        }
+    };
+    match what {
+        AddressFor::Console => {
+            let ctx = app.pve.sink.ctx();
+            console(app, &g, ip.map(|i| i.to_string()), &ctx);
+        }
+        AddressFor::SaveHost => match ip {
+            Some(ip) => save_as_host(app, &g, ip.to_string()),
+            None => {
+                app.pve.ip_prompt = Some(IpPrompt {
+                    guest: g,
+                    text: String::new(),
+                    invalid: false,
+                });
+            }
+        },
+    }
+}
+
+fn console(app: &mut App, g: &GuestRef, ip: Option<String>, ctx: &egui::Context) {
+    let Some(s) = server_of(app, g.server) else {
+        return;
+    };
     match pve::console_command(g.kind, g.vmid, &g.node, ip.as_deref()) {
         Some(Console::Ssh(ip)) => {
             let host = Host {
-                label: if g.name.is_empty() {
-                    format!("VM {}", g.vmid)
-                } else {
-                    g.name.clone()
-                },
+                label: g.display(),
                 hostname: ip,
                 ..Default::default()
             };
@@ -459,7 +725,19 @@ fn console(app: &mut App, g: &GuestRef, ctx: &egui::Context) {
     }
 }
 
-fn save_as_host(app: &mut App, g: &GuestRef) {
+/// A host name or address typed by the user: IP addresses, or DNS-style names.
+fn valid_address(s: &str) -> bool {
+    let s = s.trim();
+    s.parse::<std::net::IpAddr>().is_ok()
+        || (!s.is_empty()
+            && s.len() <= 253
+            && !s.starts_with(['-', '.'])
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.'))
+}
+
+/// Saves (or updates) the guest as a host in the server's "Proxmox …" group.
+fn save_as_host(app: &mut App, g: &GuestRef, hostname: String) {
     let Some(s) = app.lib.pve_servers.iter().find(|s| s.id == g.server) else {
         return;
     };
@@ -478,20 +756,7 @@ fn save_as_host(app: &mut App, g: &GuestRef) {
             id
         }
     };
-    let ip = first_ip(app, g.server, g.vmid);
-    let hostname = ip.clone().unwrap_or_else(|| g.name.clone());
-    if app
-        .lib
-        .hosts
-        .iter()
-        .any(|h| h.group_id == Some(gid) && h.hostname == hostname)
-    {
-        app.toast(
-            t!("„{}“ ist schon in „{}“", g.name, group_name),
-            theme::amber(),
-        );
-        return;
-    }
+    let label = g.display();
     let tags = app
         .pve
         .live
@@ -500,32 +765,125 @@ fn save_as_host(app: &mut App, g: &GuestRef) {
         .and_then(|s| s.guests.iter().find(|x| x.vmid == g.vmid))
         .map(|x| x.tags.clone())
         .unwrap_or_default();
-    app.lib.hosts.push(Host {
-        label: if g.name.is_empty() {
-            format!("{} {}", kind_tag(g.kind), g.vmid)
-        } else {
-            g.name.clone()
-        },
-        hostname,
-        group_id: Some(gid),
-        tags,
-        notes: format!("Proxmox {} {} · {}", kind_tag(g.kind), g.vmid, g.node),
-        ..Default::default()
+    let notes = format!("Proxmox {} {} · {}", kind_tag(g.kind), g.vmid, g.node);
+    // Already saved from this server (same VMID note, address or name): update it.
+    let existing = app.lib.hosts.iter_mut().find(|h| {
+        h.group_id == Some(gid)
+            && (h
+                .notes
+                .starts_with(&format!("Proxmox {} {} ", kind_tag(g.kind), g.vmid))
+                || h.hostname == hostname
+                || h.label == label)
     });
-    app.save_library();
-    if ip.is_some() {
+    if let Some(h) = existing {
+        let changed = h.hostname != hostname;
+        h.hostname = hostname.clone();
+        for t in tags {
+            if !h.tags.contains(&t) {
+                h.tags.push(t);
+            }
+        }
+        if h.notes.is_empty() || h.notes.starts_with("Proxmox ") {
+            h.notes = notes;
+        }
+        app.save_library();
         app.toast(
-            t!("„{}“ unter „{}“ gespeichert", g.name, group_name),
-            theme::green(),
+            if changed {
+                t!("„{}“ aktualisiert: {}", label, hostname)
+            } else {
+                t!("„{}“ ist schon in „{}“", label, group_name)
+            },
+            if changed {
+                theme::green()
+            } else {
+                theme::amber()
+            },
         );
-    } else {
+        return;
+    }
+    if let Some(other) = app.lib.hosts.iter().find(|h| h.hostname == hostname) {
         app.toast(
             t!(
-                "„{}“ gespeichert – ohne bekannte IP, Adresse bitte prüfen",
-                g.name
+                "{} ist schon als „{}“ gespeichert",
+                hostname,
+                other.display_name()
             ),
             theme::amber(),
         );
+        return;
+    }
+    app.lib.hosts.push(Host {
+        label: label.clone(),
+        hostname: hostname.clone(),
+        group_id: Some(gid),
+        tags,
+        notes,
+        ..Default::default()
+    });
+    app.save_library();
+    app.toast(
+        t!(
+            "„{}“ ({}) unter „{}“ gespeichert",
+            label,
+            hostname,
+            group_name
+        ),
+        theme::green(),
+    );
+}
+
+/// Writes the `.vv` file into a private temp dir and starts remote-viewer on it.
+fn spice_ready(app: &mut App, result: Result<Vec<(String, String)>, Error>) {
+    let settings = match result {
+        Ok(s) => s,
+        Err(e) => {
+            app.toast(t!("SPICE: {}", e), theme::red());
+            return;
+        }
+    };
+    let Some(viewer) = pve::find_remote_viewer() else {
+        app.toast(
+            t!("remote-viewer nicht gefunden – installiere virt-viewer für SPICE-Konsolen"),
+            theme::amber(),
+        );
+        return;
+    };
+    let dir = match crate::store::private_temp_dir("aurora-spice") {
+        Ok(d) => d,
+        Err(e) => {
+            app.toast(t!("SPICE: {}", e), theme::red());
+            return;
+        }
+    };
+    let launched = (|| -> anyhow::Result<()> {
+        let path = dir.join("console.vv");
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        {
+            use std::io::Write;
+            let mut f = opts.open(&path)?;
+            f.write_all(pve::vv_file(&settings).as_bytes())?;
+        }
+        std::process::Command::new(&viewer).arg(&path).spawn()?;
+        Ok(())
+    })();
+    match launched {
+        Ok(()) => {
+            // The ticket in it is short-lived; remove the file once the viewer has it.
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(60));
+                let _ = std::fs::remove_dir_all(dir);
+            });
+        }
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&dir);
+            app.toast(t!("SPICE: {}", e), theme::red());
+        }
     }
 }
 
@@ -929,7 +1287,13 @@ fn server_section(
             for (i, g) in guests.iter().enumerate() {
                 let ips = live.and_then(|l| l.ips.get(&g.vmid)).map(|(i, _)| i);
                 let busy = live.is_some_and(|l| l.busy.contains(&g.vmid));
-                guest_row(ui, s, g, ips, busy, i > 0, actions);
+                let task = app
+                    .pve
+                    .tasks
+                    .iter()
+                    .find(|t| t.server == s.id && t.vmid == g.vmid && t.done.is_none())
+                    .map(|t| t.what.clone());
+                guest_row(ui, s, g, ips, busy, task, i > 0, actions);
             }
         });
     }
@@ -998,12 +1362,14 @@ fn paint_tag(p: &egui::Painter, x: f32, cy: f32, text: &str, color: Option<Color
     w
 }
 
+#[allow(clippy::too_many_arguments)]
 fn guest_row(
     ui: &mut egui::Ui,
     s: &PveServer,
     g: &Guest,
     ips: Option<&Ips>,
     busy: bool,
+    task: Option<String>,
     divider: bool,
     actions: &mut Vec<Action>,
 ) {
@@ -1033,7 +1399,7 @@ fn guest_row(
     let (y1, y2) = (rect.top() + 24.0, rect.top() + 44.0);
     let led = Pos2::new(rect.left() + 22.0, cy);
     match g.status.as_str() {
-        _ if busy => theme::led(&p, led, theme::amber(), true),
+        _ if busy || task.is_some() => theme::led(&p, led, theme::amber(), true),
         "running" => theme::led(&p, led, theme::green(), true),
         "paused" | "suspended" => theme::led(&p, led, theme::amber(), true),
         "stopped" => theme::led(&p, led, theme::off_color(), false),
@@ -1044,10 +1410,10 @@ fn guest_row(
         ui.id().with(("pve-led", s.id, g.vmid)),
         Sense::hover(),
     )
-    .on_hover_text(if busy {
-        t!("Aktion läuft…").to_string()
-    } else {
-        g.status.clone()
+    .on_hover_text(match (&task, busy) {
+        (Some(what), _) => t!("{} läuft…", what),
+        (None, true) => t!("Aktion läuft…").to_string(),
+        (None, false) => g.status.clone(),
     });
 
     // --- line 1: name, vmid, type, tags
@@ -1184,7 +1550,7 @@ fn guest_row(
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(Rect::from_min_max(
-                    Pos2::new(rect.right() - 620.0, rect.top()),
+                    Pos2::new(rect.right() - 700.0, rect.top()),
                     rect.right_bottom() - Vec2::new(10.0, 0.0),
                 ))
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
@@ -1208,6 +1574,12 @@ fn guest_row(
             if theme::btn(ui, theme::Btn::Small, None, t!("Als Host speichern")).clicked() {
                 actions.push(Action::Pve(PveAction::SaveAsHost(r.clone())));
             }
+            if theme::icon_btn(ui, Icon::Copy, t!("Snapshots und Backups")).clicked() {
+                actions.push(Action::Pve(PveAction::OpenGuest(r.clone(), 0)));
+            }
+            if theme::icon_btn(ui, Icon::External, t!("Konsole im Browser (noVNC)")).clicked() {
+                actions.push(Action::Pve(PveAction::BrowserConsole(r.clone())));
+            }
             for (power, label) in power_buttons(g) {
                 if theme::btn(ui, theme::Btn::Small, None, label).clicked() {
                     actions.push(power_action(&r, power));
@@ -1227,8 +1599,33 @@ fn guest_row(
             actions.push(Action::Pve(PveAction::Console(r.clone())));
             ui.close();
         }
+        if ui.button(t!("Konsole im Browser (noVNC)")).clicked() {
+            actions.push(Action::Pve(PveAction::BrowserConsole(r.clone())));
+            ui.close();
+        }
+        if g.kind == Kind::Qemu
+            && ui
+                .add_enabled(
+                    g.running(),
+                    egui::Button::new(t!("SPICE-Konsole (virt-viewer)")),
+                )
+                .on_disabled_hover_text(t!("Die VM läuft nicht"))
+                .clicked()
+        {
+            actions.push(Action::Pve(PveAction::Spice(r.clone())));
+            ui.close();
+        }
         if ui.button(t!("Als Host speichern")).clicked() {
             actions.push(Action::Pve(PveAction::SaveAsHost(r.clone())));
+            ui.close();
+        }
+        ui.separator();
+        if ui.button(t!("Snapshots…")).clicked() {
+            actions.push(Action::Pve(PveAction::OpenGuest(r.clone(), 0)));
+            ui.close();
+        }
+        if ui.button(t!("Backups…")).clicked() {
+            actions.push(Action::Pve(PveAction::OpenGuest(r.clone(), 1)));
             ui.close();
         }
         ui.separator();
@@ -1279,7 +1676,87 @@ fn power_action(r: &GuestRef, power: Power) -> Action {
 
 pub fn windows(app: &mut App, ctx: &egui::Context) {
     editor(app, ctx);
+    guest::panel(app, ctx);
+    ip_prompt(app, ctx);
     trust(app, ctx);
+}
+
+/// "Als Host speichern" for a guest without a known address.
+fn ip_prompt(app: &mut App, ctx: &egui::Context) {
+    let Some(p) = app.pve.ip_prompt.as_mut() else {
+        return;
+    };
+    let mut answer = None;
+    egui::Modal::new(egui::Id::new("pve-ip-prompt"))
+        .frame(theme::dialog_frame())
+        .backdrop_color(theme::backdrop())
+        .show(ctx, |ui| {
+            ui.set_width(420.0);
+            ui.label(theme::heading(t!("Adresse eingeben"), 20.0));
+            ui.add(
+                egui::Label::new(
+                    RichText::new(t!(
+                        "Proxmox kennt keine Adresse von „{}“ (kein Gast-Agent, keine statische IP). Unter welcher IP oder welchem Namen ist der Gast erreichbar?",
+                        p.guest.display()
+                    ))
+                    .color(theme::text_dim()),
+                )
+                .wrap(),
+            );
+            ui.add_space(6.0);
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut p.text)
+                    .hint_text(RichText::new("192.168.1.20").color(theme::text_dim()))
+                    .desired_width(f32::INFINITY),
+            );
+            r.request_focus();
+            if r.changed() {
+                p.invalid = false;
+            }
+            if p.invalid {
+                ui.label(
+                    RichText::new(t!("Keine gültige IP-Adresse oder kein gültiger Name"))
+                        .size(12.5)
+                        .color(theme::red()),
+                );
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    let ok = !p.text.trim().is_empty();
+                    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if ui
+                        .add_enabled_ui(ok, |ui| {
+                            theme::btn(ui, theme::Btn::Primary, None, t!("Speichern"))
+                        })
+                        .inner
+                        .clicked()
+                        || (ok && enter)
+                    {
+                        answer = Some(true);
+                    }
+                    if theme::btn(ui, theme::Btn::Normal, None, t!("Abbrechen")).clicked() {
+                        answer = Some(false);
+                    }
+                });
+            });
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                answer = Some(false);
+            }
+        });
+    match answer {
+        Some(true) => {
+            if valid_address(&p.text) {
+                let p = app.pve.ip_prompt.take().expect("prompt");
+                save_as_host(app, &p.guest, p.text.trim().to_string());
+            } else {
+                p.invalid = true;
+            }
+        }
+        Some(false) => app.pve.ip_prompt = None,
+        None => {}
+    }
 }
 
 fn editor(app: &mut App, ctx: &egui::Context) {
@@ -1481,7 +1958,7 @@ fn editor(app: &mut App, ctx: &egui::Context) {
                     || s.user != server.user
                     || s.tls_pin != server.tls_pin
                 {
-                    app.pve.live.remove(&id);
+                    app.pve.reset_server(id);
                 }
                 *s = server;
             }
@@ -1489,7 +1966,7 @@ fn editor(app: &mut App, ctx: &egui::Context) {
         }
         if app.keychain.pve_secrets.get(&id) != Some(&ed.secret) {
             app.keychain.pve_secrets.insert(id, ed.secret);
-            app.pve.live.remove(&id);
+            app.pve.reset_server(id);
             app.save_keychain();
         }
         app.save_library();
