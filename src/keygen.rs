@@ -34,8 +34,59 @@ pub fn public_info(private: &str, passphrase: &str) -> Result<(String, String)> 
     ))
 }
 
+/// What the keys page shows and searches for a private key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KeyMeta {
+    /// "Ed25519", "RSA 4096", "ECDSA P-256", …
+    pub kind: String,
+    pub comment: String,
+    /// `SHA256:…`
+    pub fingerprint: String,
+}
+
+/// Type, comment and fingerprint without the passphrase: the OpenSSH format keeps the
+/// public half in clear text (the comment of an encrypted key stays hidden). `None` for
+/// text that is no key, or a legacy PEM key with a passphrase.
+pub fn key_meta(private: &str) -> Option<KeyMeta> {
+    let key = match PrivateKey::from_openssh(private.trim()) {
+        Ok(k) => k,
+        Err(_) => decode_secret_key(private, None).ok()?,
+    };
+    let public = key.public_key();
+    let algo = public.algorithm();
+    let kind = match public.key_data().rsa() {
+        Some(rsa) => format!("RSA {}", rsa.key_size()),
+        None => match algo.as_str() {
+            "ssh-ed25519" => "Ed25519".to_string(),
+            "ecdsa-sha2-nistp256" => "ECDSA P-256".to_string(),
+            "ecdsa-sha2-nistp384" => "ECDSA P-384".to_string(),
+            "ecdsa-sha2-nistp521" => "ECDSA P-521".to_string(),
+            "ssh-dss" => "DSA".to_string(),
+            other => other.to_string(),
+        },
+    };
+    Some(KeyMeta {
+        kind,
+        comment: key.comment().as_str_lossy().to_string(),
+        fingerprint: public.fingerprint(HashAlg::Sha256).to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn meta_without_passphrase() {
+        let (private, _) = super::generate_ed25519("ops@aurora").unwrap();
+        let meta = super::key_meta(&private).unwrap();
+        assert_eq!(meta.kind, "Ed25519");
+        assert_eq!(meta.comment, "ops@aurora");
+        assert_eq!(
+            meta.fingerprint,
+            super::public_info(&private, "").unwrap().1
+        );
+        assert!(super::key_meta("not a key").is_none());
+    }
+
     #[test]
     fn generated_key_roundtrips() {
         let (private, public) = super::generate_ed25519("test@aurora").unwrap();

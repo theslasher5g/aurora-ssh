@@ -8,7 +8,7 @@ use crate::model::{FlowControl, Group, LineEnding, Parity, Protocol};
 use crate::theme;
 
 /// Save / Cancel in a sheet footer; returns (save, cancel).
-fn save_cancel(ui: &mut egui::Ui, can_save: bool) -> (bool, bool) {
+pub(crate) fn save_cancel(ui: &mut egui::Ui, can_save: bool) -> (bool, bool) {
     let mut out = (false, false);
     ui.add_enabled_ui(can_save, |ui| {
         if theme::btn(ui, theme::Btn::Primary, None, t!("Speichern")).clicked() {
@@ -30,7 +30,7 @@ fn hint(ui: &mut egui::Ui, text: &str) {
 }
 
 /// Full-width text field inside a form row.
-fn field_text(ui: &mut egui::Ui, text: &mut String, hint: &str) -> egui::Response {
+pub(crate) fn field_text(ui: &mut egui::Ui, text: &mut String, hint: &str) -> egui::Response {
     ui.add(
         egui::TextEdit::singleline(text)
             .hint_text(RichText::new(hint).color(theme::text_dim()))
@@ -38,7 +38,7 @@ fn field_text(ui: &mut egui::Ui, text: &mut String, hint: &str) -> egui::Respons
     )
 }
 
-fn color_row(ui: &mut egui::Ui, color: &mut Option<[u8; 3]>, allow_none: bool) {
+pub(crate) fn color_row(ui: &mut egui::Ui, color: &mut Option<[u8; 3]>, allow_none: bool) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
         if allow_none {
@@ -81,19 +81,42 @@ fn identity_combo(
     ui: &mut egui::Ui,
     id: &str,
     value: &mut Option<Uuid>,
-    app_idents: &[(Uuid, String)],
+    app_idents: &[(Uuid, String, String)],
     none_label: &str,
 ) {
+    // (id, name, key group) in keys-page order; shown as "Gruppe / Name".
     let selected = value
-        .and_then(|v| app_idents.iter().find(|(i, _)| *i == v))
-        .map(|(_, l)| l.clone())
+        .and_then(|v| app_idents.iter().find(|(i, _, _)| *i == v))
+        .map(|(_, l, g)| {
+            if g.is_empty() {
+                l.clone()
+            } else {
+                format!("{g} / {l}")
+            }
+        })
         .unwrap_or_else(|| none_label.to_string());
+    let grouped = app_idents.iter().any(|(_, _, g)| !g.is_empty());
     egui::ComboBox::from_id_salt(id)
         .selected_text(selected)
         .width((ui.available_width() - 46.0).max(160.0))
         .show_ui(ui, |ui| {
             ui.selectable_value(value, None, none_label);
-            for (i, l) in app_idents {
+            let mut current: Option<&str> = None;
+            for (i, l, g) in app_idents {
+                if grouped && current != Some(g.as_str()) {
+                    current = Some(g.as_str());
+                    ui.add_space(4.0);
+                    let heading = if g.is_empty() {
+                        t!("Ohne Gruppe").to_string()
+                    } else {
+                        g.clone()
+                    };
+                    ui.label(
+                        RichText::new(heading.to_uppercase())
+                            .font(theme::semibold(11.0))
+                            .color(theme::text_dim()),
+                    );
+                }
                 ui.selectable_value(value, Some(*i), l);
             }
         });
@@ -125,6 +148,39 @@ fn group_combo(
         });
 }
 
+/// Group of a key on the keys page; a dangling id shows as "Ohne Gruppe".
+fn key_group_combo(ui: &mut egui::Ui, value: &mut Option<Uuid>, groups: &[crate::model::KeyGroup]) {
+    let current = value.and_then(|v| groups.iter().find(|g| g.id == v));
+    let selected = current
+        .map(|g| g.name.clone())
+        .unwrap_or_else(|| t!("Ohne Gruppe").to_string());
+    egui::ComboBox::from_id_salt("key-group")
+        .selected_text(selected)
+        .width((ui.available_width() - 14.0).max(160.0))
+        .show_ui(ui, |ui| {
+            if ui
+                .selectable_label(current.is_none(), t!("Ohne Gruppe"))
+                .clicked()
+            {
+                *value = None;
+            }
+            for g in groups {
+                let r = ui.selectable_label(*value == Some(g.id), format!("     {}", g.name));
+                ui.painter().rect_filled(
+                    egui::Rect::from_min_size(
+                        r.rect.left_center() + Vec2::new(6.0, -4.5),
+                        Vec2::splat(9.0),
+                    ),
+                    egui::CornerRadius::same(2),
+                    theme::rgb(g.color),
+                );
+                if r.clicked() {
+                    *value = Some(g.id);
+                }
+            }
+        });
+}
+
 pub fn show_all(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
     host_editor(app, ctx, actions);
     group_editor(app, ctx);
@@ -133,21 +189,7 @@ pub fn show_all(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
 }
 
 fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
-    let idents: Vec<(Uuid, String)> = app
-        .keychain
-        .identities
-        .iter()
-        .map(|i| {
-            (
-                i.id,
-                if i.label.is_empty() {
-                    i.username.clone()
-                } else {
-                    i.label.clone()
-                },
-            )
-        })
-        .collect();
+    let idents = crate::ui::keychain::choices(&app.keychain, |_| true);
     let groups = app.lib.groups.clone();
     let snippets: Vec<(Uuid, String)> = app
         .lib
@@ -766,12 +808,7 @@ fn env_picker(ui: &mut egui::Ui, env: &mut crate::model::Env, none: &str) {
 }
 
 fn group_editor(app: &mut App, ctx: &egui::Context) {
-    let idents: Vec<(Uuid, String)> = app
-        .keychain
-        .identities
-        .iter()
-        .map(|i| (i.id, i.label.clone()))
-        .collect();
+    let idents = crate::ui::keychain::choices(&app.keychain, |_| true);
     let groups = app.lib.groups.clone();
     let Some((g, is_new)) = app.group_editor.as_mut() else {
         return;
@@ -848,6 +885,7 @@ fn group_editor(app: &mut App, ctx: &egui::Context) {
 }
 
 fn identity_editor(app: &mut App, ctx: &egui::Context) {
+    let key_groups = app.keychain.groups.clone();
     let Some((ident, is_new, key_path)) = app.identity_editor.as_mut() else {
         return;
     };
@@ -878,6 +916,11 @@ fn identity_editor(app: &mut App, ctx: &egui::Context) {
                             .desired_width(f32::INFINITY),
                     );
                 });
+                if !key_groups.is_empty() {
+                    f.field(ui, t!("Gruppe"), |ui| {
+                        key_group_combo(ui, &mut ident.group_id, &key_groups);
+                    });
+                }
             });
             theme::form_caption(ui, "SSH-Key");
             theme::form(ui, 100.0, |ui, f| {
