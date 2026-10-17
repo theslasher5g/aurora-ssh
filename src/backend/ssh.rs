@@ -282,12 +282,23 @@ pub fn friendly_text(raw: &str) -> Option<String> {
     Some(msg.to_string())
 }
 
-/// Starts an interactive shell session (or `command` in a terminal, e.g.
-/// `docker exec -it …`); returns the command sender.
+/// What a terminal channel runs.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ShellStart {
+    /// The user's login shell.
+    Login,
+    /// A command in a terminal (e.g. `docker exec -it …`); its exit code is reported.
+    Exec(String),
+    /// A persistent session (tmux/screen); falls back to the login shell when the command
+    /// fails right away (no tmux/screen, no POSIX `sh`, Windows).
+    Persistent(String),
+}
+
+/// Starts an interactive shell session; returns the command sender.
 pub fn spawn_shell(
     rt: &tokio::runtime::Runtime,
     params: SshParams,
-    command: Option<String>,
+    start: ShellStart,
     cols: u16,
     rows: u16,
     events: Sink<TermEvent>,
@@ -295,17 +306,34 @@ pub fn spawn_shell(
 ) -> mpsc::UnboundedSender<TermCmd> {
     let (tx, rx) = mpsc::unbounded_channel();
     rt.spawn(async move {
-        let result = run_shell(&params, command, cols, rows, rx, &events, prompts).await;
+        let result = run_shell(&params, start, cols, rows, rx, &events, prompts).await;
         events.send(TermEvent::Closed(result.err().map(|e| format!("{e:#}"))));
     });
     tx
 }
 
-async fn run_shell(
-    p: &SshParams,
-    command: Option<String>,
+async fn open_terminal(
+    handle: &SshHandle,
+    cmd: Option<&str>,
     cols: u16,
     rows: u16,
+) -> Result<russh::Channel<russh::client::Msg>> {
+    let channel = handle.channel_open_session().await?;
+    channel
+        .request_pty(false, "xterm-256color", cols as u32, rows as u32, 0, 0, &[])
+        .await?;
+    match cmd {
+        Some(cmd) => channel.exec(false, cmd).await?,
+        None => channel.request_shell(false).await?,
+    }
+    Ok(channel)
+}
+
+async fn run_shell(
+    p: &SshParams,
+    start: ShellStart,
+    mut cols: u16,
+    mut rows: u16,
     mut cmds: mpsc::UnboundedReceiver<TermCmd>,
     events: &Sink<TermEvent>,
     prompts: Sink<HostKeyPrompt>,
@@ -316,16 +344,15 @@ async fn run_shell(
     }));
     let handle = Arc::new(connect(p, prompts).await?);
     events.send(TermEvent::Status(t!("Öffne Shell…").into()));
-    let channel = handle.channel_open_session().await?;
-    channel
-        .request_pty(false, "xterm-256color", cols as u32, rows as u32, 0, 0, &[])
-        .await?;
-    match &command {
-        Some(cmd) => channel.exec(false, cmd.as_str()).await?,
-        None => channel.request_shell(false).await?,
-    }
+    let command = match &start {
+        ShellStart::Login => None,
+        ShellStart::Exec(c) | ShellStart::Persistent(c) => Some(c.as_str()),
+    };
+    let mut channel = open_terminal(&handle, command, cols, rows).await?;
+    let mut persistent = matches!(start, ShellStart::Persistent(_));
+    let opened = std::time::Instant::now();
     events.send(TermEvent::Connected);
-    if command.is_none() {
+    if !matches!(start, ShellStart::Exec(_)) {
         // Facts for the host list run on a separate channel of the same connection.
         let (handle, events) = (handle.clone(), events.clone());
         tokio::spawn(async move {
@@ -335,38 +362,59 @@ async fn run_shell(
         });
     }
 
-    let (mut reader, writer) = channel.split();
     let mut status = None;
-    loop {
-        tokio::select! {
-            cmd = cmds.recv() => match cmd {
-                Some(TermCmd::Input(bytes)) => writer.data_bytes(bytes).await?,
-                Some(TermCmd::Resize { cols, rows }) => {
-                    writer.window_change(cols as u32, rows as u32, 0, 0).await?
-                }
-                Some(TermCmd::Upload { files, dir }) => {
-                    let (handle, events) = (handle.clone(), events.clone());
-                    tokio::spawn(async move {
-                        let r = upload(&handle, files, dir, &events).await;
-                        events.send(TermEvent::UploadDone(r.map_err(|e| format!("{e:#}"))));
-                    });
-                }
-                Some(TermCmd::Close) | None => {
-                    let _ = writer.close().await;
-                    break;
-                }
-            },
-            msg = reader.wait() => match msg {
-                Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
-                    events.send(TermEvent::Output(data.to_vec()));
-                }
-                Some(ChannelMsg::ExitStatus { exit_status }) if exit_status != 0 && command.is_some() => {
-                    status = Some(exit_status);
-                }
-                Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
-                _ => {}
-            },
+    'session: loop {
+        let (mut reader, writer) = channel.split();
+        let mut failed_fast = false;
+        loop {
+            tokio::select! {
+                cmd = cmds.recv() => match cmd {
+                    Some(TermCmd::Input(bytes)) => writer.data_bytes(bytes).await?,
+                    Some(TermCmd::Resize { cols: c, rows: r }) => {
+                        (cols, rows) = (c, r);
+                        writer.window_change(c as u32, r as u32, 0, 0).await?
+                    }
+                    Some(TermCmd::Upload { files, dir }) => {
+                        let (handle, events) = (handle.clone(), events.clone());
+                        tokio::spawn(async move {
+                            let r = upload(&handle, files, dir, &events).await;
+                            events.send(TermEvent::UploadDone(r.map_err(|e| format!("{e:#}"))));
+                        });
+                    }
+                    Some(TermCmd::Close) | None => {
+                        let _ = writer.close().await;
+                        break 'session;
+                    }
+                },
+                msg = reader.wait() => match msg {
+                    Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
+                        events.send(TermEvent::Output(data.to_vec()));
+                    }
+                    Some(ChannelMsg::ExitStatus { exit_status }) if exit_status != 0 => {
+                        if persistent && opened.elapsed() < std::time::Duration::from_secs(3) {
+                            failed_fast = true;
+                        } else if matches!(start, ShellStart::Exec(_)) {
+                            status = Some(exit_status);
+                        }
+                    }
+                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+                    _ => {}
+                },
+            }
         }
+        if !failed_fast {
+            break;
+        }
+        // tmux/screen could not start (or the login shell is not POSIX): plain shell.
+        persistent = false;
+        events.send(TermEvent::Output(
+            format!(
+                "\r\n\x1b[33m{}\x1b[0m\r\n",
+                t!("Dauerhafte Session nicht möglich (kein tmux/screen) – normale Shell")
+            )
+            .into_bytes(),
+        ));
+        channel = open_terminal(&handle, None, cols, rows).await?;
     }
     let _ = handle
         .disconnect(Disconnect::ByApplication, "bye", "en")

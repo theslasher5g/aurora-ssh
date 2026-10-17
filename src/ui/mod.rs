@@ -9,6 +9,7 @@ pub mod keychain;
 pub mod lock;
 pub mod logview;
 pub mod palette;
+pub mod portscan;
 pub mod proxmox;
 pub mod rdp;
 pub mod settings;

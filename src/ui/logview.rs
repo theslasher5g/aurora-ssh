@@ -475,7 +475,8 @@ pub fn side_panel(
                             Vec2::new(ui.available_width(), 40.0),
                             egui::Sense::click(),
                         );
-                        let hovered = resp.hovered();
+                        // Pointer over the row, also while it is over the delete button.
+                        let hovered = ui.rect_contains_pointer(rect);
                         if hovered {
                             ui.painter()
                                 .rect_filled(rect, egui::CornerRadius::same(8), theme::bg_hover());

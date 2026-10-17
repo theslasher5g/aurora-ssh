@@ -361,6 +361,8 @@ pub enum Purpose {
     Container(u64),
     /// List containers/pods for the container browser.
     ListContainers,
+    /// List the listening ports for the port scan dialog.
+    ListPorts,
 }
 
 /// "Container durchsuchen" dialog.
@@ -550,6 +552,8 @@ pub struct App {
     /// Command line for a `Purpose::Container` session instead of the container shell.
     pub pending_exec: std::collections::HashMap<u64, String>,
     pub log_picker: Option<LogPicker>,
+    /// "Ports scannen" dialog.
+    pub port_scan: Option<crate::ui::portscan::PortScan>,
     pub tunnel_sink: Sink<backend::tunnel::TunnelEvent>,
     pub tunnel_rx: UnboundedReceiver<backend::tunnel::TunnelEvent>,
     pub next_id: u64,
@@ -600,6 +604,8 @@ pub struct App {
 #[derive(Clone, Debug)]
 pub enum Action {
     Connect(Uuid),
+    /// Open the port scan dialog for a host.
+    PortScan(Uuid),
     /// Replay a `.cast` recording in a terminal tab.
     PlayRecording(PathBuf),
     OpenSftp(Uuid),
@@ -743,6 +749,7 @@ impl App {
             pending_containers: Default::default(),
             pending_exec: Default::default(),
             log_picker: None,
+            port_scan: None,
             tunnel_sink,
             tunnel_rx,
             next_id: 1,
@@ -955,6 +962,11 @@ impl App {
             self.start_log(tab_id, backend::container::Target::Ssh(params), ctx);
             return;
         }
+        if purpose == Purpose::ListPorts {
+            let params = ssh_params();
+            crate::ui::portscan::start_listening(self, params, ctx);
+            return;
+        }
         if purpose == Purpose::ListContainers {
             let params = ssh_params();
             self.list_containers(backend::container::Target::Ssh(params), ctx);
@@ -1032,9 +1044,23 @@ impl App {
             }
             (Protocol::Ssh, _) => {
                 let spec = ConnectSpec::Ssh(ssh_params());
-                let persist = host
-                    .persistent
-                    .then(|| crate::model::persistent_shell(host.id));
+                // Each open tab to the host gets its own tmux session (lowest free slot).
+                let persist = host.persistent.then(|| {
+                    let used: Vec<String> = self
+                        .tabs
+                        .iter()
+                        .filter_map(|t| match &t.kind {
+                            TabKind::Term(term) if t.host_id == Some(host.id) => {
+                                term.persist.clone()
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    (1..)
+                        .map(|slot| crate::model::persistent_shell(host.id, slot))
+                        .find(|cmd| !used.contains(cmd))
+                        .unwrap_or_default()
+                });
                 let startup = host
                     .startup_snippet
                     .and_then(|s| self.lib.snippet(s))
@@ -1304,7 +1330,10 @@ impl App {
             ConnectSpec::Ssh(p) => backend::ssh::spawn_shell(
                 &self.rt,
                 p.clone(),
-                persist.clone(),
+                match &persist {
+                    Some(cmd) => backend::ssh::ShellStart::Persistent(cmd.clone()),
+                    None => backend::ssh::ShellStart::Login,
+                },
                 80,
                 24,
                 sink,
@@ -1313,7 +1342,7 @@ impl App {
             ConnectSpec::SshExec(p, cmd) => backend::ssh::spawn_shell(
                 &self.rt,
                 p.clone(),
-                Some(cmd.clone()),
+                backend::ssh::ShellStart::Exec(cmd.clone()),
                 80,
                 24,
                 sink,
@@ -2702,6 +2731,9 @@ impl App {
                 }
             }
             Action::PlayRecording(path) => self.play_recording(path, ctx),
+            Action::PortScan(id) => {
+                self.port_scan = crate::ui::portscan::PortScan::new(self, id);
+            }
             Action::OpenLog(host, source) => {
                 self.log_picker = None;
                 self.open_log(host, &source, ctx);
@@ -4351,6 +4383,7 @@ impl eframe::App for App {
         crate::ui::palette::show(self, &ctx, &mut actions);
         crate::ui::dialogs::show(self, &ctx);
         crate::ui::containers::show(self, &ctx, &mut actions);
+        crate::ui::portscan::show(self, &ctx, &mut actions);
         self.toasts_ui(&ctx);
 
         for a in actions {

@@ -683,13 +683,18 @@ pub const LOG_PRESETS: &[(&str, &str)] = &[
 ];
 
 /// Shell command for a persistent session: attach to (or create) a tmux session, fall back
-/// to screen and then to a plain login shell.
-pub fn persistent_shell(host: Uuid) -> String {
-    let name = format!("aurora-{}", &host.simple().to_string()[..8]);
+/// to screen and then to a plain login shell. `slot` keeps parallel tabs to the same host in
+/// separate sessions (slot 1 = `aurora-<id>`, then `aurora-<id>-2` …). Runs under `sh` so a
+/// non-POSIX login shell (fish) works too.
+pub fn persistent_shell(host: Uuid, slot: usize) -> String {
+    let mut name = format!("aurora-{}", &host.simple().to_string()[..8]);
+    if slot > 1 {
+        name.push_str(&format!("-{slot}"));
+    }
     format!(
-        "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s {name}; \
+        "sh -c 'if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s {name}; \
          elif command -v screen >/dev/null 2>&1; then exec screen -D -RR {name}; \
-         else exec \"${{SHELL:-/bin/sh}}\" -l; fi"
+         else exec \"${{SHELL:-/bin/sh}}\" -l; fi'"
     )
 }
 

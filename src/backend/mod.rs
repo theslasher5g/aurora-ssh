@@ -4,6 +4,7 @@
 pub mod container;
 pub mod local;
 pub mod logs;
+pub mod portscan;
 pub mod proxmox;
 pub mod rdp;
 pub mod rdp_embed;

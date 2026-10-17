@@ -86,8 +86,28 @@ impl Recorder {
     pub fn start(title: &str, cols: u16, rows: u16) -> Result<Self> {
         let dir = dir();
         std::fs::create_dir_all(&dir).with_context(|| dir.display().to_string())?;
-        let path = dir.join(file_name(title));
-        let mut out = BufWriter::new(File::create(&path)?);
+        // Never overwrite: two sessions starting in the same second get `-2`, `-3` …
+        let base = file_name(title);
+        let stem = base.trim_end_matches(".cast").to_string();
+        let mut n = 1;
+        let (path, file) = loop {
+            let name = if n == 1 {
+                base.clone()
+            } else {
+                format!("{stem}-{n}.cast")
+            };
+            let path = dir.join(name);
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(f) => break (path, f),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && n < 1000 => n += 1,
+                Err(e) => return Err(e.into()),
+            }
+        };
+        let mut out = BufWriter::new(file);
         let header = serde_json::json!({
             "version": 2,
             "width": cols.max(1),

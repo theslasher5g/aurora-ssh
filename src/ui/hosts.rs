@@ -1344,6 +1344,15 @@ fn host_row(
             actions.push(Action::PickLog(Some(h.id)));
             ui.close();
         }
+        if h.protocol.is_network()
+            && ui
+                .button(t!("Ports scannen…"))
+                .on_hover_text(t!("Offene Ports des Hosts finden, mit Tunnel per Klick"))
+                .clicked()
+        {
+            actions.push(Action::PortScan(h.id));
+            ui.close();
+        }
         if h.protocol == Protocol::Ssh {
             ui.menu_button(t!("Container auf diesem Host"), |ui| {
                 for p in [Protocol::Docker, Protocol::Kubernetes] {
