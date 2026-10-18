@@ -45,6 +45,7 @@ pub enum Icon {
     Logs,
     Record,
     Server,
+    Shield,
 }
 
 enum Prim {
@@ -152,6 +153,10 @@ fn prims(icon: Icon) -> &'static [Prim] {
             R(3.0, 3.5, 18.0, 7.0, 2.0),
             R(3.0, 13.5, 18.0, 7.0, 2.0),
             Path("M7 7h2M7 17h2M13 7h4M13 17h4"),
+        ],
+        Icon::Shield => &[
+            Path("M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"),
+            Path("M9 12l2.2 2.2L15.5 10"),
         ],
     }
 }

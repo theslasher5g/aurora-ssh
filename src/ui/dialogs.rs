@@ -204,62 +204,7 @@ fn tour(app: &mut App, ctx: &egui::Context) {
 }
 
 fn hostkey(app: &mut App, ctx: &egui::Context) {
-    let Some(p) = app.hostkey_queue.front() else {
-        return;
-    };
-    let changed = p.previous.is_some();
-    let mut answer: Option<(bool, bool)> = None; // (accept, remember)
-    egui::Modal::new(egui::Id::new("hostkey")).frame(crate::theme::dialog_frame())
-        .backdrop_color(crate::theme::backdrop())
-        .show(ctx, |ui| {
-        ui.set_width(500.0);
-        if changed {
-            ui.label(theme::heading(t!("Server-Schlüssel geändert"), 20.0).color(theme::red()));
-            ui.label(
-                RichText::new(t!("Das passiert nach einer Neuinstallation, kann aber auch ein Angriff sein. Verbinde nur, wenn du den neuen Fingerprint geprüft hast."))
-                    .color(theme::text_dim()),
-            );
-        } else {
-            ui.label(theme::heading(t!("Neuer Server"), 20.0));
-            ui.label(RichText::new(t!("Vergleiche den Fingerprint mit dem Server, bevor du ihm vertraust.")).color(theme::text_dim()));
-        }
-        ui.add_space(8.0);
-        theme::card_frame().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(theme::mono(&p.host, 13.0).color(theme::text()));
-            ui.label(RichText::new(&p.algorithm).size(12.5).color(theme::text_dim()));
-            ui.add_space(4.0);
-            ui.label(theme::mono(&p.fingerprint, 13.0).color(theme::accent()));
-            if let Some(prev) = &p.previous {
-                ui.label(RichText::new(t!("vorher: {}", prev)).monospace().size(11.5).color(theme::red()));
-            }
-        });
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if theme::primary_button(ui, t!("Vertrauen")).clicked() {
-                    answer = Some((true, true));
-                }
-                if ui.button(t!("Nur dieses Mal")).clicked() {
-                    answer = Some((true, false));
-                }
-                if ui.button(t!("Abbrechen")).clicked() {
-                    answer = Some((false, false));
-                }
-            });
-        });
-    });
-    if let Some((accept, remember)) = answer
-        && let Some(p) = app.hostkey_queue.pop_front()
-    {
-        if accept && remember {
-            app.lib
-                .known_hosts
-                .insert(p.host.clone(), p.fingerprint.clone());
-            app.save_library();
-        }
-        let _ = p.reply.send(accept);
-    }
+    crate::ui::hostkey::show(app, ctx);
 }
 
 fn password(app: &mut App, ctx: &egui::Context) {

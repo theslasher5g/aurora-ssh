@@ -2,6 +2,7 @@
 //! for serial) and talks to the UI exclusively through channels.
 
 pub mod container;
+pub mod hostkey_check;
 pub mod local;
 pub mod logs;
 pub mod portscan;
@@ -14,6 +15,7 @@ pub mod scan;
 pub mod serial;
 pub mod sftp;
 pub mod ssh;
+pub mod sshca;
 pub mod telnet;
 pub mod tunnel;
 pub mod vnc;
@@ -64,6 +66,8 @@ pub struct HostKeyPrompt {
     /// Fingerprint stored earlier, if it differs (possible MITM).
     pub previous: Option<String>,
     pub reply: oneshot::Sender<bool>,
+    /// Second opinions (SSHFP, jump host), filled in while the dialog is open.
+    pub checks: Option<hostkey_check::SharedChecks>,
 }
 
 /// Sends events to the UI and wakes it up.

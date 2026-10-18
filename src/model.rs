@@ -328,6 +328,9 @@ pub struct Host {
     /// SSH: open the shell inside `tmux` (or `screen`) so a reconnect lands in the same
     /// session with its running jobs.
     pub persistent: bool,
+    /// SSH: log in with a short-lived certificate signed by the keychain CA.
+    #[serde(default)]
+    pub cert: CertSettings,
 }
 
 impl Default for Host {
@@ -356,6 +359,7 @@ impl Default for Host {
             vnc: VncSettings::default(),
             term: TermProfile::default(),
             persistent: false,
+            cert: CertSettings::default(),
         }
     }
 }
@@ -544,6 +548,9 @@ pub struct Keychain {
     pub pve_secrets: HashMap<Uuid, String>,
     /// Groups on the keys page, in display order.
     pub groups: Vec<KeyGroup>,
+    /// Aurora's own SSH certificate authority (signs short-lived user certificates).
+    #[serde(default)]
+    pub ca: Option<SshCa>,
 }
 
 impl Keychain {
@@ -777,6 +784,9 @@ pub struct Library {
     pub log_commands: Vec<LogCommand>,
     /// Proxmox VE servers (own page, not part of the host list).
     pub pve_servers: Vec<PveServer>,
+    /// `host:port` -> every server key accepted so far, oldest first.
+    #[serde(default)]
+    pub host_key_history: HashMap<String, Vec<HostKeyRecord>>,
 }
 
 /// System facts collected after an SSH login (read-only commands).
@@ -1055,6 +1065,90 @@ pub fn parse_ssh_config(text: &str) -> Vec<Host> {
     out
 }
 
+/// Per-host settings for the login with a short-lived SSH certificate.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[serde(default)]
+pub struct CertSettings {
+    pub enabled: bool,
+    /// Validity in hours (1, 8 or 24).
+    pub hours: u32,
+    /// Comma-separated principals; empty = the login user.
+    pub principals: String,
+}
+
+impl Default for CertSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            hours: 8,
+            principals: String::new(),
+        }
+    }
+}
+
+/// The certificate authority key pair (lives in the encrypted keychain).
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct SshCa {
+    /// OpenSSH private key (Ed25519).
+    pub private_key: String,
+    /// `ssh-ed25519 AAAA… comment`
+    pub public_key: String,
+    pub created: Option<DateTime<Utc>>,
+}
+
+/// A server key that was accepted for a host.
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct HostKeyRecord {
+    /// `SHA256:…`
+    pub fingerprint: String,
+    pub algorithm: String,
+    /// When it was trusted (unknown for keys from before the history existed).
+    pub trusted: Option<DateTime<Utc>>,
+    /// When another key replaced it; `None` = current key.
+    pub replaced: Option<DateTime<Utc>>,
+}
+
+impl Library {
+    /// Records that `fingerprint` is now the trusted key of `host_id` (`host:port`);
+    /// the key it replaces (if any) is kept with today's date.
+    pub fn remember_host_key(&mut self, host_id: &str, fingerprint: &str, algorithm: &str) {
+        let now = Utc::now();
+        let previous = self.known_hosts.get(host_id).cloned();
+        let list = self
+            .host_key_history
+            .entry(host_id.to_string())
+            .or_default();
+        if let Some(prev) = previous.filter(|p| p != fingerprint) {
+            match list.iter_mut().rev().find(|r| r.fingerprint == prev) {
+                Some(r) => {
+                    r.replaced.get_or_insert(now);
+                }
+                None => list.push(HostKeyRecord {
+                    fingerprint: prev,
+                    algorithm: String::new(),
+                    trusted: None,
+                    replaced: Some(now),
+                }),
+            }
+        }
+        if !list
+            .iter()
+            .any(|r| r.fingerprint == fingerprint && r.replaced.is_none())
+        {
+            list.push(HostKeyRecord {
+                fingerprint: fingerprint.to_string(),
+                algorithm: algorithm.to_string(),
+                trusted: Some(now),
+                replaced: None,
+            });
+        }
+        self.known_hosts
+            .insert(host_id.to_string(), fingerprint.to_string());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1175,5 +1269,22 @@ mod tests {
         assert_eq!(lib.inherited_defaults(&host).0, "admin");
         assert!(lib.is_descendant(child.id, parent.id));
         assert!(!lib.is_descendant(parent.id, child.id));
+    }
+
+    #[test]
+    fn host_key_history_keeps_old_keys() {
+        let mut lib = Library::default();
+        lib.known_hosts.insert("a:22".into(), "SHA256:old".into());
+        lib.remember_host_key("a:22", "SHA256:new", "ssh-ed25519");
+        let h = &lib.host_key_history["a:22"];
+        assert_eq!(h.len(), 2);
+        assert_eq!(h[0].fingerprint, "SHA256:old");
+        assert!(h[0].replaced.is_some());
+        assert_eq!(h[1].fingerprint, "SHA256:new");
+        assert!(h[1].replaced.is_none());
+        assert_eq!(lib.known_hosts["a:22"], "SHA256:new");
+        // Accepting the same key again changes nothing.
+        lib.remember_host_key("a:22", "SHA256:new", "ssh-ed25519");
+        assert_eq!(lib.host_key_history["a:22"].len(), 2);
     }
 }

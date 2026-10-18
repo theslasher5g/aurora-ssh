@@ -209,6 +209,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         ) {
             actions.push(Action::NewIdentity);
         }
+        crate::ui::sshca::ca_section(app, ui);
         return;
     }
 
@@ -321,6 +322,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     }
                 }
             }
+            crate::ui::sshca::ca_section(app, ui);
             ui.add_space(40.0);
         });
     if let Some((text, color)) = toast {

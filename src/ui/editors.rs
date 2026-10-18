@@ -205,6 +205,7 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         .filter(|h| h.protocol == Protocol::Ssh)
         .map(|h| (h.id, h.display_name().to_string()))
         .collect();
+    let has_ca = app.keychain.ca.is_some();
     let Some(ed) = app.host_editor.as_mut() else {
         return;
     };
@@ -363,6 +364,16 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                  mit allen laufenden Programmen."
                             ));
                     });
+                    crate::ui::sshca::host_section(ui, h, has_ca);
+                    let key_id = format!("{}:{}", h.hostname.trim(), h.port);
+                    crate::ui::sshca::key_history(
+                        ui,
+                        lib.host_key_history
+                            .get(&key_id)
+                            .map(Vec::as_slice)
+                            .unwrap_or(&[]),
+                        lib.known_hosts.get(&key_id).map(String::as_str),
+                    );
                     theme::form_caption(ui, t!("Tunnel (Port-Weiterleitung)"));
                     theme::form(ui, 92.0, |ui, f| {
                         let mut remove = None;
