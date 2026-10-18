@@ -736,6 +736,16 @@ pub struct Settings {
     pub language: String,
     /// Record every SSH terminal session (asciinema files in the recordings folder).
     pub record_sessions: bool,
+    /// Remember the commands run in SSH sessions per host (encrypted, `history.enc`).
+    pub command_history: bool,
+    /// Offer to save often repeated long commands as snippets.
+    pub snippet_hints: bool,
+    /// Hashes of the command patterns whose snippet suggestion was dismissed.
+    pub snippet_hints_dismissed: Vec<String>,
+    /// Check pasted text for secrets and multi-line pastes on PROD.
+    pub paste_guard: bool,
+    /// Keep the last 30 minutes of each terminal's output for rewinding.
+    pub time_travel: bool,
 }
 
 impl Default for Settings {
@@ -759,6 +769,11 @@ impl Default for Settings {
             editor: String::new(),
             language: String::new(),
             record_sessions: false,
+            command_history: true,
+            snippet_hints: true,
+            snippet_hints_dismissed: Vec::new(),
+            paste_guard: true,
+            time_travel: true,
         }
     }
 }

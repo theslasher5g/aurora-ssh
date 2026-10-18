@@ -138,6 +138,14 @@ fn derive_key(password: &str, salt: &[u8; 16]) -> Result<[u8; 32]> {
     Ok(key)
 }
 
+/// A file encrypted with the vault key (no KDF of its own).
+#[derive(Serialize, Deserialize)]
+struct BlobFile {
+    version: u32,
+    nonce: String,
+    ciphertext: String,
+}
+
 /// An unlocked vault: holds the derived key so the keychain can be re-encrypted on save.
 pub struct Vault {
     path: PathBuf,
@@ -162,6 +170,56 @@ impl Vault {
             ciphertext: B64.encode(ciphertext),
         };
         write_atomic(&self.path, serde_json::to_string_pretty(&file)?.as_bytes())
+    }
+
+    /// Writes `plain` encrypted with the vault key to `name` next to the vault (data that
+    /// is too large or too busy for the keychain, e.g. the command history).
+    pub fn save_blob(&self, name: &str, plain: &[u8]) -> Result<()> {
+        let mut nonce = [0u8; 24];
+        rand::rngs::OsRng.fill_bytes(&mut nonce);
+        let ciphertext = XChaCha20Poly1305::new((&self.key).into())
+            .encrypt(XNonce::from_slice(&nonce), plain)
+            .map_err(|_| anyhow!(t!("Verschlüsselung fehlgeschlagen")))?;
+        let file = BlobFile {
+            version: 1,
+            nonce: B64.encode(nonce),
+            ciphertext: B64.encode(ciphertext),
+        };
+        write_atomic(
+            &self.blob_path(name),
+            serde_json::to_string(&file)?.as_bytes(),
+        )
+    }
+
+    /// Reads a blob written by `save_blob`; `None` if there is none yet.
+    pub fn load_blob(&self, name: &str) -> Result<Option<Vec<u8>>> {
+        let path = self.blob_path(name);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let file: BlobFile = serde_json::from_str(&fs::read_to_string(&path)?)?;
+        let nonce = B64.decode(&file.nonce)?;
+        if nonce.len() != 24 {
+            bail!(t!("ungültige Nonce"));
+        }
+        XChaCha20Poly1305::new((&self.key).into())
+            .decrypt(
+                XNonce::from_slice(&nonce),
+                B64.decode(&file.ciphertext)?.as_ref(),
+            )
+            .map(Some)
+            .map_err(|_| anyhow!(t!("Falsches Passwort oder beschädigte Datei")))
+    }
+
+    fn blob_path(&self, name: &str) -> PathBuf {
+        self.path.with_file_name(name)
+    }
+
+    /// Changes whenever the key changes (new master password): blobs must be written again.
+    pub fn key_id(&self) -> u64 {
+        use sha2::Digest;
+        let d = sha2::Sha256::digest(self.key);
+        u64::from_le_bytes(d[..8].try_into().unwrap_or_default())
     }
 
     /// Re-key the vault with a new master password.
@@ -368,6 +426,21 @@ mod tests {
         let (_, loaded) = store.unlock_vault("hunter2").unwrap();
         assert_eq!(loaded.identities[0].password, "s3cret");
         assert!(store.unlock_vault("wrong").is_err());
+
+        // Blobs: encrypted with the vault key, unreadable after a re-key.
+        vault.save_blob("blob.enc", b"history s3cret").unwrap();
+        let raw = fs::read_to_string(dir.join("blob.enc")).unwrap();
+        assert!(!raw.contains("s3cret"));
+        let (v2, _) = store.unlock_vault("hunter2").unwrap();
+        assert_eq!(
+            v2.load_blob("blob.enc").unwrap().as_deref(),
+            Some(&b"history s3cret"[..])
+        );
+        assert_eq!(v2.key_id(), vault.key_id());
+        assert!(v2.load_blob("missing.enc").unwrap().is_none());
+        let mut v3 = v2;
+        v3.change_password("other", &kc).unwrap();
+        assert!(v3.load_blob("blob.enc").is_err());
         fs::remove_dir_all(dir).ok();
     }
 

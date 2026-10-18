@@ -71,6 +71,15 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             });
         }
     }
+    for (title, subtitle, action, score) in crate::ui::history::palette_items(app, &q) {
+        items.push(Item {
+            icon: "HIST".into(),
+            title,
+            subtitle,
+            action,
+            score,
+        });
+    }
     for (icon, title, subtitle, action) in crate::ui::proxmox::palette_items(app) {
         if let Some(score) = fuzzy(&q, &format!("{title} proxmox {subtitle}")) {
             items.push(Item {

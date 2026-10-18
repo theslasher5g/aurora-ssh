@@ -602,6 +602,8 @@ pub struct App {
     pub update_rx: UnboundedReceiver<crate::update::UpdateEvent>,
     /// Proxmox servers: live data, editor, certificate prompt.
     pub pve: crate::ui::proxmox::PveState,
+    /// Command history, paste guard and time travel of the terminals.
+    pub termx: crate::ui::history::TermExtras,
 }
 
 /// UI intents collected while drawing and applied afterwards.
@@ -648,6 +650,8 @@ pub enum Action {
     OpenGroup(Uuid),
     /// Snippet editor prefilled with this text.
     SnippetFromText(String),
+    /// Type a command from the history into a session of this host (without Enter).
+    TypeCommand(Uuid, String),
     /// Host editor for a quick-connect session.
     SaveQuickHost(u64),
     /// New host with this hostname (from a search without results).
@@ -790,6 +794,7 @@ impl App {
             update_sink,
             update_rx,
             pve: crate::ui::proxmox::PveState::new(&cc.egui_ctx),
+            termx: Default::default(),
         }
     }
 
@@ -2409,6 +2414,7 @@ impl App {
         let mut learned: Vec<(Uuid, crate::model::HostFacts)> = Vec::new();
         let mut outcome: Vec<(Uuid, bool)> = Vec::new();
         let record_all = self.lib.settings.record_sessions;
+        let time_travel = self.lib.settings.time_travel;
         for tab in &mut self.tabs {
             let seen = focused && visible.contains(&tab.id);
             match &mut tab.kind {
@@ -2471,6 +2477,7 @@ impl App {
                                 }
                             }
                             TermEvent::Output(b) => {
+                                self.termx.record_output(time_travel, tab.id, &t.term, &b);
                                 if let Some(r) = t.recorder.as_mut() {
                                     r.output(&b);
                                 }
@@ -3228,7 +3235,9 @@ impl App {
                     self.connect_host(h, Purpose::Terminal, ctx);
                 }
             }
+            Action::TypeCommand(h, cmd) => crate::ui::history::type_command(self, h, cmd, ctx),
             Action::Lock => {
+                self.termx.flush(self.vault.as_ref(), true);
                 self.vault = None;
                 self.keychain = Keychain::default();
                 self.lock = LockScreen::default();
@@ -3310,6 +3319,9 @@ impl App {
         let ssh_session = matches!(t.spec, ConnectSpec::Ssh(_)) && host_id.is_some();
         let log_open = t.side_log.is_some();
         let recording = t.recorder.is_some();
+        let rewinding = self.termx.rewind_views.contains_key(&tab_id);
+        let mut toggle_rewind = false;
+        let mut command = None;
 
         let state = crate::ui::chrome::state_pair(&t.state);
         let closed = matches!(t.state, ConnState::Closed(_));
@@ -3353,6 +3365,17 @@ impl App {
                         open_files = true;
                     }
                 }
+                if settings.time_travel
+                    && theme::icon_toggle(
+                        ui,
+                        crate::ui::icons::Icon::Clock,
+                        t!("Zurückspulen (Zeitreise)"),
+                        rewinding,
+                    )
+                    .clicked()
+                {
+                    toggle_rewind = true;
+                }
                 if !matches!(t.spec, ConnectSpec::Replay(_)) {
                     let tip = if recording {
                         t!("Aufnahme beenden")
@@ -3388,6 +3411,9 @@ impl App {
         );
         if toggle_snippets {
             t.show_snippets = !t.show_snippets;
+        }
+        if toggle_rewind {
+            self.termx.toggle_rewind(tab_id, &t.spec);
         }
         if ssh_session
             && drop_target
@@ -3629,19 +3655,88 @@ impl App {
                 if refocus {
                     ui.memory_mut(|m| m.request_focus(egui::Id::new(("term", tab_id))));
                 }
-                let out = t.term.show(
-                    ui,
-                    egui::Id::new(("term", tab_id)),
-                    TermView {
-                        font_size,
-                        family,
-                        palette,
-                        accent,
-                        copy_on_select: settings.copy_on_select,
-                        glow: None,
-                        overlay,
-                    },
-                );
+                let view = TermView {
+                    font_size,
+                    family,
+                    palette,
+                    accent,
+                    copy_on_select: settings.copy_on_select,
+                    glow: None,
+                    overlay,
+                    ctrl_r: ssh_session && settings.command_history,
+                };
+                let term_rect = ui.available_rect_before_wrap();
+                let mut out = match self.termx.rewind_views.get_mut(&tab_id) {
+                    Some(v) => {
+                        let id = egui::Id::new(("rewind", tab_id));
+                        let shown = crate::ui::timetravel::show(
+                            ui,
+                            id,
+                            self.termx.rewinds.get(&tab_id),
+                            v,
+                            view,
+                        );
+                        if shown.live {
+                            self.termx.rewind_views.remove(&tab_id);
+                            ui.memory_mut(|m| m.request_focus(egui::Id::new(("term", tab_id))));
+                        }
+                        // The past screen keeps the grid of its time.
+                        crate::terminal::TermOutput {
+                            resize: None,
+                            ..shown.out
+                        }
+                    }
+                    None => t.term.show(ui, egui::Id::new(("term", tab_id)), view),
+                };
+                if out.history_search {
+                    let typed = t.term.prompt_command().unwrap_or_default();
+                    crate::ui::history::open_popup(&mut self.termx, tab_id, &typed);
+                }
+                if let Some(st) = self.termx.popups.get_mut(&tab_id) {
+                    let entries = host_id
+                        .map(|h| self.termx.history.entries(h))
+                        .unwrap_or_default();
+                    match crate::ui::history::popup(&ctx, tab_id, term_rect, st, entries) {
+                        crate::ui::history::PopupOut::Keep => {}
+                        crate::ui::history::PopupOut::Close => {
+                            self.termx.popups.remove(&tab_id);
+                            ui.memory_mut(|m| m.request_focus(egui::Id::new(("term", tab_id))));
+                        }
+                        crate::ui::history::PopupOut::Insert(cmd, run) => {
+                            if st.clear_line {
+                                // Ctrl+U: drop what was typed before Ctrl+R.
+                                out.input.push(0x15);
+                            }
+                            out.input.extend_from_slice(cmd.as_bytes());
+                            // A dangerous command on PROD waits for a real Enter (and the
+                            // confirmation that comes with it).
+                            let risky = guarded && crate::model::dangerous_command(&cmd).is_some();
+                            if run && !risky {
+                                out.input.push(b'\r');
+                                command = Some((cmd, t.term.cwd()));
+                            }
+                            self.termx.popups.remove(&tab_id);
+                            ui.memory_mut(|m| m.request_focus(egui::Id::new(("term", tab_id))));
+                        }
+                    }
+                }
+                if let Some(text) = out.paste.take() {
+                    let check = settings.paste_guard && !matches!(t.state, ConnState::Closed(_));
+                    match check
+                        .then(|| {
+                            crate::ui::paste_guard::check(
+                                &text,
+                                tab_id,
+                                guarded,
+                                t.term.bracketed_paste(),
+                            )
+                        })
+                        .flatten()
+                    {
+                        Some(p) => self.termx.paste = Some(p),
+                        None => out.input.extend(t.term.paste_bytes(&text)),
+                    }
+                }
                 focused_now = ui.memory(|m| m.has_focus(egui::Id::new(("term", tab_id))));
                 if let Some((cols, rows)) = out.resize {
                     let _ = t.tx.send(TermCmd::Resize { cols, rows });
@@ -3668,6 +3763,16 @@ impl App {
                     {
                         danger = Some((t.term.current_command(), why));
                     } else {
+                        // Remember the command line Enter runs (history, snippet hints).
+                        if ssh_session
+                            && command.is_none()
+                            && let Some(pos) = out.input.iter().position(|&b| b == b'\r')
+                            && out.input[..pos].iter().all(|&b| b >= 0x20 && b != 0x7f)
+                            && let Some(mut line) = t.term.prompt_command()
+                        {
+                            line.push_str(&String::from_utf8_lossy(&out.input[..pos]));
+                            command = Some((line, t.term.cwd()));
+                        }
                         input = Some(out.input);
                     }
                 }
@@ -3710,6 +3815,9 @@ impl App {
         }
         if let Some((cmd, why)) = danger {
             self.danger = Some((tab_id, cmd, why));
+        }
+        if let (Some(h), Some((cmd, cwd))) = (host_id, command) {
+            crate::ui::history::on_command(self, h, &cmd, cwd);
         }
         if refocus && focused_now {
             self.focus_term = None;
@@ -4430,6 +4538,7 @@ impl eframe::App for App {
         crate::ui::proxmox::windows(self, &ctx);
         crate::ui::palette::show(self, &ctx, &mut actions);
         crate::ui::dialogs::show(self, &ctx);
+        crate::ui::history::frame(self, &ctx);
         crate::ui::containers::show(self, &ctx, &mut actions);
         crate::ui::portscan::show(self, &ctx, &mut actions);
         self.toasts_ui(&ctx);
@@ -4440,6 +4549,7 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.termx.flush(self.vault.as_ref(), false);
         if self.vault.is_some() {
             self.lib.settings.last_session = self.session_snapshot();
             self.save_library();

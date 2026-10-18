@@ -6,6 +6,7 @@
 mod i18n;
 mod app;
 mod backend;
+mod history;
 mod keygen;
 mod model;
 mod store;
