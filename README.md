@@ -37,13 +37,18 @@ What's new in each version: [CHANGELOG.md](CHANGELOG.md) · planned: [ROADMAP.md
 | **VNC** | Inside the tab (own RFB client: ZRLE, CopyRect, Raw, resize, VNC password): fit or 1:1, Ctrl+Alt+Del, clipboard in both directions, type the clipboard as keystrokes, view-only mode |
 | **Telnet** | For switches, routers and old devices: option negotiation (echo, window size, terminal type) and optional auto-login with the stored user and password |
 | **Serial** | Port detection, baud rate, format, flow control, line ending, local echo |
-| **Proxmox VE** | Own page with all VMs and containers of your Proxmox servers by node: status, IP, CPU/RAM, tags; start/stop/shutdown/reboot, **snapshots and backups** (create, roll back, restore to a new VMID), console (`pct enter`, `qm terminal`, SSH, noVNC or SPICE), save as host with the right IP. API token or password (in the vault), pinned certificate |
+| **Proxmox VE** | Own page with all VMs and containers of your Proxmox servers by node: status, IP, CPU/RAM, tags; start/stop/shutdown/reboot, **snapshots and backups** (create, roll back, restore to a new VMID), console (`pct enter`, `qm terminal`, SSH, noVNC or SPICE), save as host with the right IP. API token or password (in the vault), pinned certificate. **Live graphs**, clone / new from template with cloud-init, **migration by drag & drop**, hardware edits, batch actions, cluster overview (storage, ZFS, Ceph, HA), task log, **alerts**, node shell via the API, node updates and **Proxmox Backup Server** browsing |
 | **Docker & Kubernetes** | Containers and pods as their own session type – on this PC or on any SSH host. "Browse containers" lists `docker ps` / `kubectl get pods` (Podman and kube contexts supported); one click opens a shell (bash, else sh) or the logs, or saves the container to the host list |
 | **Log viewer** | Follow a file (`tail -F`), `journalctl -f` or container logs live – in their own tab or **docked at the right of an SSH session** (`Ctrl+Shift+L`, same login, resizable) so terminal and logs sit side by side. **Own log commands** (for all hosts or one host) next to the presets. Filter (`nginx \| timeout`), only matches or highlighting, errors/warnings colored and filterable, pause with a counter of waiting lines, copy, wrap |
 | **Session recording** | Record a terminal (asciinema `.cast`, only what the screen shows) with one click or for every SSH session; replay inside Aurora (Space pauses) or with `asciinema play` |
 | **Persistent sessions** | Optional per host: the shell runs in `tmux` (or `screen`) on the server, a reconnect lands in the same session with its running jobs |
 | **Terminal profile** | Per host: own color theme (e.g. PROD always in a different look), font and font size. Fonts: IBM Plex Mono, Hack, installed monospace fonts (Cascadia, Consolas, Menlo, DejaVu, JetBrains Mono …) or any .ttf/.otf file |
 | **Host list** | Groups as cards with "x of y online". After the first login it shows **OS, uptime, disk usage and pending updates** (one click: "install updates"), latency and status (green = reachable, ring = no answer, red = last connection failed). Hosts without a name take the server's hostname, rename with `F2`. Multi-select (Ctrl/Shift+click) with bulk actions, drag hosts into groups, compact view, sorting. Groups show "x/y online"; hosts in the same subnet can be grouped with one click |
+| **Terminal memory** | Commands per host remembered (encrypted) – `Ctrl+R` / `Ctrl+K` to find them again; commands you repeat are offered as snippets; **time travel** through the last 30 minutes of a terminal like a video; **secret guard** asks before pasting keys, tokens or passwords |
+| **Runbooks** | Step-by-step procedures with commands and confirmations, run next to the terminal(s) with a Markdown report of every step and its output |
+| **Maintenance & diagnostics** | Maintenance windows per host or group mute alerts and mark the sessions; one-click diagnostics bundle (`.tar.gz`, optional masking of personal data) |
+| **SSH certificates** | Aurora as a small SSH CA: log in with a fresh certificate valid for 1–24 h instead of stored keys. Changed server keys are double-checked against SSHFP (DNS) and the jump host |
+| **Routes & wake-up** | Chains of up to 4 jump hosts; if a host can't be reached directly Aurora finds a working route through your hosts · **Wake-on-LAN** with "wake up and connect" · **certificate radar** warns before TLS certificates of your hosts expire |
 | **Port scan** | Per host: TCP scan from this PC (well-known, 1–1024, all or a custom list) or the ports listening on the server (also localhost-only services); open a web port in the browser or tunnel to it with one click |
 | **Network scan** | Finds SSH/RDP devices in the local network (with an OS hint from the SSH banner) and adds them |
 | **SSH key setup** | Generates a key, installs it on the server, verifies the login – no more passwords |
@@ -78,6 +83,7 @@ What's new in each version: [CHANGELOG.md](CHANGELOG.md) · planned: [ROADMAP.md
 | `Ctrl/⌘ + Shift + W` | Close session |
 | `Ctrl + Shift + F` | Search in the terminal (Enter = older, Shift+Enter = newer match) |
 | `Ctrl + Shift + L` | Logs next to the terminal |
+| `Ctrl + R` | Search the host's command history (at the shell prompt) |
 | `Ctrl` + mouse wheel | Terminal font size |
 | `F11` | Full screen on/off |
 | `F1` / `?` | Help page with all shortcuts |

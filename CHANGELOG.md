@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.7.0
+
+### Proxmox
+- **Live graphs:** CPU sparkline per running guest; a *Statistics* tab per guest (CPU, RAM,
+  network, disk – hour/day/week) and node statistics (CPU with IO wait, RAM, network, load).
+- **Clone & new from template:** full or linked clone with the next free VMID, target node
+  and storage; cloud-init user, IP and an SSH key straight from the keychain; *Connect*
+  afterwards saves the guest as a host and opens a session.
+- **Migration by drag & drop:** drag a guest onto another node heading (live for running VMs,
+  restart mode for containers), also from the row menu.
+- **Hardware sheet:** cores, sockets, RAM, balloon, swap, disk growth, bridge/VLAN per NIC –
+  with a live diff and a note for changes that need a reboot.
+- **Batch actions:** select guests (Ctrl/Shift or by tag) and start, shut down, reboot,
+  snapshot or back them up together, with a result list.
+- **Tasks:** all cluster tasks with filter, live log and cancel.
+- **Overview:** quorum, nodes, storage usage, ZFS, HA and Ceph per server with warnings.
+- **Alerts:** a background watcher reports guests that went down unexpectedly, offline nodes,
+  failed tasks and full storage (toast + bell with a list); switchable per server.
+- **Node shell without SSH** via `termproxy` in an Aurora terminal tab.
+- **Node updates:** pending packages per node, refresh the package lists, upgrade over SSH.
+- **Proxmox Backup Server:** datastores, snapshots (verify state, protected, size), prune
+  preview and viewing/saving `.blob` files.
+- Proxmox and backup servers are part of the encrypted export.
+
+### Terminal
+- **Command memory:** commands per host are remembered (encrypted, secrets and
+  space-prefixed commands skipped). `Ctrl+R` searches the host's history, `Ctrl+K` shows it in
+  the palette.
+- **Snippet suggestions:** a command run three times with different values is offered as a
+  snippet with `{{variables}}`.
+- **Secret guard:** pasting private keys, cloud/API tokens, JWTs or passwords asks first
+  (masked); on PROD also multi-line pastes. Middle click and a context-menu *Paste* were added.
+- **Time travel:** scroll back through the last 30 minutes of a terminal like a video –
+  timeline with activity, play/pause, copy the past screen; also for recordings.
+
+### SSH & network
+- **Short-lived SSH certificates:** Aurora can act as a small CA (key in the vault). Hosts
+  can log in with a fresh certificate valid for 1/8/24 h instead of a stored key; one click
+  types the server setup line. Falls back to the normal identity if the server refuses.
+- **Host key changes double-checked:** a new or changed server key is compared with SSHFP in
+  DNS (DNSSEC noted) and with `ssh-keyscan` from the jump host – green, amber or red verdict;
+  on red the host name must be typed before trusting. Key history per host.
+- **Jump chains & route finder:** up to four jump hosts in a row; if a host can't be reached
+  directly, Aurora searches a working route through your saved hosts and offers it.
+- **Certificate radar:** checks the TLS certificates of your hosts (open ports from the
+  port scan, common TLS ports, SMTP STARTTLS, Proxmox) and warns before they expire – daily in
+  the background.
+- **Wake-on-LAN:** MAC per host (can be looked up), *Wake up* and *Wake up and connect* –
+  also through a jump host.
+
+### Operations
+- **Runbooks:** step-by-step procedures (text, optional command with `{{variables}}`,
+  confirmation per step) on the Snippets page; run them next to one or more terminals with
+  *Run*/*Done*, notes and timing, and get a Markdown report with every step's output.
+  Import/export as Markdown.
+- **Maintenance windows:** mark a host or group as "in maintenance" for 30 min … 4 h or until
+  a time – alerts, toasts and red LEDs are muted, the session shows an amber strip, and Aurora
+  asks 5 minutes before the end whether to extend.
+- **Diagnostics bundle:** collects system info, logs, services and containers of a host
+  (optionally with sudo) into a `.tar.gz`, with an option to mask IPs, MACs, e-mails and host
+  names.
+
 ## 0.6.2
 
 ### New features

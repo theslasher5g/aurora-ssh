@@ -1,6 +1,8 @@
 //! Second opinions on a server key Aurora has not seen before (or that changed): SSHFP
 //! records in DNS and – for hosts behind a jump host – what the jump host sees
 //! (`ssh-keyscan` run there). Runs while the host key dialog is open.
+// The DNS client is only used on Unix (Windows asks nslookup); its parsers stay tested there.
+#![cfg_attr(windows, allow(dead_code))]
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
