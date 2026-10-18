@@ -146,6 +146,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         return;
     };
     // Collect results.
+    let mut finished = false;
     while let Some(ev) = s.rx.as_mut().and_then(|rx| rx.try_recv().ok()) {
         match ev {
             PortEvent::Progress(d, t) => s.progress = (d, t),
@@ -159,9 +160,27 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                 s.error = Some(e);
                 s.running = false;
             }
-            PortEvent::Done => s.running = false,
+            PortEvent::Done => {
+                s.running = false;
+                finished = true;
+            }
         }
     }
+    // Remember the open ports (reachable from outside) for the certificate radar.
+    if finished {
+        let ports: Vec<u16> = s
+            .results
+            .iter()
+            .filter(|p| !p.local_only())
+            .map(|p| p.port)
+            .collect();
+        let host = s.host;
+        app.lib.net.open_ports.insert(host, ports);
+        app.save_library();
+    }
+    let Some(s) = app.port_scan.as_mut() else {
+        return;
+    };
     let title = t!("Ports · {}", s.name);
     let (running, count, scanned) = (s.running, s.results.len(), s.progress.1 > 0);
     let mut cancel = false;

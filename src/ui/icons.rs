@@ -47,7 +47,12 @@ pub enum Icon {
     Server,
     /// Clock with a back arrow: time travel / history.
     Clock,
+    /// Certificate radar, host-key checks, SSH CA.
     Shield,
+    /// Route through jump hosts.
+    Route,
+    /// Wake-on-LAN.
+    Power,
 }
 
 enum Prim {
@@ -164,6 +169,12 @@ fn prims(icon: Icon) -> &'static [Prim] {
             Path("M3 12a9 9 0 1 0 9-9a9.75 9.75 0 0 0-6.74 2.74L3 8"),
             Path("M3 3v5h5M12 7v5l4 2"),
         ],
+        Icon::Route => &[
+            Circle(6.0, 18.0, 2.2),
+            Circle(18.0, 6.0, 2.2),
+            Path("M8.2 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.8"),
+        ],
+        Icon::Power => &[Path("M12 3v8"), Path("M7.1 6.6A7 7 0 1 0 16.9 6.6")],
     }
 }
 
@@ -547,7 +558,7 @@ mod tests {
             Hosts, Key, Folder, Bolt, Tunnel, Gear, Sun, Help, Search, Wifi, Plus, Chevron, Star,
             Sparkle, Close, Split, Maximize, Exit, External, Keyboard, Expand, Monitor, Up,
             Refresh, File, Lock, Broadcast, Download, Terminal, Windows, Upload, Trash, Copy, Wrap,
-            Pause, Play, Stop, Server, Logs, Record, Clock, Shield,
+            Pause, Play, Stop, Server, Logs, Record, Clock, Shield, Route, Power,
         ] {
             for prim in prims(icon) {
                 if let Prim::Path(d) = prim {

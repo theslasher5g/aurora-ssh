@@ -331,6 +331,21 @@ pub struct Host {
     /// SSH: log in with a short-lived certificate signed by the keychain CA.
     #[serde(default)]
     pub cert: CertSettings,
+    /// Wake-on-LAN: MAC address and where to send the magic packet.
+    #[serde(default)]
+    pub wol: WolSettings,
+}
+
+/// Wake-on-LAN settings of a host.
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct WolSettings {
+    /// `aa:bb:cc:dd:ee:ff`; empty = no Wake-on-LAN.
+    pub mac: String,
+    /// Broadcast address; empty = 255.255.255.255.
+    pub broadcast: String,
+    /// UDP port; 0 = 9.
+    pub port: u16,
 }
 
 impl Default for Host {
@@ -360,6 +375,7 @@ impl Default for Host {
             term: TermProfile::default(),
             persistent: false,
             cert: CertSettings::default(),
+            wol: WolSettings::default(),
         }
     }
 }
@@ -849,6 +865,22 @@ pub struct Library {
     /// `host:port` -> every server key accepted so far, oldest first.
     #[serde(default)]
     pub host_key_history: HashMap<String, Vec<HostKeyRecord>>,
+    /// Port scan results and the certificate radar.
+    #[serde(default)]
+    pub net: NetData,
+}
+
+/// Network data Aurora remembers between runs.
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[serde(default)]
+pub struct NetData {
+    /// Open ports of each host from its last port scan.
+    pub open_ports: HashMap<Uuid, Vec<u16>>,
+    /// Certificates found by the last radar run.
+    pub certs: Vec<crate::backend::certradar::CertInfo>,
+    pub certs_checked: Option<DateTime<Utc>>,
+    /// No daily background check.
+    pub radar_paused: bool,
 }
 
 /// System facts collected after an SSH login (read-only commands).

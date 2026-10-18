@@ -221,6 +221,10 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         t!("Host bearbeiten")
     };
     let lib = &app.lib;
+    let finder = app.net.route.as_ref();
+    let mac_busy = app.net.wol.looking_up(ed.host.id);
+    let mut route_req = None;
+    let mut wol_req = None;
     let ((s_, c_), dismissed) = theme::sheet(
         ctx,
         egui::Id::new("host-editor"),
@@ -335,28 +339,9 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                     }
                                 });
                         });
-                        f.field(ui, t!("Verbinden über"), |ui| {
-                            let me = h.id;
-                            let sel = h
-                                .jump_host
-                                .and_then(|id| ssh_hosts.iter().find(|(i, _)| *i == id))
-                                .map(|(_, n)| n.clone())
-                                .unwrap_or_else(|| t!("— direkt —").to_string());
-                            egui::ComboBox::from_id_salt("jump")
-                                .selected_text(sel)
-                                .width(ui.available_width() - 14.0)
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut h.jump_host, None, t!("— direkt —"));
-                                    for (id, n) in ssh_hosts.iter().filter(|(i, _)| *i != me) {
-                                        ui.selectable_value(&mut h.jump_host, Some(*id), n);
-                                    }
-                                })
-                                .response
-                                .on_hover_text(t!(
-                                    "Jump-Host: Aurora verbindet sich zuerst mit diesem Server und von dort weiter. \
-                                     Der Jump-Host braucht gespeicherte Zugangsdaten (Identität)."
-                                ));
-                        });
+                        route_req = route_req.or(crate::ui::route::editor_rows(
+                            ui, f, h, lib, finder, &ssh_hosts,
+                        ));
                         f.switch(ui, t!("Dauerhafte Session (tmux)"), &mut h.persistent)
                             .on_hover_text(t!(
                                 "Die Shell läuft in tmux (sonst screen) auf dem Server weiter: \
@@ -638,6 +623,9 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                     });
                 }
             }
+            if h.protocol.is_network() {
+                wol_req = crate::ui::wol::editor_section(ui, h, mac_busy);
+            }
             if h.protocol.is_terminal() {
                 theme::form_caption(ui, t!("Terminal-Profil"));
                 term_profile(ui, &mut h.term, &fonts, &app_font, app_size);
@@ -667,6 +655,14 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
 
     if new_identity {
         actions.push(Action::NewIdentity);
+    }
+    if let Some(host) = app.host_editor.as_ref().map(|e| e.host.clone()) {
+        if route_req == Some(crate::ui::route::EditorRequest::Find) {
+            crate::ui::route::start(app, host.clone(), crate::ui::route::Mode::Editor, ctx);
+        }
+        if wol_req == Some(crate::ui::wol::EditorRequest::LookupMac) {
+            crate::ui::wol::lookup_mac(app, host, ctx);
+        }
     }
     if let Some((proto, via)) = browse {
         actions.push(Action::BrowseContainers(proto, via, true));
