@@ -3,18 +3,21 @@ pub mod containers;
 pub mod dialogs;
 pub mod editors;
 pub mod help;
+pub mod history;
 pub mod hosts;
 pub mod icons;
 pub mod keychain;
 pub mod lock;
 pub mod logview;
 pub mod palette;
+pub mod paste_guard;
 pub mod portscan;
 pub mod proxmox;
 pub mod rdp;
 pub mod settings;
 pub mod sftp;
 pub mod snippets;
+pub mod timetravel;
 pub mod vnc;
 
 /// Case-insensitive subsequence match; returns a score (higher is better).

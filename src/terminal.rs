@@ -125,6 +125,11 @@ pub struct TermOutput {
     pub resize: Option<(u16, u16)>,
     /// "Save as snippet" was picked for this text.
     pub save_snippet: Option<String>,
+    /// Text to paste (Ctrl+Shift+V, middle click, context menu). The caller checks it
+    /// (`ui::paste_guard`) and encodes it with `paste_bytes`.
+    pub paste: Option<String>,
+    /// Ctrl+R at a shell prompt: open Aurora's command history for this host.
+    pub history_search: bool,
 }
 
 pub struct TermView<'a> {
@@ -137,6 +142,8 @@ pub struct TermView<'a> {
     pub copy_on_select: bool,
     pub glow: Option<Color32>,
     pub overlay: Option<&'a str>,
+    /// Ctrl+R at a prompt opens the history popup instead of going to the shell.
+    pub ctrl_r: bool,
 }
 
 impl Terminal {
@@ -151,6 +158,41 @@ impl Terminal {
             font_scale: 1.0,
             zoom_hint_until: 0.0,
             search: None,
+        }
+    }
+
+    /// A terminal of a fixed grid size (time travel replays into one of these).
+    pub fn with_size(cols: u16, rows: u16, scrollback: usize) -> Self {
+        let mut t = Self::new(scrollback);
+        t.cols = cols.max(1);
+        t.rows = rows.max(1);
+        t.parser.screen_mut().set_size(t.rows, t.cols);
+        t
+    }
+
+    /// Escape sequences that restore the screen, cursor and input modes.
+    pub fn state_formatted(&self) -> Vec<u8> {
+        self.parser.screen().state_formatted()
+    }
+
+    /// Text after the shell prompt on the cursor line, only trimmed at the end (a leading
+    /// space matters: `HISTCONTROL=ignorespace`). `None` in full-screen programs or when the
+    /// line has no prompt.
+    pub fn prompt_command(&self) -> Option<String> {
+        let screen = self.parser.screen();
+        if screen.alternate_screen() {
+            return None;
+        }
+        let (row, _) = screen.cursor_position();
+        let line = screen.contents_between(row, 0, row, self.cols);
+        let cut = ["$ ", "# ", "> ", "% ", "❯ "]
+            .iter()
+            .filter_map(|p| line.find(p).map(|i| i + p.len()))
+            .min();
+        match cut {
+            Some(cut) => Some(line[cut..].trim_end().to_string()),
+            // Empty prompt: the row's trailing space is not part of the contents.
+            None => self.at_prompt().then(String::new),
         }
     }
 
@@ -551,6 +593,12 @@ impl Terminal {
                 self.scrollback_rows = self.parser.screen().scrollback();
             }
         }
+        if resp.middle_clicked()
+            && let Some(text) = clipboard_text()
+        {
+            resp.request_focus();
+            out.paste = Some(text);
+        }
         let selected = self.selected_text();
         let mut open_search = false;
         resp.context_menu(|ui| {
@@ -571,6 +619,10 @@ impl Terminal {
                 .clicked()
             {
                 out.save_snippet = selected.clone();
+                ui.close();
+            }
+            if ui.button(t!("📋 Einfügen")).clicked() {
+                out.paste = clipboard_text();
                 ui.close();
             }
             if ui.button(t!("🔍 Suchen  (Ctrl+Shift+F)")).clicked() {
@@ -609,7 +661,7 @@ impl Terminal {
                     Event::Ime(egui::ImeEvent::Commit(t)) => {
                         out.input.extend_from_slice(t.as_bytes())
                     }
-                    Event::Paste(t) => out.input.extend(self.paste_bytes(&t)),
+                    Event::Paste(t) => out.paste.get_or_insert_with(String::new).push_str(&t),
                     Event::Copy => {
                         if cfg!(target_os = "macos") || mods.shift {
                             if let Some(t) = self.selected_text() {
@@ -631,6 +683,19 @@ impl Terminal {
                         ..
                     } if modifiers.command && modifiers.shift => open_search = true,
                     Event::Key {
+                        key: Key::R,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if view.ctrl_r
+                        && modifiers.ctrl
+                        && !modifiers.shift
+                        && !modifiers.alt
+                        && self.prompt_command().is_some() =>
+                    {
+                        out.history_search = true
+                    }
+                    Event::Key {
                         key,
                         pressed: true,
                         modifiers,
@@ -643,7 +708,7 @@ impl Terminal {
                     _ => {}
                 }
             }
-            if !out.input.is_empty() && self.scrollback_rows > 0 {
+            if (!out.input.is_empty() || out.paste.is_some()) && self.scrollback_rows > 0 {
                 self.parser.screen_mut().set_scrollback(0);
                 self.scrollback_rows = 0;
             }
@@ -833,6 +898,15 @@ impl Terminal {
     }
 }
 
+/// Text on the system clipboard (middle click and the context menu's "Einfügen").
+fn clipboard_text() -> Option<String> {
+    arboard::Clipboard::new()
+        .ok()?
+        .get_text()
+        .ok()
+        .filter(|t| !t.is_empty())
+}
+
 #[cfg(test)]
 mod hook_tests {
     use super::Terminal;
@@ -843,10 +917,16 @@ mod hook_tests {
         t.feed(b"\x1b]0;aurora@vm: ~/src/app\x07aurora@vm:~/src/app$ ");
         assert_eq!(t.cwd().as_deref(), Some("~/src/app"));
         assert!(t.at_prompt());
+        assert_eq!(t.prompt_command().as_deref(), Some(""));
         t.feed(b"\x1b]7;file://vm/home/a%20b\x07");
         assert_eq!(t.cwd().as_deref(), Some("/home/a b"));
         t.feed(b"make\r\nbuilding...");
         assert!(!t.at_prompt());
+        assert_eq!(t.prompt_command(), None);
+        t.feed(b"\r\n$  export X=1");
+        assert_eq!(t.prompt_command().as_deref(), Some(" export X=1"));
+        t.feed(b"\x1b[?1049h");
+        assert_eq!(t.prompt_command(), None);
         t.feed(b"\x07");
         assert!(t.take_bell());
         assert!(!t.take_bell());

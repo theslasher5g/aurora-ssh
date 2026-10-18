@@ -198,6 +198,9 @@ fn terminal(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>, changed
     log_commands(app, ui, changed);
     ui.add_space(22.0);
     recordings(app, ui, actions, changed);
+    ui.add_space(22.0);
+    caption(ui, t!("Gedächtnis & Schutz"));
+    crate::ui::history::settings_card(app, ui, changed);
 }
 
 /// The user's own log viewer sources.

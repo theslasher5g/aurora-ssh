@@ -45,6 +45,9 @@ pub enum Icon {
     Logs,
     Record,
     Server,
+    /// Clock with a back arrow: time travel / history.
+    Clock,
+    Shield,
 }
 
 enum Prim {
@@ -152,6 +155,14 @@ fn prims(icon: Icon) -> &'static [Prim] {
             R(3.0, 3.5, 18.0, 7.0, 2.0),
             R(3.0, 13.5, 18.0, 7.0, 2.0),
             Path("M7 7h2M7 17h2M13 7h4M13 17h4"),
+        ],
+        Icon::Clock => &[
+            Path("M3 12a9 9 0 1 0 9-9a9.75 9.75 0 0 0-6.74 2.74L3 8"),
+            Path("M3 3v5h5M12 7v5l4 2"),
+        ],
+        Icon::Shield => &[
+            Path("M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"),
+            Path("M9 12l2 2 4-4"),
         ],
     }
 }
@@ -536,7 +547,7 @@ mod tests {
             Hosts, Key, Folder, Bolt, Tunnel, Gear, Sun, Help, Search, Wifi, Plus, Chevron, Star,
             Sparkle, Close, Split, Maximize, Exit, External, Keyboard, Expand, Monitor, Up,
             Refresh, File, Lock, Broadcast, Download, Terminal, Windows, Upload, Trash, Copy, Wrap,
-            Pause, Play, Stop, Server, Logs, Record,
+            Pause, Play, Stop, Server, Logs, Record, Clock, Shield,
         ] {
             for prim in prims(icon) {
                 if let Prim::Path(d) = prim {
