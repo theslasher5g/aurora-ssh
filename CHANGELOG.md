@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.7.1
+
+### New
+- **Local terminal:** your own shell on this PC in a tab – `Ctrl+Shift+T`, *New → Local
+  terminal* or the command palette (bash/zsh on Linux and macOS, PowerShell or cmd on Windows).
+- **Proxmox VM console that works:** a host already saved for the VM is used with its user and
+  key; otherwise a small sheet asks for the login (cloud-init user prefilled, key picker,
+  *save as host*). VMs without an address open the serial console over the API (no SSH host
+  needed) or noVNC in the browser; containers open over the API when no node SSH host is set.
+- **Small windows:** headers, filter rows and list rows reflow instead of overlapping, hover
+  buttons no longer cover names, columns and buttons hide step by step, and the window has a
+  minimum size.
+
+### Fixes
+- The *Update available* button opens *Data & updates* instead of *Appearance*.
+- Proxmox *Reboot* asks for confirmation like *Stop* and *Shut down*.
+
 ## 0.7.0
 
 ### Proxmox

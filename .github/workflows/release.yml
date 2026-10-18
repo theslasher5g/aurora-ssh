@@ -1,5 +1,5 @@
 # Builds Windows, Linux and macOS packages and publishes them together in ONE release.
-#   tag v0.7.0 -> Windows installer + portable zip, .deb + portable tar.gz, SHA256SUMS.txt
+#   tag v0.7.1 -> Windows installer + portable zip, .deb + portable tar.gz, SHA256SUMS.txt
 # Either push the tag, or run the workflow manually (it then creates the tag itself).
 name: Release
 
@@ -11,7 +11,7 @@ on:
     inputs:
       version:
         description: Version (without v)
-        default: "0.7.0"
+        default: "0.7.1"
 
 permissions:
   contents: write
@@ -204,7 +204,7 @@ jobs:
           body: |
             **Aurora ${{ env.VERSION }}** – Windows, Linux and macOS
 
-            **New in 0.7.0:** Proxmox live graphs, cloning, drag & drop migration, hardware edits, batch actions, cluster overview, alerts, node shell and Backup Server · command memory, time travel and secret guard in the terminal · runbooks, maintenance windows and diagnostics bundles · short-lived SSH certificates and double-checked host keys · jump chains with route finder, certificate radar and Wake-on-LAN. Full list: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/v${{ env.VERSION }}/CHANGELOG.md)
+            **New in 0.7.1:** local terminal (`Ctrl+Shift+T`) · Proxmox VM console that works (saved host, cloud-init login, serial console over the API) · layout for small windows · update button opens the updates tab · Proxmox reboot asks first. Full list: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/v${{ env.VERSION }}/CHANGELOG.md)
 
             | System | File | Install |
             |---|---|---|
