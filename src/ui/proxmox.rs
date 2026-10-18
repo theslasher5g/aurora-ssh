@@ -266,6 +266,7 @@ impl PveAction {
             PveAction::Power(_, Power::Shutdown) => {
                 Some((t!("Herunterfahren?"), t!("Herunterfahren")))
             }
+            PveAction::Power(_, Power::Reboot) => Some((t!("Neu starten?"), t!("Neustart"))),
             PveAction::Task(_, Op::Rollback(_)) => {
                 Some((t!("Snapshot zurücksetzen?"), t!("Zurücksetzen")))
             }
@@ -1730,7 +1731,7 @@ fn power_buttons(g: &Guest) -> Vec<(Power, &'static str)> {
     }
 }
 
-/// Stop and shutdown ask first.
+/// Stop, shutdown and reboot ask first.
 fn power_action(r: &GuestRef, power: Power) -> Action {
     let a = Action::Pve(PveAction::Power(r.clone(), power));
     match power {
@@ -1744,6 +1745,13 @@ fn power_action(r: &GuestRef, power: Power) -> Action {
         Power::Shutdown => {
             Action::Confirm(t!("„{}“ sauber herunterfahren?", r.label()), Box::new(a))
         }
+        Power::Reboot => Action::Confirm(
+            t!(
+                "„{}“ neu starten? Laufende Verbindungen brechen ab.",
+                r.label()
+            ),
+            Box::new(a),
+        ),
         _ => a,
     }
 }

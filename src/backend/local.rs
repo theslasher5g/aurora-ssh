@@ -53,6 +53,30 @@ pub fn find_program(program: &str) -> Option<std::path::PathBuf> {
         })
 }
 
+/// The user's shell on this PC: `$SHELL -l` (else bash/sh) on Unix; PowerShell 7,
+/// Windows PowerShell or cmd on Windows.
+pub fn default_shell() -> Vec<String> {
+    if cfg!(windows) {
+        for p in ["pwsh", "powershell", "cmd"] {
+            if find_program(p).is_some() {
+                return vec![p.to_string()];
+            }
+        }
+        return vec!["cmd".into()];
+    }
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|s| std::path::Path::new(s).is_absolute() && std::path::Path::new(s).is_file())
+        .or_else(|| {
+            ["/bin/bash", "/bin/zsh", "/bin/sh"]
+                .into_iter()
+                .find(|p| std::path::Path::new(p).is_file())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "/bin/sh".into());
+    vec![shell, "-l".into()]
+}
+
 fn size(cols: u16, rows: u16) -> PtySize {
     PtySize {
         rows,

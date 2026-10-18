@@ -652,6 +652,8 @@ pub enum Action {
     Lock,
     SetTheme(String),
     Reconnect(u64),
+    /// Terminal with the user's shell on this PC.
+    LocalTerminal,
     /// Open every host of a group, side by side.
     OpenGroup(Uuid),
     /// Snippet editor prefilled with this text.
@@ -1190,6 +1192,24 @@ impl App {
         }
         self.active = Some(id);
         self.focus_term = Some(id);
+    }
+
+    /// Terminal tab with the user's shell on this PC.
+    pub fn open_local_terminal(&mut self, ctx: &egui::Context) {
+        let argv = backend::local::default_shell();
+        let shell = std::path::Path::new(&argv[0])
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        // Not a saved host and nothing to save (same trick as the node shell).
+        let host = Host {
+            label: t!("Lokales Terminal").into(),
+            hostname: "localhost".into(),
+            protocol: Protocol::Telnet,
+            ..Default::default()
+        };
+        let subtitle = format!("{shell} · {}", t!("dieser PC"));
+        self.push_term_tab(&host, ConnectSpec::Local(argv), subtitle, ctx);
     }
 
     /// Terminal tab with a shell on a Proxmox node (termproxy over the API).
@@ -3015,6 +3035,7 @@ impl App {
                 self.palette.selected = 0;
             }
             Action::Reconnect(id) => self.reconnect(id, ctx),
+            Action::LocalTerminal => self.open_local_terminal(ctx),
             Action::SetTheme(id) => {
                 theme::apply(ctx, &id);
                 self.lib.settings.theme = id;
@@ -4316,7 +4337,7 @@ impl App {
 
     fn shortcuts(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
         let before = self.active;
-        let (palette, close_tab, next_tab) = ctx.input_mut(|i| {
+        let (palette, close_tab, next_tab, local) = ctx.input_mut(|i| {
             (
                 i.consume_key(egui::Modifiers::COMMAND, egui::Key::K),
                 i.consume_key(
@@ -4324,10 +4345,17 @@ impl App {
                     egui::Key::W,
                 ),
                 i.consume_key(egui::Modifiers::CTRL, egui::Key::Tab),
+                i.consume_key(
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                    egui::Key::T,
+                ),
             )
         });
         if palette {
             actions.push(Action::OpenPalette);
+        }
+        if local {
+            actions.push(Action::LocalTerminal);
         }
         // F1 anywhere, "?" when no text field or terminal has the keyboard.
         let nothing_focused = ctx.memory(|m| m.focused().is_none());

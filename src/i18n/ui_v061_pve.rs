@@ -119,6 +119,10 @@ pub const T: &[(&str, &str)] = &[
     ("„{}“ ist schon in „{}“", "“{}” is already in “{}”"),
     ("„{}“ sauber herunterfahren?", "Shut down “{}” cleanly?"),
     (
+        "„{}“ neu starten? Laufende Verbindungen brechen ab.",
+        "Restart “{}”? Open connections will drop.",
+    ),
+    (
         "„{}“ sofort ausschalten? Nicht gespeicherte Daten im Gast gehen verloren.",
         "Power off “{}” immediately? Unsaved data in the guest is lost.",
     ),

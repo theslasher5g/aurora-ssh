@@ -337,6 +337,8 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                             )
                             .clicked()
                             {
+                                // Straight to "Data & updates", where the update is installed.
+                                app.settings_tab = 4;
                                 actions.push(Action::Navigate(View::Settings));
                             }
                         }

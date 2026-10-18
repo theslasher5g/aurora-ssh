@@ -87,6 +87,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     }
                 }
                 ui.separator();
+                if ui
+                    .button(format!("{}  {}", ">_", t!("Lokales Terminal")))
+                    .on_hover_text("Ctrl+Shift+T")
+                    .clicked()
+                {
+                    actions.push(Action::LocalTerminal);
+                    ui.close();
+                }
                 if ui.button(t!("Container durchsuchen…")).clicked() {
                     actions.push(Action::BrowseContainers(Protocol::Docker, None, false));
                     ui.close();

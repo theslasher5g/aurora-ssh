@@ -94,4 +94,5 @@ pub const T: &[(&str, &str)] = &[
         "Copy the text of this screen",
     ),
     ("Gedächtnis & Schutz", "History & protection"),
+    ("Lokales Terminal", "Local terminal"),
 ];

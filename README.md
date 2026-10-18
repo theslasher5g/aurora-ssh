@@ -83,6 +83,7 @@ What's new in each version: [CHANGELOG.md](CHANGELOG.md) · planned: [ROADMAP.md
 | `Ctrl/⌘ + Shift + W` | Close session |
 | `Ctrl + Shift + F` | Search in the terminal (Enter = older, Shift+Enter = newer match) |
 | `Ctrl + Shift + L` | Logs next to the terminal |
+| `Ctrl + Shift + T` | Local terminal (your shell on this PC) |
 | `Ctrl + R` | Search the host's command history (at the shell prompt) |
 | `Ctrl` + mouse wheel | Terminal font size |
 | `F11` | Full screen on/off |

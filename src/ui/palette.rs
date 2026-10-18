@@ -96,6 +96,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         ("CMD", "Neue Gruppe", Action::NewGroup(None)),
         ("CMD", "Neue Identität", Action::NewIdentity),
         ("CMD", "Neues Snippet", Action::NewSnippet),
+        ("CMD", "Lokales Terminal", Action::LocalTerminal),
         (
             "CMD",
             "Verbindungen anzeigen",
