@@ -25,6 +25,8 @@ pub struct SshParams {
     pub known_fingerprint: Option<String>,
     /// Connect through this host first (ProxyJump).
     pub jump: Option<Box<SshParams>>,
+    /// Log in with a short-lived certificate from the keychain CA first.
+    pub cert: Option<Box<super::sshca::CertLogin>>,
 }
 
 impl SshParams {
@@ -36,6 +38,11 @@ impl SshParams {
 pub struct Client {
     host_id: String,
     known: Option<String>,
+    /// Target as given (for the second-opinion checks).
+    hostname: String,
+    port: u16,
+    /// Name of the jump host this connection runs through.
+    jump_name: Option<String>,
     prompts: Sink<HostKeyPrompt>,
     /// Keeps the jump host connection alive as long as this session lives.
     _via: Option<Arc<SshHandle>>,
@@ -48,19 +55,38 @@ impl client::Handler for Client {
         &mut self,
         key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
-        let (algorithm, fingerprint) = match key {
+        let (algorithm, fingerprint, raw) = match key {
             PublicKeyOrCertificate::PublicKey { key, .. } => (
                 key.algorithm().as_str().to_string(),
                 key.fingerprint(HashAlg::Sha256).to_string(),
+                (key.algorithm().as_str().to_string(), key.to_bytes().ok()),
             ),
-            PublicKeyOrCertificate::Certificate(cert) => (
-                format!("{} (cert)", cert.algorithm().as_str()),
-                cert.public_key().fingerprint(HashAlg::Sha256).to_string(),
-            ),
+            PublicKeyOrCertificate::Certificate(cert) => {
+                let inner = russh::keys::PublicKey::new(cert.public_key().clone(), "");
+                (
+                    format!("{} (cert)", cert.algorithm().as_str()),
+                    cert.public_key().fingerprint(HashAlg::Sha256).to_string(),
+                    (
+                        inner.algorithm().as_str().to_string(),
+                        inner.to_bytes().ok(),
+                    ),
+                )
+            }
         };
         if self.known.as_deref() == Some(fingerprint.as_str()) {
             return Ok(true);
         }
+        // Ask DNS (SSHFP) and the jump host while the user looks at the dialog.
+        let checks = raw.1.map(|blob| {
+            super::hostkey_check::start(
+                self.hostname.clone(),
+                self.port,
+                raw.0,
+                blob,
+                self.jump_name.clone().zip(self._via.clone()),
+                self.prompts.ctx(),
+            )
+        });
         let (tx, rx) = oneshot::channel();
         self.prompts.send(HostKeyPrompt {
             host: self.host_id.clone(),
@@ -68,6 +94,7 @@ impl client::Handler for Client {
             fingerprint,
             previous: self.known.clone(),
             reply: tx,
+            checks,
         });
         Ok(rx.await.unwrap_or(false))
     }
@@ -93,6 +120,9 @@ pub fn connect(
                 let handler = Client {
                     host_id: p.host_id(),
                     known: p.known_fingerprint.clone(),
+                    hostname: p.host.clone(),
+                    port: p.port,
+                    jump_name: None,
                     prompts: prompts.clone(),
                     _via: None,
                 };
@@ -127,6 +157,9 @@ pub fn connect(
                 let handler = Client {
                     host_id: p.host_id(),
                     known: p.known_fingerprint.clone(),
+                    hostname: p.host.clone(),
+                    port: p.port,
+                    jump_name: Some(jump.host.clone()),
                     prompts: prompts.clone(),
                     _via: Some(via),
                 };
@@ -142,6 +175,39 @@ pub fn connect(
 
         let mut offered: Vec<russh::MethodKind> = Vec::new();
         let mut key_rejected = false;
+        let mut cert_rejected = false;
+        if let Some(login) = &p.cert {
+            let outcome = match super::sshca::issue(login, &p.username, &p.host) {
+                Ok((key, cert)) => {
+                    let (valid_before, serial) = (cert.valid_before(), cert.serial());
+                    match session
+                        .authenticate_openssh_cert(&p.username, Arc::new(key), cert)
+                        .await?
+                    {
+                        client::AuthResult::Success => {
+                            *login.outcome.lock().unwrap_or_else(|e| e.into_inner()) =
+                                Some(super::sshca::CertOutcome::Accepted {
+                                    valid_before,
+                                    serial,
+                                });
+                            return Ok(session);
+                        }
+                        client::AuthResult::Failure {
+                            remaining_methods, ..
+                        } => {
+                            offered = remaining_methods.to_vec();
+                            t!("vom Server abgelehnt – TrustedUserCAKeys eingerichtet, Principal passt?")
+                                .to_string()
+                        }
+                    }
+                }
+                Err(e) => format!("{e:#}"),
+            };
+            log::warn!("certificate login to {} failed: {outcome}", p.host_id());
+            cert_rejected = true;
+            *login.outcome.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some(super::sshca::CertOutcome::Rejected(outcome));
+        }
         if let Some(key_text) = p.private_key.as_deref().filter(|k| !k.trim().is_empty()) {
             let key =
                 decode_secret_key(key_text, p.passphrase.as_deref().filter(|s| !s.is_empty()))
@@ -197,6 +263,20 @@ pub fn connect(
             }
         }
 
+        if cert_rejected && !key_rejected && p.password.is_none() {
+            bail!(
+                "{}",
+                t!(
+                    "Kurzzeit-Zertifikat von {} abgelehnt und keine andere Anmeldung hinterlegt. Ist die Aurora-CA auf dem Server eingerichtet (TrustedUserCAKeys) und erlaubt das Zertifikat den Benutzer „{}“ (Principals: {})?",
+                    p.host,
+                    p.username,
+                    p.cert
+                        .as_ref()
+                        .map(|c| c.principals.join(", "))
+                        .unwrap_or_default()
+                )
+            );
+        }
         bail!(auth_hint(
             &p.username,
             &p.host,
@@ -343,6 +423,9 @@ async fn run_shell(
         None => t!("Verbinde mit {}…", p.host_id()),
     }));
     let handle = Arc::new(connect(p, prompts).await?);
+    if let Some(note) = p.cert.as_deref().and_then(cert_note) {
+        events.send(TermEvent::Output(note.into_bytes()));
+    }
     events.send(TermEvent::Status(t!("Öffne Shell…").into()));
     let command = match &start {
         ShellStart::Login => None,
@@ -423,6 +506,34 @@ async fn run_shell(
         Some(code) => bail!("{}", t!("Beendet mit Code {}", code)),
         None => Ok(()),
     }
+}
+
+/// One coloured terminal line about the certificate login.
+fn cert_note(login: &super::sshca::CertLogin) -> Option<String> {
+    use super::sshca::CertOutcome;
+    let outcome = login.outcome.lock().ok()?.clone()?;
+    Some(match outcome {
+        CertOutcome::Accepted { valid_before, .. } => {
+            let until = chrono::DateTime::from_timestamp(valid_before as i64, 0)
+                .map(|t| {
+                    t.with_timezone(&chrono::Local)
+                        .format("%d.%m. %H:%M")
+                        .to_string()
+                })
+                .unwrap_or_default();
+            format!(
+                "\x1b[32m{}\x1b[0m\r\n",
+                t!("Angemeldet mit Kurzzeit-Zertifikat (gültig bis {})", until)
+            )
+        }
+        CertOutcome::Rejected(why) => format!(
+            "\x1b[33m{}\x1b[0m\r\n",
+            t!(
+                "Kurzzeit-Zertifikat nicht angenommen ({}) – Anmeldung mit der normalen Identität",
+                why
+            )
+        ),
+    })
 }
 
 /// Read-only system facts: os-release, hostname, uptime, root disk, pending updates.
@@ -509,6 +620,7 @@ pub async fn install_key(
         password: None,
         private_key: Some(private),
         passphrase: None,
+        cert: None,
         ..p
     };
     let handle = connect(&check, prompts).await.map_err(|e| {

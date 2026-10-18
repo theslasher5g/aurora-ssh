@@ -888,7 +888,8 @@ impl App {
         let (user, ident) = self.credentials(&host);
         let has_secret = ident.as_ref().is_some_and(|i| {
             !i.password.is_empty() || (host.protocol == Protocol::Ssh && !i.private_key.is_empty())
-        });
+        }) || (host.protocol == Protocol::Ssh
+            && crate::backend::sshca::login_for(&host, &user, &self.keychain).is_some());
         let needs_secret = match host.protocol {
             Protocol::Ssh => true,
             Protocol::Rdp => host.rdp.embedded,
@@ -1231,6 +1232,7 @@ impl App {
                 .get(&format!("{}:{}", host.hostname.trim(), host.port))
                 .cloned(),
             jump: self.jump_params(host),
+            cert: crate::backend::sshca::login_for(host, user, &self.keychain),
         }
     }
 
@@ -2455,8 +2457,12 @@ impl App {
                                 let (cols, rows) = t.term.size();
                                 let _ = t.tx.send(TermCmd::Resize { cols, rows });
                                 if let Some(cmd) = t.run_once.take() {
-                                    let _ =
-                                        t.tx.send(TermCmd::Input(format!("{cmd}\r").into_bytes()));
+                                    // Pre-typed commands wait for the user's Enter.
+                                    let line = match cmd.strip_prefix(crate::ui::sshca::PRETYPE) {
+                                        Some(c) => c.to_string(),
+                                        None => format!("{cmd}\r"),
+                                    };
+                                    let _ = t.tx.send(TermCmd::Input(line.into_bytes()));
                                 }
                                 if let Some(s) = &t.startup {
                                     let mut s = s.replace('\n', "\r");

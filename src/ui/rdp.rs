@@ -389,6 +389,7 @@ impl RdpView {
                         fingerprint: fingerprint.clone(),
                         previous,
                         reply,
+                        checks: None,
                     });
                     std::thread::spawn(move || {
                         let accept = answer.blocking_recv().unwrap_or(false);

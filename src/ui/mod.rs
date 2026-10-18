@@ -3,6 +3,7 @@ pub mod containers;
 pub mod dialogs;
 pub mod editors;
 pub mod help;
+pub mod hostkey;
 pub mod hosts;
 pub mod icons;
 pub mod keychain;
@@ -15,6 +16,7 @@ pub mod rdp;
 pub mod settings;
 pub mod sftp;
 pub mod snippets;
+pub mod sshca;
 pub mod vnc;
 
 /// Case-insensitive subsequence match; returns a score (higher is better).
