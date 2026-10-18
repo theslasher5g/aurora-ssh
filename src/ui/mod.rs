@@ -1,3 +1,4 @@
+pub mod certradar;
 pub mod chrome;
 pub mod containers;
 pub mod dialogs;
@@ -8,14 +9,17 @@ pub mod icons;
 pub mod keychain;
 pub mod lock;
 pub mod logview;
+pub mod net;
 pub mod palette;
 pub mod portscan;
 pub mod proxmox;
 pub mod rdp;
+pub mod route;
 pub mod settings;
 pub mod sftp;
 pub mod snippets;
 pub mod vnc;
+pub mod wol;
 
 /// Case-insensitive subsequence match; returns a score (higher is better).
 pub fn fuzzy(query: &str, text: &str) -> Option<i32> {

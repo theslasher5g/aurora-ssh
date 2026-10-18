@@ -600,6 +600,8 @@ pub struct App {
     pub update_rx: UnboundedReceiver<crate::update::UpdateEvent>,
     /// Proxmox servers: live data, editor, certificate prompt.
     pub pve: crate::ui::proxmox::PveState,
+    /// Route finder, certificate radar, Wake-on-LAN.
+    pub net: crate::ui::net::NetState,
 }
 
 /// UI intents collected while drawing and applied afterwards.
@@ -681,6 +683,8 @@ pub enum Action {
     OpenContainer(Box<Host>, bool),
     /// Proxmox page: servers, power actions, consoles.
     Pve(crate::ui::proxmox::PveAction),
+    /// Route finder, certificate radar, Wake-on-LAN.
+    Net(crate::ui::net::NetAction),
 }
 
 impl App {
@@ -788,6 +792,7 @@ impl App {
             update_sink,
             update_rx,
             pve: crate::ui::proxmox::PveState::new(&cc.egui_ctx),
+            net: Default::default(),
         }
     }
 
@@ -1131,6 +1136,7 @@ impl App {
                 format!("{user}{}:{}", host.hostname.trim(), host.port)
             }
         };
+        let subtitle = crate::ui::route::with_route(&self.lib, host, subtitle);
         self.push_tab(id, host, subtitle, color, kind);
     }
 
@@ -1186,7 +1192,7 @@ impl App {
         self.push_tab(id, host, subtitle, color, TabKind::Term(Box::new(term)));
     }
 
-    fn ssh_params(
+    pub(crate) fn ssh_params(
         &self,
         host: &Host,
         user: &str,
@@ -1215,30 +1221,30 @@ impl App {
         }
     }
 
-    /// ProxyJump: the jump host's own connection parameters (stored credentials only;
-    /// one level, no chains).
+    /// ProxyJump: the jump hosts' own connection parameters (stored credentials only),
+    /// nested so each hop is reached through the one before it (up to 4, loops are cut).
     fn jump_params(&self, host: &Host) -> Option<Box<SshParams>> {
-        let jump = host
-            .jump_host
-            .filter(|j| *j != host.id)
-            .and_then(|j| self.lib.host(j))?
-            .clone();
-        let (user, ident) = self.credentials(&jump);
-        let password = ident
-            .as_ref()
-            .map(|i| i.password.clone())
-            .filter(|p| !p.is_empty());
-        let mut p = self.ssh_params(
-            &Host {
-                jump_host: None,
-                ..jump
-            },
-            &user,
-            &password,
-            &ident,
-        );
-        p.jump = None;
-        Some(Box::new(p))
+        let mut via: Option<Box<SshParams>> = None;
+        for id in backend::route::jump_chain_lossy(&self.lib, host) {
+            let jump = self.lib.host(id)?.clone();
+            let (user, ident) = self.credentials(&jump);
+            let password = ident
+                .as_ref()
+                .map(|i| i.password.clone())
+                .filter(|p| !p.is_empty());
+            let mut p = self.ssh_params(
+                &Host {
+                    jump_host: None,
+                    ..jump
+                },
+                &user,
+                &password,
+                &ident,
+            );
+            p.jump = via.take();
+            via = Some(Box::new(p));
+        }
+        via
     }
 
     /// New file tab with two panes; `None` means the local disk.
@@ -2586,6 +2592,7 @@ impl App {
                 self.failed.remove(&h);
             } else {
                 self.failed.insert(h);
+                crate::ui::net::on_connect_failed(self, h, ctx);
             }
         }
         if !learned.is_empty() {
@@ -2955,6 +2962,7 @@ impl App {
             }
             Action::Confirm(text, inner) => self.confirm_delete = Some((text, *inner)),
             Action::Pve(a) => crate::ui::proxmox::apply(self, a, ctx),
+            Action::Net(a) => crate::ui::net::apply(self, a, ctx),
             Action::OpenGroup(gid) => {
                 let hosts: Vec<Host> = self
                     .lib
@@ -4400,6 +4408,7 @@ impl eframe::App for App {
         crate::ui::dialogs::show(self, &ctx);
         crate::ui::containers::show(self, &ctx, &mut actions);
         crate::ui::portscan::show(self, &ctx, &mut actions);
+        crate::ui::net::show(self, &ctx, &mut actions);
         self.toasts_ui(&ctx);
 
         for a in actions {

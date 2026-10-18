@@ -97,6 +97,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     ui.close();
                 }
             });
+            if crate::ui::certradar::header_button(app, ui).clicked() {
+                actions.push(Action::Net(crate::ui::net::NetAction::OpenRadar));
+            }
             if theme::btn(ui, theme::Btn::Normal, Some(Icon::Wifi), t!("Netz scannen"))
                 .on_hover_text(t!(
                     "Geräte mit SSH/RDP im lokalen Netz finden und übernehmen"
@@ -1087,8 +1090,15 @@ fn host_row(
     };
     // Facts from the server and the jump host follow the address.
     let mut extra: Vec<(String, Color32)> = Vec::new();
-    if let Some(j) = h.jump_host.and_then(|j| app.lib.host(j)) {
-        extra.push((t!("via {}", j.display_name()), theme::text_dim()));
+    let chain = crate::backend::route::jump_chain_lossy(&app.lib, h);
+    if !chain.is_empty() {
+        extra.push((
+            t!(
+                "via {}",
+                crate::backend::route::chain_names(&app.lib, &chain)
+            ),
+            theme::text_dim(),
+        ));
     }
     let facts = app.lib.facts.get(&h.id);
     if let Some(f) = facts {
@@ -1233,13 +1243,17 @@ fn host_row(
         if let Some(t) = h.last_connected {
             parts.push(relative_time(t));
         }
-        p.text(
-            Pos2::new(rect.right() - 16.0, cy),
-            egui::Align2::RIGHT_CENTER,
-            parts.join(" · "),
-            FontId::proportional(12.5),
-            theme::text_dim(),
-        );
+        if let Some(text) = app.net.wol.pill_text(h.id) {
+            crate::ui::wol::paint_pill(&p, Pos2::new(rect.right() - 16.0, cy), &text);
+        } else {
+            p.text(
+                Pos2::new(rect.right() - 16.0, cy),
+                egui::Align2::RIGHT_CENTER,
+                parts.join(" · "),
+                FontId::proportional(12.5),
+                theme::text_dim(),
+            );
+        }
         let mut tx = rect.right() - 16.0 - slot - 12.0;
         let left_limit = x.max(nx) + 16.0;
         for tag in tags.iter().rev() {
@@ -1319,6 +1333,24 @@ fn host_row(
         {
             actions.push(Action::EditHost(h.id));
         }
+        let offline =
+            !is_live && (app.failed.contains(&h.id) || matches!(reach, Some(Reach::Down)));
+        if offline
+            && crate::ui::wol::can_wake(h)
+            && app.net.wol.waiting(h.id).is_none()
+            && theme::btn(
+                &mut child,
+                theme::Btn::Small,
+                Some(Icon::Power),
+                t!("Aufwecken"),
+            )
+            .on_hover_text(t!(
+                "Wake-on-LAN: Magic Packet senden, auf den Host warten und verbinden"
+            ))
+            .clicked()
+        {
+            actions.push(Action::Net(crate::ui::net::NetAction::Wake(h.id, true)));
+        }
     }
 
     if resp.double_clicked() {
@@ -1351,6 +1383,38 @@ fn host_row(
                 .clicked()
         {
             actions.push(Action::PortScan(h.id));
+            ui.close();
+        }
+        if crate::ui::wol::can_wake(h) {
+            if app.net.wol.waiting(h.id).is_some() {
+                if ui.button(t!("Aufwecken abbrechen")).clicked() {
+                    actions.push(Action::Net(crate::ui::net::NetAction::CancelWake(h.id)));
+                    ui.close();
+                }
+            } else {
+                if ui
+                    .button(t!("Aufwecken"))
+                    .on_hover_text(t!("Wake-on-LAN-Paket senden"))
+                    .clicked()
+                {
+                    actions.push(Action::Net(crate::ui::net::NetAction::Wake(h.id, false)));
+                    ui.close();
+                }
+                if ui.button(t!("Aufwecken und verbinden")).clicked() {
+                    actions.push(Action::Net(crate::ui::net::NetAction::Wake(h.id, true)));
+                    ui.close();
+                }
+            }
+        }
+        if h.protocol == Protocol::Ssh
+            && ui
+                .button(t!("Weg finden…"))
+                .on_hover_text(t!(
+                    "Fragt deine anderen SSH-Hosts, ob sie diesen Host erreichen – für Hosts hinter einem Bastion/Jump-Host"
+                ))
+                .clicked()
+        {
+            actions.push(Action::Net(crate::ui::net::NetAction::FindRoute(h.id)));
             ui.close();
         }
         if h.protocol == Protocol::Ssh {

@@ -328,6 +328,21 @@ pub struct Host {
     /// SSH: open the shell inside `tmux` (or `screen`) so a reconnect lands in the same
     /// session with its running jobs.
     pub persistent: bool,
+    /// Wake-on-LAN: MAC address and where to send the magic packet.
+    #[serde(default)]
+    pub wol: WolSettings,
+}
+
+/// Wake-on-LAN settings of a host.
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct WolSettings {
+    /// `aa:bb:cc:dd:ee:ff`; empty = no Wake-on-LAN.
+    pub mac: String,
+    /// Broadcast address; empty = 255.255.255.255.
+    pub broadcast: String,
+    /// UDP port; 0 = 9.
+    pub port: u16,
 }
 
 impl Default for Host {
@@ -356,6 +371,7 @@ impl Default for Host {
             vnc: VncSettings::default(),
             term: TermProfile::default(),
             persistent: false,
+            wol: WolSettings::default(),
         }
     }
 }
@@ -777,6 +793,22 @@ pub struct Library {
     pub log_commands: Vec<LogCommand>,
     /// Proxmox VE servers (own page, not part of the host list).
     pub pve_servers: Vec<PveServer>,
+    /// Port scan results and the certificate radar.
+    #[serde(default)]
+    pub net: NetData,
+}
+
+/// Network data Aurora remembers between runs.
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[serde(default)]
+pub struct NetData {
+    /// Open ports of each host from its last port scan.
+    pub open_ports: HashMap<Uuid, Vec<u16>>,
+    /// Certificates found by the last radar run.
+    pub certs: Vec<crate::backend::certradar::CertInfo>,
+    pub certs_checked: Option<DateTime<Utc>>,
+    /// No daily background check.
+    pub radar_paused: bool,
 }
 
 /// System facts collected after an SSH login (read-only commands).
