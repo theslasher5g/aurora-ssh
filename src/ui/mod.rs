@@ -99,20 +99,18 @@ pub fn page_header(
 ) -> bool {
     use crate::theme;
     let mut clicked = false;
-    ui.horizontal(|ui| {
-        theme::page_title(ui, title, Some(count));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
+    let search_id = ui.id().with(("page-search", title));
+    theme::page_header(
+        ui,
+        ("list-page", title),
+        |ui| theme::page_title(ui, title, Some(count)),
+        |_| {},
+        |ui, bar| {
             clicked = theme::btn(ui, theme::Btn::Primary, Some(icons::Icon::Plus), add).clicked();
-            theme::search_field(
-                ui,
-                search,
-                hint,
-                260.0,
-                ui.id().with(("page-search", title)),
-            );
-        });
-    });
+            let width = bar.flex(160.0, 260.0);
+            theme::search_field(ui, search, hint, width, search_id);
+        },
+    );
     ui.add_space(22.0);
     clicked
 }
@@ -136,6 +134,28 @@ pub fn row_buttons(
             .layout(egui::Layout::right_to_left(egui::Align::Center)),
     );
     child.spacing_mut().item_spacing.x = 6.0;
+    // Opaque strip behind the buttons so the row text never shows through.
+    let strip: f32 = labels
+        .iter()
+        .enumerate()
+        .map(|(i, l)| {
+            let kind = if i == 0 {
+                theme::Btn::SmallPrimary
+            } else {
+                theme::Btn::Small
+            };
+            theme::btn_width(&child, kind, None, l) + 6.0
+        })
+        .sum();
+    theme::fade_cover(
+        &ui.painter().with_clip_rect(rect.intersect(ui.clip_rect())),
+        egui::Rect::from_min_max(
+            egui::pos2(rect.right() - 16.0 - strip - 6.0, rect.top() + 1.0),
+            rect.right_bottom(),
+        ),
+        16.0,
+        &[theme::surface(), theme::hover()],
+    );
     for (i, label) in labels.iter().enumerate().rev() {
         // The first action is the main one.
         let kind = if i == 0 {

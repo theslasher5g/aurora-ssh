@@ -239,55 +239,30 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             };
             ui.with_layout(layout, |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
-                if wide {
-                    ui.horizontal(|ui| {
-                        ui.add_space(10.0);
-                        theme::logo(ui, 34.0).on_hover_text("Aurora");
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if theme::icon_btn(ui, Icon::Lock, t!("Sperren")).clicked() {
-                                actions.push(Action::Lock);
-                            }
+                // Low windows: the upper part scrolls instead of running into the bottom items.
+                let item_h = if wide { 38.0 } else { TILE + 4.0 };
+                let n_bottom = 2
+                    + usize::from(app.update.latest.is_some())
+                    + if wide {
+                        0
+                    } else {
+                        1 + usize::from(!app.tabs.is_empty())
+                    };
+                let top_h = (ui.available_height() - n_bottom as f32 * item_h - 8.0).max(item_h);
+                egui::ScrollArea::vertical()
+                    .id_salt("rail-top")
+                    .max_height(top_h)
+                    .auto_shrink([false, true])
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                    .scroll_source(egui::scroll_area::ScrollSource::MOUSE_WHEEL)
+                    .show(ui, |ui| {
+                        ui.with_layout(layout, |ui| {
+                            ui.spacing_mut().item_spacing.y = 4.0;
+                            let low = ui.ctx().content_rect().height() < 560.0;
+                            rail_top(app, ui, wide, low, actions);
                         });
                     });
-                    ui.add_space(22.0);
-                } else {
-                    theme::logo(ui, 34.0).on_hover_text("Aurora");
-                    ui.add_space(14.0);
-                }
-
                 let home = app.active.is_none();
-                for (view, icon, label) in [
-                    (View::Hosts, Icon::Hosts, "Verbindungen"),
-                    (View::Keychain, Icon::Key, "Schlüssel"),
-                    (View::Files, Icon::Folder, "Dateien"),
-                    (View::Snippets, Icon::Bolt, "Snippets"),
-                    (View::Proxmox, Icon::Server, "Proxmox"),
-                ] {
-                    if nav_item(
-                        ui,
-                        icon,
-                        crate::i18n::tr(label),
-                        home && app.view == view,
-                        wide,
-                        None,
-                        None,
-                    )
-                    .clicked()
-                    {
-                        actions.push(Action::Navigate(view));
-                    }
-                }
-                tunnel_item(app, ui, wide, actions);
-
-                if !app.tabs.is_empty() {
-                    ui.add_space(6.0);
-                    let (r, _) = ui.allocate_exact_size(Vec2::new(28.0, 1.0), Sense::hover());
-                    ui.painter()
-                        .rect_filled(r, CornerRadius::ZERO, theme::line());
-                    ui.add_space(6.0);
-                }
-
-                ports(app, ui, actions);
 
                 ui.with_layout(
                     if wide {
@@ -373,6 +348,59 @@ pub fn rail(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 );
             });
         });
+}
+
+/// Logo, page entries and session tiles (the scrollable upper part of the rail).
+fn rail_top(app: &mut App, ui: &mut egui::Ui, wide: bool, low: bool, actions: &mut Vec<Action>) {
+    if wide {
+        ui.horizontal(|ui| {
+            ui.add_space(10.0);
+            theme::logo(ui, 34.0).on_hover_text("Aurora");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if theme::icon_btn(ui, Icon::Lock, t!("Sperren")).clicked() {
+                    actions.push(Action::Lock);
+                }
+            });
+        });
+        ui.add_space(22.0);
+    } else if !low {
+        theme::logo(ui, 34.0).on_hover_text("Aurora");
+        ui.add_space(14.0);
+    }
+
+    let home = app.active.is_none();
+    for (view, icon, label) in [
+        (View::Hosts, Icon::Hosts, "Verbindungen"),
+        (View::Keychain, Icon::Key, "Schlüssel"),
+        (View::Files, Icon::Folder, "Dateien"),
+        (View::Snippets, Icon::Bolt, "Snippets"),
+        (View::Proxmox, Icon::Server, "Proxmox"),
+    ] {
+        if nav_item(
+            ui,
+            icon,
+            crate::i18n::tr(label),
+            home && app.view == view,
+            wide,
+            None,
+            None,
+        )
+        .clicked()
+        {
+            actions.push(Action::Navigate(view));
+        }
+    }
+    tunnel_item(app, ui, wide, actions);
+
+    if !app.tabs.is_empty() {
+        ui.add_space(6.0);
+        let (r, _) = ui.allocate_exact_size(Vec2::new(28.0, 1.0), Sense::hover());
+        ui.painter()
+            .rect_filled(r, CornerRadius::ZERO, theme::line());
+        ui.add_space(6.0);
+    }
+
+    ports(app, ui, actions);
 }
 
 /// "Tunnel" entry: a menu with every tunnel of every host, open ones first.
@@ -517,6 +545,21 @@ fn ports(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             tab.env,
         );
         let tile = resp.rect;
+        // Low windows scroll the rail: keep the active session in view (unless the
+        // pointer is on the rail, where the user may be scrolling).
+        if app.active == Some(tab.id) {
+            let seen_id = egui::Id::new("rail-active-seen");
+            let clip = ui.clip_rect();
+            let hidden = !clip.contains_rect(tile)
+                && !ui
+                    .ctx()
+                    .pointer_hover_pos()
+                    .is_some_and(|p| clip.contains(p));
+            if hidden || ui.ctx().data(|d| d.get_temp::<u64>(seen_id)) != Some(tab.id) {
+                ui.ctx().data_mut(|d| d.insert_temp(seen_id, tab.id));
+                resp.scroll_to_me(None);
+            }
+        }
         if resp.drag_started() {
             ui.ctx()
                 .data_mut(|d| d.insert_temp(drag_id(), DragTab(tab.id)));
@@ -921,7 +964,26 @@ pub fn session_header(
                 ui.painter()
                     .rect_filled(r, CornerRadius::ZERO, theme::line());
                 ui.add_space(6.0);
-                right(ui);
+                // Narrow panes: the session tools move into a "…" menu (one row), so the
+                // title keeps its room. The full width of the tools is remembered.
+                let tools_id = id.with("tools-width");
+                let tools_w: f32 = ui.ctx().data(|d| d.get_temp(tools_id)).unwrap_or(0.0);
+                if ui.available_width() < tools_w + 200.0 {
+                    let more = theme::icon_button(ui, "…", t!("Weitere Aktionen"));
+                    egui::Popup::menu(&more).id(id.with("tools")).show(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 2.0;
+                            right(ui);
+                        });
+                    });
+                } else {
+                    let before = ui.min_rect().width();
+                    right(ui);
+                    let w = ui.min_rect().width() - before;
+                    if (w - tools_w).abs() > 0.5 {
+                        ui.ctx().data_mut(|d| d.insert_temp(tools_id, w));
+                    }
+                }
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 10.0;
                     if let Some(me) = me {
@@ -958,17 +1020,43 @@ pub fn session_header(
                         ui.spacing_mut().item_spacing.y = 0.0;
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 8.0;
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(title)
-                                        .font(theme::semibold(14.5))
-                                        .color(theme::text()),
-                                )
-                                .truncate(),
+                            // The title truncates; pill and status dot keep their room
+                            // (the pill only while the title still has some).
+                            let env = info
+                                .envs
+                                .get(index.wrapping_sub(1))
+                                .copied()
+                                .filter(|e| *e != crate::model::Env::None);
+                            let pill_w = env.map_or(0.0, |e| {
+                                ui.painter()
+                                    .layout_no_wrap(
+                                        e.label().to_uppercase(),
+                                        theme::bold(10.5),
+                                        theme::text(),
+                                    )
+                                    .size()
+                                    .x
+                                    + 14.0
+                                    + 8.0
+                            });
+                            let room = ui.available_width() - 12.0 - 8.0;
+                            let env = env.filter(|_| room - pill_w >= 60.0);
+                            let title_w = if env.is_some() { room - pill_w } else { room };
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(title_w.max(20.0), 20.0),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(title)
+                                                .font(theme::semibold(14.5))
+                                                .color(theme::text()),
+                                        )
+                                        .truncate(),
+                                    );
+                                },
                             );
-                            if let Some(&env) = info.envs.get(index.wrapping_sub(1))
-                                && env != crate::model::Env::None
-                            {
+                            if let Some(env) = env {
                                 theme::pill(ui, env.label(), theme::env_color(env));
                             }
                             let (label, color) = &state;

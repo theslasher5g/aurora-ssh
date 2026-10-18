@@ -22,7 +22,7 @@ fn main() -> eframe::Result {
             .with_title("Aurora")
             .with_app_id("aurora-term")
             .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([860.0, 540.0])
+            .with_min_inner_size([720.0, 480.0])
             .with_drag_and_drop(true)
             .with_icon(
                 eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))

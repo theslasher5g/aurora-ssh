@@ -196,28 +196,40 @@ pub fn page(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     let count = app.lib.runbooks.len();
     let mut new = false;
     let mut import = false;
-    ui.horizontal(|ui| {
-        theme::page_title(ui, "Runbooks", Some(count));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
+    theme::page_header(
+        ui,
+        "runbooks",
+        |ui| theme::page_title(ui, "Runbooks", Some(count)),
+        |_| {},
+        |ui, bar| {
             new = theme::btn(ui, theme::Btn::Primary, Some(Icon::Plus), t!("Neu")).clicked();
-            import = theme::btn(
-                ui,
-                theme::Btn::Normal,
-                Some(Icon::Download),
-                t!("Importieren"),
-            )
-            .on_hover_text(t!("Runbook aus einer Markdown-Datei übernehmen"))
+            let tip = t!("Runbook aus einer Markdown-Datei übernehmen");
+            import = if bar.compact {
+                theme::icon_btn(
+                    ui,
+                    Icon::Download,
+                    &format!("{}\n{}", t!("Importieren"), tip),
+                )
+            } else {
+                theme::btn(
+                    ui,
+                    theme::Btn::Normal,
+                    Some(Icon::Download),
+                    t!("Importieren"),
+                )
+                .on_hover_text(tip)
+            }
             .clicked();
+            let width = bar.flex(160.0, 260.0);
             theme::search_field(
                 ui,
                 &mut app.ops.runbooks.search,
                 t!("Suchen"),
-                260.0,
+                width,
                 egui::Id::new("runbook-search"),
             );
-        });
-    });
+        },
+    );
     ui.add_space(22.0);
     if new {
         actions.push(Action::Ops(OpsAction::NewRunbook));

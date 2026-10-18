@@ -4564,15 +4564,19 @@ impl eframe::App for App {
             }
             _ => {
                 self.active = None;
+                // Small windows: less padding around the pages.
+                let screen = ctx.content_rect().size();
+                let side = if screen.x < 1000.0 { 24 } else { 40 };
+                let top = if screen.y < 640.0 { 20 } else { 32 };
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::NONE
                             .fill(theme::bg_deep())
                             .inner_margin(Margin {
-                                left: 40,
-                                right: 40,
-                                top: 32,
-                                bottom: 24,
+                                left: side,
+                                right: side,
+                                top,
+                                bottom: if screen.y < 640.0 { 12 } else { 24 },
                             }),
                     )
                     .show(ui, |ui| match self.view {

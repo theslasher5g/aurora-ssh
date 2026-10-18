@@ -997,39 +997,47 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 .count()
         })
         .sum();
-    ui.horizontal(|ui| {
-        theme::page_title(ui, "Proxmox", Some(total));
-        cluster::page_switch(app, ui, actions);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
-            if theme::btn(ui, theme::Btn::Primary, Some(Icon::Plus), t!("Server"))
+    // Title, page switch and controls; wraps into rows on narrow windows.
+    let mut switch_actions = Vec::new();
+    let mut search = std::mem::take(&mut app.pve.search);
+    let app_ref = &*app;
+    theme::page_header(
+        ui,
+        "pve",
+        |ui| theme::page_title(ui, "Proxmox", Some(total)),
+        |ui| cluster::page_switch(app_ref, ui, &mut switch_actions),
+        |ui, bar| {
+            let label = if bar.compact { "" } else { t!("Server") };
+            if theme::btn(ui, theme::Btn::Primary, Some(Icon::Plus), label)
                 .on_hover_text(t!("Proxmox-Server hinzufügen"))
                 .clicked()
             {
                 actions.push(Action::Pve(PveAction::NewServer));
             }
-            cluster::bell(app, ui, actions);
-            if !cluster::guests_page(app) {
+            cluster::bell(app_ref, ui, actions);
+            if !cluster::guests_page(app_ref) {
                 if theme::icon_btn(ui, Icon::Refresh, t!("Jetzt aktualisieren")).clicked() {
                     actions.push(Action::Pve(PveAction::Cluster(
                         cluster::ClusterAction::Refresh,
                     )));
                 }
-            } else if !app.lib.pve_servers.is_empty() {
+            } else if !app_ref.lib.pve_servers.is_empty() {
                 if theme::icon_btn(ui, Icon::Refresh, t!("Jetzt aktualisieren")).clicked() {
                     actions.push(Action::Pve(PveAction::Refresh));
                 }
-                let width = (ui.available_width() - 24.0).clamp(180.0, 300.0);
+                let width = bar.flex(if bar.compact { 140.0 } else { 180.0 }, 300.0);
                 theme::search_field(
                     ui,
-                    &mut app.pve.search,
+                    &mut search,
                     t!("Name, VMID, Tag oder IP"),
                     width,
                     egui::Id::new("pve-search"),
                 );
             }
-        });
-    });
+        },
+    );
+    app.pve.search = search;
+    actions.append(&mut switch_actions);
     ui.add_space(18.0);
 
     if cluster::show_page(app, ui, actions) {
@@ -1040,16 +1048,22 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         return;
     }
 
-    ui.horizontal(|ui| {
-        if let Some(i) = theme::segmented(
-            ui,
-            &["Alle", "VMs", "Container", "Laufend"].map(crate::i18n::tr),
-            app.pve.filter,
-        ) {
-            app.pve.filter = i;
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let kind = if app.pve.show_templates {
+    let mut filter = app.pve.filter;
+    let mut templates = app.pve.show_templates;
+    theme::toolbar(
+        ui,
+        "pve-filter",
+        |ui| {
+            if let Some(i) = theme::segmented(
+                ui,
+                &["Alle", "VMs", "Container", "Laufend"].map(crate::i18n::tr),
+                filter,
+            ) {
+                filter = i;
+            }
+        },
+        |ui, _| {
+            let kind = if templates {
                 theme::Btn::SmallPrimary
             } else {
                 theme::Btn::Small
@@ -1058,10 +1072,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 .on_hover_text(t!("Vorlagen (Templates) gedimmt anzeigen"))
                 .clicked()
             {
-                app.pve.show_templates = !app.pve.show_templates;
+                templates = !templates;
             }
-        });
-    });
+        },
+    );
+    app.pve.filter = filter;
+    app.pve.show_templates = templates;
     ui.add_space(14.0);
     guest::selection_bar(app, ui, actions);
 
@@ -1438,30 +1454,75 @@ fn guest_row(
         (None, false) => g.status.clone(),
     });
 
-    // --- line 1: name, vmid, type, tags
+    // --- the right side decides first where the text has to stop.
     let col = rect.left() + 42.0;
+    let r = GuestRef::of(s.id, g);
+    let active = hovered || resp.context_menu_opened() || guest::more_open(ui.ctx(), &r);
+    let show_actions = active && !g.template;
+    let strip = HoverStrip::fit(ui, g, rect.width() - 42.0 - 160.0 - 10.0);
+    // Columns hide from the left as the row gets narrower: vCPU, CPU %, RAM.
+    let cols = if g.running() {
+        match rect.width() {
+            w if w >= 560.0 => 3,
+            w if w >= 470.0 => 2,
+            w if w >= 380.0 => 1,
+            _ => 0,
+        }
+    } else {
+        0
+    };
+    let text_right = if active && g.template {
+        let w = theme::btn_width(
+            ui,
+            theme::Btn::SmallPrimary,
+            Some(Icon::Plus),
+            t!("Neu aus Vorlage…"),
+        ) + 6.0
+            + 32.0;
+        rect.right() - 10.0 - w - 14.0
+    } else if show_actions {
+        rect.right() - 10.0 - strip.width - 14.0
+    } else {
+        rect.right() - 18.0 - [0.0, 110.0, 170.0, 232.0][cols] - 12.0
+    };
+
+    // --- line 1: name, vmid, type, tags (cut where the right side begins)
     let name = if g.name.is_empty() {
         format!("{} {}", kind_tag(g.kind), g.vmid)
     } else {
         g.name.clone()
     };
-    let ng = p.layout_no_wrap(name, theme::semibold(15.0), ink);
-    let mut x = col + ng.size().x + 8.0;
-    p.galley(Pos2::new(col, y1 - ng.size().y / 2.0), ng, ink);
     let vg = p.layout_no_wrap(
         g.vmid.to_string(),
         FontId::monospace(12.0),
         theme::text_dim(),
     );
     let vw = vg.size().x;
-    p.galley(Pos2::new(x, y1 - vg.size().y / 2.0), vg, theme::text_dim());
-    x += vw + 10.0;
-    x += paint_tag(&p, x, y1, kind_tag(g.kind), Some(kind_color(g.kind))) + 6.0;
-    if g.template {
+    let kind_w = tag_width(&p, kind_tag(g.kind));
+    let ng = theme::truncated(
+        &p,
+        name,
+        theme::semibold(15.0),
+        ink,
+        (text_right - col - vw - kind_w - 24.0).max(50.0),
+    );
+    let mut x = col + ng.size().x + 8.0;
+    p.galley(Pos2::new(col, y1 - ng.size().y / 2.0), ng, ink);
+    if x + vw <= text_right {
+        p.galley(Pos2::new(x, y1 - vg.size().y / 2.0), vg, theme::text_dim());
+        x += vw + 10.0;
+    }
+    if x + kind_w <= text_right {
+        x += paint_tag(&p, x, y1, kind_tag(g.kind), Some(kind_color(g.kind))) + 6.0;
+    }
+    if g.template && x + tag_width(&p, t!("Vorlage")) <= text_right {
         x += paint_tag(&p, x, y1, t!("Vorlage"), None) + 6.0;
     }
     let mut tag_rects = Vec::new();
     for t in g.tags.iter().take(3) {
+        if x + tag_width(&p, t) > text_right {
+            break;
+        }
         let w = paint_tag(&p, x, y1, t, None);
         tag_rects.push((
             Rect::from_min_size(Pos2::new(x, y1 - 10.0), Vec2::new(w, 20.0)),
@@ -1492,7 +1553,7 @@ fn guest_row(
     if !g.running() && !g.template {
         parts.push((g.status.clone(), false));
     }
-    let mut x2 = col;
+    let mut job = egui::text::LayoutJob::default();
     for (i, (text, mono)) in parts.iter().enumerate() {
         let sep = if i == 0 { "" } else { "  ·  " };
         let font = if *mono {
@@ -1500,10 +1561,27 @@ fn guest_row(
         } else {
             FontId::proportional(12.5)
         };
-        let gl = p.layout_no_wrap(format!("{sep}{text}"), font, theme::text_dim());
-        let w = gl.size().x;
-        p.galley(Pos2::new(x2, y2 - gl.size().y / 2.0), gl, theme::text_dim());
-        x2 += w;
+        job.append(
+            &format!("{sep}{text}"),
+            0.0,
+            egui::TextFormat {
+                font_id: font,
+                color: theme::text_dim(),
+                valign: egui::Align::Center,
+                ..Default::default()
+            },
+        );
+    }
+    let mut x2 = col;
+    if !job.sections.is_empty() {
+        job.wrap = egui::text::TextWrapping::truncate_at_width((text_right - col).max(30.0));
+        let gl = p.layout_job(job);
+        x2 += gl.size().x;
+        p.galley(
+            Pos2::new(col, y2 - gl.size().y / 2.0),
+            gl,
+            theme::text_dim(),
+        );
     }
     if let Some(Ips::Found(v)) = ips
         && v.len() > 1
@@ -1519,9 +1597,6 @@ fn guest_row(
         .on_hover_text(v.join("\n"));
     }
 
-    let r = GuestRef::of(s.id, g);
-    let active = hovered || resp.context_menu_opened() || guest::more_open(ui.ctx(), &r);
-    let show_actions = active && !g.template;
     if active && g.template {
         guest::template_actions(ui, rect, g, &r, ext, actions);
     } else if !show_actions {
@@ -1537,6 +1612,7 @@ fn guest_row(
                 0.0
             };
             p.rect_filled(bar, CornerRadius::same(3), theme::fill_strong());
+            let ram = cols >= 1;
             let color = if frac >= 0.9 {
                 theme::red()
             } else if frac >= 0.75 {
@@ -1549,6 +1625,11 @@ fn guest_row(
                 CornerRadius::same(3),
                 color,
             );
+            let p = if ram {
+                p.clone()
+            } else {
+                p.with_clip_rect(Rect::NOTHING)
+            };
             p.text(
                 Pos2::new(right, y1),
                 egui::Align2::RIGHT_CENTER,
@@ -1557,30 +1638,35 @@ fn guest_row(
                 theme::text_dim(),
             );
             let cpu = g.cpu * 100.0;
-            p.text(
-                Pos2::new(right - bar_w - 18.0, cy),
-                egui::Align2::RIGHT_CENTER,
-                format!("{cpu:.0} %"),
-                theme::medium(13.0),
-                if cpu >= 90.0 {
-                    theme::red()
-                } else {
-                    theme::text()
-                },
-            );
-            p.text(
-                Pos2::new(right - bar_w - 70.0, cy),
-                egui::Align2::RIGHT_CENTER,
-                format!("{} vCPU", g.maxcpu),
-                FontId::proportional(12.0),
-                theme::text_dim(),
-            );
+            if cols >= 2 {
+                p.text(
+                    Pos2::new(right - bar_w - 18.0, cy),
+                    egui::Align2::RIGHT_CENTER,
+                    format!("{cpu:.0} %"),
+                    theme::medium(13.0),
+                    if cpu >= 90.0 {
+                        theme::red()
+                    } else {
+                        theme::text()
+                    },
+                );
+            }
+            if cols >= 3 {
+                p.text(
+                    Pos2::new(right - bar_w - 70.0, cy),
+                    egui::Align2::RIGHT_CENTER,
+                    format!("{} vCPU", g.maxcpu),
+                    FontId::proportional(12.0),
+                    theme::text_dim(),
+                );
+            }
             // CPU of the last hour, where the row has room for it.
             let spark = Rect::from_min_size(
                 Pos2::new(right - bar_w - 230.0, cy - 11.0),
                 Vec2::new(84.0, 22.0),
             );
             if let Some(v) = &ext.spark
+                && cols >= 3
                 && x.max(x2) + 12.0 < spark.left()
             {
                 guest::paint_spark(&p, spark, v, kind_color(g.kind));
@@ -1593,10 +1679,32 @@ fn guest_row(
             }
         }
     } else {
+        let strip_left = rect.right() - 10.0 - strip.width;
+        let layers = [
+            theme::surface(),
+            theme::hover(),
+            if ext.selected {
+                theme::accent_soft()
+            } else {
+                Color32::TRANSPARENT
+            },
+        ];
+        theme::fade_cover(
+            &p,
+            Rect::from_min_max(
+                Pos2::new(
+                    strip_left - 6.0,
+                    rect.top() + if divider { 1.0 } else { 0.0 },
+                ),
+                rect.right_bottom(),
+            ),
+            16.0,
+            &layers,
+        );
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(Rect::from_min_max(
-                    Pos2::new(rect.right() - 700.0, rect.top()),
+                    Pos2::new(strip_left - 4.0, rect.top()),
                     rect.right_bottom() - Vec2::new(10.0, 0.0),
                 ))
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
@@ -1621,19 +1729,30 @@ fn guest_row(
             {
                 actions.push(Action::Pve(PveAction::Console(r.clone())));
             }
-            if theme::btn(ui, theme::Btn::Small, None, t!("Als Host speichern")).clicked() {
+            if strip.save
+                && theme::btn(ui, theme::Btn::Small, None, t!("Als Host speichern")).clicked()
+            {
                 actions.push(Action::Pve(PveAction::SaveAsHost(r.clone())));
             }
-            if theme::icon_btn(ui, Icon::Copy, t!("Snapshots und Backups")).clicked() {
+            if strip.snapshots
+                && theme::icon_btn(ui, Icon::Copy, t!("Snapshots und Backups")).clicked()
+            {
                 actions.push(Action::Pve(PveAction::OpenGuest(r.clone(), 0)));
             }
-            if theme::icon_btn(ui, Icon::External, t!("Konsole im Browser (noVNC)")).clicked() {
+            if strip.browser
+                && theme::icon_btn(ui, Icon::External, t!("Konsole im Browser (noVNC)")).clicked()
+            {
                 actions.push(Action::Pve(PveAction::BrowserConsole(r.clone())));
             }
-            guest::more_button(ui, g, &r, ext, actions);
-            for (power, label) in power_buttons(g) {
-                if theme::btn(ui, theme::Btn::Small, None, label).clicked() {
-                    actions.push(power_action(&r, power));
+            // What doesn't fit next to the buttons moves into the "▾" menu.
+            guest::more_button_with(ui, g, &r, ext, actions, |ui, actions| {
+                strip.menu_entries(ui, g, &r, actions)
+            });
+            if strip.power {
+                for (power, label) in power_buttons(g) {
+                    if theme::btn(ui, theme::Btn::Small, None, label).clicked() {
+                        actions.push(power_action(&r, power));
+                    }
                 }
             }
         });
@@ -1690,6 +1809,93 @@ fn guest_row(
             }
         }
     });
+}
+
+/// Which hover buttons of a guest row are shown; the rest go into the "▾" menu.
+struct HoverStrip {
+    save: bool,
+    snapshots: bool,
+    browser: bool,
+    power: bool,
+    width: f32,
+}
+
+impl HoverStrip {
+    /// Drops the less important buttons until the strip fits into `room`.
+    fn fit(ui: &egui::Ui, g: &Guest, room: f32) -> Self {
+        let konsole = theme::btn_width(
+            ui,
+            theme::Btn::SmallPrimary,
+            Some(Icon::Terminal),
+            t!("Konsole"),
+        );
+        let save = theme::btn_width(ui, theme::Btn::Small, None, t!("Als Host speichern")) + 6.0;
+        let icon = 32.0 + 6.0;
+        let power: f32 = power_buttons(g)
+            .iter()
+            .map(|(_, l)| theme::btn_width(ui, theme::Btn::Small, None, l) + 6.0)
+            .sum();
+        // Konsole and "▾" always stay; the others join in order of importance while
+        // they fit.
+        let mut width = konsole + icon;
+        let mut take = |w: f32| {
+            let fits = width + w <= room;
+            if fits {
+                width += w;
+            }
+            fits
+        };
+        let power = take(power);
+        let browser = take(icon);
+        let snapshots = take(icon);
+        let save = take(save);
+        Self {
+            save,
+            snapshots,
+            browser,
+            power,
+            width,
+        }
+    }
+
+    /// Entries for the buttons that were dropped; true when there are any.
+    fn menu_entries(
+        &self,
+        ui: &mut egui::Ui,
+        g: &Guest,
+        r: &GuestRef,
+        actions: &mut Vec<Action>,
+    ) -> bool {
+        if !self.power {
+            for (power, label) in power_buttons(g).into_iter().rev() {
+                if ui.button(label).clicked() {
+                    actions.push(power_action(r, power));
+                    ui.close();
+                }
+            }
+        }
+        if !self.browser && ui.button(t!("Konsole im Browser (noVNC)")).clicked() {
+            actions.push(Action::Pve(PveAction::BrowserConsole(r.clone())));
+            ui.close();
+        }
+        if !self.snapshots && ui.button(t!("Snapshots…")).clicked() {
+            actions.push(Action::Pve(PveAction::OpenGuest(r.clone(), 0)));
+            ui.close();
+        }
+        if !self.save && ui.button(t!("Als Host speichern")).clicked() {
+            actions.push(Action::Pve(PveAction::SaveAsHost(r.clone())));
+            ui.close();
+        }
+        !(self.save && self.snapshots && self.browser && self.power)
+    }
+}
+
+/// Width of a tag drawn by [`paint_tag`].
+fn tag_width(p: &egui::Painter, text: &str) -> f32 {
+    p.layout_no_wrap(text.to_string(), theme::medium(11.5), theme::text_dim())
+        .size()
+        .x
+        + 14.0
 }
 
 /// Power buttons for the row, right to left.
