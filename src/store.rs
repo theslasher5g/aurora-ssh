@@ -197,6 +197,45 @@ pub struct ExportBundle {
     pub identities: Vec<crate::model::Identity>,
     pub known_hosts: std::collections::HashMap<String, String>,
     pub key_groups: Vec<crate::model::KeyGroup>,
+    /// Proxmox VE / Backup servers and their secrets from the keychain (secrets only
+    /// ever travel inside this encrypted bundle, never in `library.json`).
+    pub pve_servers: Vec<crate::model::PveServer>,
+    pub pve_secrets: std::collections::HashMap<uuid::Uuid, String>,
+    pub pbs_servers: Vec<crate::model::PbsServer>,
+    pub pbs_secrets: std::collections::HashMap<uuid::Uuid, String>,
+}
+
+impl ExportBundle {
+    /// Adds the Proxmox servers that are not in `lib` yet (matched by id), with their
+    /// secrets; returns how many were added.
+    pub fn merge_proxmox(
+        &mut self,
+        lib: &mut crate::model::Library,
+        keychain: &mut Keychain,
+    ) -> usize {
+        let mut n = 0;
+        for s in std::mem::take(&mut self.pve_servers) {
+            if lib.pve_servers.iter().any(|x| x.id == s.id) {
+                continue;
+            }
+            if let Some(secret) = self.pve_secrets.remove(&s.id) {
+                keychain.pve_secrets.insert(s.id, secret);
+            }
+            lib.pve_servers.push(s);
+            n += 1;
+        }
+        for s in std::mem::take(&mut self.pbs_servers) {
+            if lib.pbs_servers.iter().any(|x| x.id == s.id) {
+                continue;
+            }
+            if let Some(secret) = self.pbs_secrets.remove(&s.id) {
+                keychain.pbs_secrets.insert(s.id, secret);
+            }
+            lib.pbs_servers.push(s);
+            n += 1;
+        }
+        n
+    }
 }
 
 /// Encrypts with a password of its own (same Argon2id + XChaCha20-Poly1305 scheme as the
@@ -255,6 +294,62 @@ mod tests {
 
     use super::*;
     use crate::model::Identity;
+
+    /// Proxmox servers and their secrets survive an export / import; the library file
+    /// never contains a secret.
+    #[test]
+    fn proxmox_export_roundtrip() {
+        use crate::model::{Library, PbsServer, PveServer};
+        let pve = PveServer {
+            host: "pve.lan".into(),
+            user: "root@pam!aurora".into(),
+            notify: false,
+            ..Default::default()
+        };
+        let pbs = PbsServer {
+            host: "pbs.lan".into(),
+            user: "backup@pbs!ro".into(),
+            ..Default::default()
+        };
+        let mut lib = Library::default();
+        lib.pve_servers.push(pve.clone());
+        lib.pbs_servers.push(pbs.clone());
+        let mut kc = Keychain::default();
+        kc.pve_secrets.insert(pve.id, "pve-token-secret".into());
+        kc.pbs_secrets.insert(pbs.id, "pbs-token-secret".into());
+        let lib_json = serde_json::to_string(&lib).unwrap();
+        assert!(!lib_json.contains("token-secret"));
+
+        let bundle = ExportBundle {
+            version: 1,
+            pve_servers: lib.pve_servers.clone(),
+            pve_secrets: kc.pve_secrets.clone(),
+            pbs_servers: lib.pbs_servers.clone(),
+            pbs_secrets: kc.pbs_secrets.clone(),
+            ..Default::default()
+        };
+        let sealed = seal("export-pw-1", &serde_json::to_vec(&bundle).unwrap()).unwrap();
+        assert!(!sealed.contains("token-secret"));
+        let mut back: ExportBundle =
+            serde_json::from_slice(&unseal("export-pw-1", &sealed).unwrap()).unwrap();
+
+        let mut lib2 = Library::default();
+        let mut kc2 = Keychain::default();
+        assert_eq!(back.merge_proxmox(&mut lib2, &mut kc2), 2);
+        assert_eq!(lib2.pve_servers, vec![pve.clone()]);
+        assert_eq!(lib2.pbs_servers, vec![pbs.clone()]);
+        assert_eq!(kc2.pve_secrets[&pve.id], "pve-token-secret");
+        assert_eq!(kc2.pbs_secrets[&pbs.id], "pbs-token-secret");
+        // Importing again adds nothing and keeps the existing secret.
+        let mut again: ExportBundle =
+            serde_json::from_slice(&unseal("export-pw-1", &sealed).unwrap()).unwrap();
+        kc2.pve_secrets.insert(pve.id, "changed".into());
+        assert_eq!(again.merge_proxmox(&mut lib2, &mut kc2), 0);
+        assert_eq!(kc2.pve_secrets[&pve.id], "changed");
+        // Bundles from older versions load without Proxmox data.
+        let old: ExportBundle = serde_json::from_str(r#"{"version":1,"hosts":[]}"#).unwrap();
+        assert!(old.pve_servers.is_empty() && old.pbs_secrets.is_empty());
+    }
 
     #[test]
     fn vault_roundtrip_and_wrong_password() {
