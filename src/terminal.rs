@@ -40,6 +40,8 @@ pub struct Hooks {
     title: String,
     cwd: Option<String>,
     bell: bool,
+    /// Answers to terminal queries (device attributes, cursor position …) for the session.
+    replies: Vec<u8>,
 }
 
 impl vt100::Callbacks for Hooks {
@@ -49,6 +51,43 @@ impl vt100::Callbacks for Hooks {
 
     fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
         self.title = String::from_utf8_lossy(title).into_owned();
+    }
+
+    fn unhandled_csi(
+        &mut self,
+        screen: &mut vt100::Screen,
+        i1: Option<u8>,
+        i2: Option<u8>,
+        params: &[&[u16]],
+        c: char,
+    ) {
+        // Programs such as fish, vim or tmux ask the terminal about itself and wait for
+        // the answer (fish for up to 10 seconds). Never let the buffer grow unbounded.
+        if self.replies.len() > 4096 {
+            return;
+        }
+        let first = params.first().and_then(|p| p.first()).copied().unwrap_or(0);
+        match (i1, i2, c) {
+            // Primary device attributes: a VT220-class terminal with colour.
+            (None, None, 'c') if first == 0 => self.replies.extend_from_slice(b"\x1b[?62;22c"),
+            // Secondary device attributes.
+            (Some(b'>'), None, 'c') if first == 0 => {
+                self.replies.extend_from_slice(b"\x1b[>1;10;0c")
+            }
+            // Device status: "all fine".
+            (None, None, 'n') if first == 5 => self.replies.extend_from_slice(b"\x1b[0n"),
+            // Cursor position report.
+            (None, None, 'n') if first == 6 => {
+                let (row, col) = screen.cursor_position();
+                self.replies
+                    .extend_from_slice(format!("\x1b[{};{}R", row + 1, col + 1).as_bytes());
+            }
+            // Terminal name and version (XTVERSION).
+            (Some(b'>'), None, 'q') if first == 0 => self.replies.extend_from_slice(
+                format!("\x1bP>|Aurora {}\x1b\\", env!("CARGO_PKG_VERSION")).as_bytes(),
+            ),
+            _ => {}
+        }
     }
 
     fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
@@ -305,6 +344,11 @@ impl Terminal {
     pub fn cwd(&self) -> Option<String> {
         let h = self.parser.callbacks();
         h.cwd.clone().or_else(|| dir_from_title(&h.title))
+    }
+
+    /// Answers the terminal owes the session (to device-attribute and similar queries).
+    pub fn take_replies(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.parser.callbacks_mut().replies)
     }
 
     /// True once after the remote rang the bell.
@@ -1059,5 +1103,27 @@ mod tests {
         assert_eq!(idx_color(16, &ansi), Color32::from_rgb(0, 0, 0));
         assert_eq!(idx_color(231, &ansi), Color32::from_rgb(255, 255, 255));
         assert_eq!(idx_color(232, &ansi), Color32::from_rgb(8, 8, 8));
+    }
+}
+
+#[cfg(test)]
+mod query_tests {
+    use super::*;
+
+    fn replies(input: &[u8]) -> Vec<u8> {
+        let mut t = Terminal::new(100);
+        t.feed(input);
+        t.take_replies()
+    }
+
+    #[test]
+    fn answers_device_queries() {
+        assert_eq!(replies(b"\x1b[c"), b"\x1b[?62;22c");
+        assert_eq!(replies(b"\x1b[0c"), b"\x1b[?62;22c");
+        assert_eq!(replies(b"\x1b[>c"), b"\x1b[>1;10;0c");
+        assert_eq!(replies(b"\x1b[5n"), b"\x1b[0n");
+        assert_eq!(replies(b"ab\x1b[6n"), b"\x1b[1;3R");
+        assert!(replies(b"\x1b[>0q").starts_with(b"\x1bP>|Aurora "));
+        assert!(replies(b"plain text \x1b[1m").is_empty());
     }
 }

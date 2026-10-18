@@ -2524,6 +2524,10 @@ impl App {
                                 }
                                 crate::ui::runbooks::capture(&mut self.ops, tab.id, &b);
                                 t.term.feed(&b);
+                                let reply = t.term.take_replies();
+                                if !reply.is_empty() {
+                                    let _ = t.tx.send(TermCmd::Input(reply));
+                                }
                                 t.last_output = Instant::now();
                             }
                             TermEvent::UploadProgress { name, done, total } => {
