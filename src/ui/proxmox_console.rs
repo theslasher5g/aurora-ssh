@@ -78,6 +78,19 @@ fn node_ssh(app: &App, s: &PveServer) -> Option<Host> {
 }
 
 /// Entry point of `PveAction::Console`.
+/// The saved host names its login user (itself, its key or its group). Hosts saved
+/// before 0.7.1 often have none, and "root" is rarely allowed on a VM – those go through
+/// the login sheet once, which then stores the user on the host.
+fn knows_login(app: &App, h: &Host) -> bool {
+    let (group_user, group_ident) = app.lib.inherited_defaults(h);
+    !h.username.trim().is_empty()
+        || !group_user.trim().is_empty()
+        || h.identity_id
+            .or(group_ident)
+            .and_then(|id| app.identity(id))
+            .is_some_and(|i| !i.username.trim().is_empty())
+}
+
 pub fn open(app: &mut App, g: GuestRef, ctx: &egui::Context) {
     let Some(s) = server_of(app, g.server) else {
         return;
@@ -97,6 +110,7 @@ pub fn open(app: &mut App, g: GuestRef, ctx: &egui::Context) {
         g.vmid,
         known_ip.as_deref(),
     )
+    .filter(|h| knows_login(app, h))
     .cloned()
     {
         app.connect_host(h, Purpose::Terminal, ctx);
@@ -142,6 +156,7 @@ pub fn info_ready(app: &mut App, server: Uuid, vmid: u32, result: Result<Console
         vmid,
         ip.as_deref(),
     )
+    .filter(|h| knows_login(app, h))
     .cloned()
     {
         app.connect_host(h, Purpose::Terminal, &ctx);
