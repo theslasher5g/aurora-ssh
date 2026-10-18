@@ -609,6 +609,7 @@ pub fn apply(app: &mut App, action: ClusterAction, ctx: &egui::Context) {
             let params = ShellParams {
                 conn: conn(app, &s),
                 node: node.clone(),
+                guest: None,
             };
             app.open_pve_shell(
                 node,

@@ -12,8 +12,8 @@ use uuid::Uuid;
 use crate::app::{Action, App, Purpose};
 use crate::backend::Sink;
 use crate::backend::proxmox::{
-    self as pve, Auth, Conn, Console, Epoch, Error, Guest, GuestId, GuestPayload, Ips, Kind, Op,
-    Power, PveEvent, Session, Snapshot,
+    self as pve, Auth, Conn, Epoch, Error, Guest, GuestId, GuestPayload, Ips, Kind, Op, Power,
+    PveEvent, Session, Snapshot,
 };
 use crate::model::{Group, Host, Protocol, PveServer};
 use crate::theme;
@@ -26,6 +26,9 @@ pub use guest::{GuestAction, GuestExt, GuestPanel, TaskView};
 
 #[path = "proxmox_cluster.rs"]
 pub mod cluster;
+
+#[path = "proxmox_console.rs"]
+mod vmconsole;
 
 const ROW_H: f32 = 66.0;
 /// Refresh period while the page is visible.
@@ -96,6 +99,8 @@ pub struct PveState {
     pub ext: GuestExt,
     /// Overview, task log, alerts, node shells/updates, backup servers.
     pub cluster: cluster::ClusterState,
+    /// Guest consoles: pending lookups and the VM login sheet.
+    console: vmconsole::ConsoleState,
 }
 
 /// Asks for the address of a guest that reported none.
@@ -108,7 +113,6 @@ pub struct IpPrompt {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum AddressFor {
     SaveHost,
-    Console,
     /// Save as host and open a session (after a clone).
     Connect,
 }
@@ -135,6 +139,7 @@ impl PveState {
             gens: HashMap::new(),
             ext: GuestExt::default(),
             cluster: cluster::ClusterState::new(ctx),
+            console: vmconsole::ConsoleState::default(),
         }
     }
 
@@ -156,6 +161,7 @@ impl PveState {
         self.gens.clear();
         self.ext = GuestExt::default();
         self.cluster.lock();
+        self.console = vmconsole::ConsoleState::default();
     }
 
     /// Current generation of a server's live state; jobs carry it and their results
@@ -171,6 +177,7 @@ impl PveState {
         self.live.remove(&server);
         self.ext.forget(server);
         self.cluster.reset_server(server);
+        self.console.forget(server);
         self.resolving.retain(|(s, _), _| *s != server);
         for t in self.tasks.iter().filter(|t| t.server == server) {
             t.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -502,6 +509,9 @@ pub fn pump(app: &mut App) {
                 match payload {
                     GuestPayload::Address(result) => address_found(app, server, vmid, result),
                     GuestPayload::Spice(result) => spice_ready(app, result),
+                    GuestPayload::Console(result) => {
+                        vmconsole::info_ready(app, server, vmid, result)
+                    }
                     other => guest::on_payload(app, server, vmid, other),
                 }
             }
@@ -614,11 +624,7 @@ pub fn apply(app: &mut App, action: PveAction, ctx: &egui::Context) {
                 app.pve.sink.clone(),
             );
         }
-        PveAction::Console(g) => match g.kind {
-            // Containers open on the node; no address needed.
-            Kind::Lxc => console(app, &g, None, ctx),
-            Kind::Qemu => lookup_address(app, &g, AddressFor::Console),
-        },
+        PveAction::Console(g) => vmconsole::open(app, g, ctx),
         PveAction::SaveAsHost(g) => lookup_address(app, &g, AddressFor::SaveHost),
         PveAction::OpenGuest(g, tab) => guest::open(app, g, tab),
         PveAction::Task(g, op) => guest::start_task(app, &g, op),
@@ -704,10 +710,6 @@ fn address_found(
         }
     };
     match what {
-        AddressFor::Console => {
-            let ctx = app.pve.sink.ctx();
-            console(app, &g, ip.map(|i| i.to_string()), &ctx);
-        }
         AddressFor::SaveHost | AddressFor::Connect => match ip {
             Some(ip) if what == AddressFor::Connect => {
                 guest::save_and_connect(app, &g, ip.to_string())
@@ -721,35 +723,6 @@ fn address_found(
                 });
             }
         },
-    }
-}
-
-fn console(app: &mut App, g: &GuestRef, ip: Option<String>, ctx: &egui::Context) {
-    let Some(s) = server_of(app, g.server) else {
-        return;
-    };
-    match pve::console_command(g.kind, g.vmid, &g.node, ip.as_deref()) {
-        Some(Console::Ssh(ip)) => {
-            let host = Host {
-                label: g.display(),
-                hostname: ip,
-                ..Default::default()
-            };
-            app.connect_host(host, Purpose::Terminal, ctx);
-        }
-        Some(Console::Node(line)) => {
-            let Some(via) = s.ssh_host.and_then(|h| app.lib.host(h)).cloned() else {
-                app.toast(
-                    t!("Lege im Server-Editor einen SSH-Host für die Nodes fest"),
-                    theme::amber(),
-                );
-                app.pve.editor = None;
-                apply(app, PveAction::EditServer(s.id), ctx);
-                return;
-            };
-            app.open_exec(via, g.label(), line, ctx);
-        }
-        None => app.toast(t!("ungültiger Node-Name"), theme::red()),
     }
 }
 
@@ -1637,8 +1610,12 @@ fn guest_row(
                 t!("Konsole"),
             )
             .on_hover_text(match g.kind {
-                Kind::Lxc => t!("pct enter auf dem Node (über den SSH-Host)"),
-                Kind::Qemu => t!("SSH zur IP der VM, sonst qm terminal auf dem Node"),
+                Kind::Lxc => t!(
+                    "pct enter auf dem Node (über den SSH-Host), ohne SSH-Host über die Proxmox-API"
+                ),
+                Kind::Qemu => t!(
+                    "Gespeicherter Host oder SSH zur IP der VM (Benutzer aus Cloud-Init); ohne IP die serielle Schnittstelle über die API, sonst noVNC im Browser"
+                ),
             })
             .clicked()
             {
@@ -1763,6 +1740,7 @@ pub fn windows(app: &mut App, ctx: &egui::Context) {
     guest::panel(app, ctx);
     cluster::windows(app, ctx);
     ip_prompt(app, ctx);
+    vmconsole::sheet(app, ctx);
     trust(app, ctx);
 }
 
@@ -1955,7 +1933,7 @@ fn editor(app: &mut App, ctx: &egui::Context) {
             hint(
                 ui,
                 t!(
-                    "SSH-Host für die Nodes: Container öffnen sich dort mit „pct enter“, VMs ohne bekannte IP mit „qm terminal“. Liegt der Gast auf einem anderen Node, springt Aurora per SSH dorthin."
+                    "SSH-Host für die Nodes (optional): Container öffnen sich dort mit „pct enter“, ohne SSH-Host über die Proxmox-API. VMs ohne IP nutzen ihre serielle Schnittstelle über die API – „qm terminal“ nur, wenn das Konto kein VM.Console hat. Liegt der Gast auf einem anderen Node, springt Aurora per SSH dorthin."
                 ),
             );
             cluster::editor_switch(ui, s);

@@ -40,6 +40,13 @@ pub struct GuestExt {
 }
 
 impl GuestExt {
+    /// User and key a clone made from Aurora was set up with.
+    pub fn connect_hint(&self, server: Uuid, vmid: u32) -> Option<(String, Option<Uuid>)> {
+        self.hints
+            .get(&(server, vmid))
+            .map(|h| (h.user.clone(), h.identity))
+    }
+
     /// The server was edited or deleted: drop everything about it.
     pub fn forget(&mut self, server: Uuid) {
         self.sparks.forget(server);
@@ -406,7 +413,7 @@ pub fn on_payload(app: &mut App, server: Uuid, vmid: u32, payload: GuestPayload)
         }
         GuestPayload::Task { task, update } => task_update(app, server, vmid, task, update),
         GuestPayload::Ext(p) => on_ext(app, server, vmid, *p),
-        GuestPayload::Address(_) | GuestPayload::Spice(_) => {}
+        GuestPayload::Address(_) | GuestPayload::Spice(_) | GuestPayload::Console(_) => {}
     }
 }
 

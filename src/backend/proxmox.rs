@@ -760,35 +760,10 @@ pub fn parse_lxc_ips(data: &Value) -> Vec<String> {
 
 // ------------------------------------------------------------------ console
 
-/// How "Konsole" reaches a guest.
-#[derive(Debug, PartialEq)]
-pub enum Console {
-    /// SSH straight to the guest.
-    Ssh(String),
-    /// Run this line on the SSH host of the nodes.
-    Node(String),
-}
-
-/// CT → `pct enter` on its node; VM → SSH to its address if known, else `qm terminal`.
-/// The line runs on the configured node SSH host and hops to the right node over the
-/// cluster's root SSH trust when the guest lives elsewhere.
-pub fn console_command(kind: Kind, vmid: u32, node: &str, ip: Option<&str>) -> Option<Console> {
-    if kind == Kind::Qemu
-        && let Some(ip) = ip.filter(|i| !i.is_empty())
-    {
-        return Some(Console::Ssh(ip.to_string()));
-    }
-    if !valid_node(node) {
-        return None;
-    }
-    let cmd = match kind {
-        Kind::Lxc => format!("pct enter {vmid}"),
-        Kind::Qemu => format!("qm terminal {vmid}"),
-    };
-    Some(Console::Node(format!(
-        "if [ \"$(hostname)\" = '{node}' ]; then {cmd}; else ssh -t root@{node} {cmd}; fi"
-    )))
-}
+/// What a console opens (SSH, API terminal, node terminal or browser).
+#[path = "proxmox_console.rs"]
+mod console;
+pub use console::*;
 
 // ------------------------------------------------------------------ jobs
 
@@ -964,26 +939,6 @@ mod tests {
         assert_eq!(verify(Some(fp.clone())), (true, Some(fp.clone())));
         assert_eq!(verify(None), (false, Some(fp.clone())));
         assert_eq!(verify(Some(fingerprint(b"x"))), (false, Some(fp)));
-    }
-
-    #[test]
-    fn console_commands() {
-        assert_eq!(
-            console_command(Kind::Lxc, 101, "pve1", Some("10.0.0.5")),
-            Some(Console::Node(
-                "if [ \"$(hostname)\" = 'pve1' ]; then pct enter 101; else ssh -t root@pve1 pct enter 101; fi"
-                    .into()
-            ))
-        );
-        assert_eq!(
-            console_command(Kind::Qemu, 100, "pve1", Some("10.0.0.7")),
-            Some(Console::Ssh("10.0.0.7".into()))
-        );
-        match console_command(Kind::Qemu, 100, "pve2", None) {
-            Some(Console::Node(l)) => assert!(l.contains("qm terminal 100") && l.contains("pve2")),
-            other => panic!("{other:?}"),
-        }
-        assert_eq!(console_command(Kind::Lxc, 1, "x; rm -rf /", None), None);
     }
 
     #[test]

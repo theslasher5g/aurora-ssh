@@ -619,6 +619,8 @@ pub enum GuestPayload {
         update: TaskUpdate,
     },
     Address(Result<Option<IpAddr>, Error>),
+    /// What the console of a VM should open (see `console_route`).
+    Console(Result<super::ConsoleInfo, Error>),
     /// `.vv` settings from `spiceproxy`, or why there is no SPICE display.
     Spice(Result<Vec<(String, String)>, Error>),
     /// Graphs, clone, hardware: see `proxmox_guest_ops`.

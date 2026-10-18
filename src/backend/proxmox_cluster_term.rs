@@ -1,7 +1,10 @@
-//! Node shell without SSH: Proxmox' `termproxy` behind the API websocket.
+//! Node shell and guest consoles without SSH: Proxmox' `termproxy` behind the API
+//! websocket.
 //!
-//! `POST /nodes/{node}/termproxy` returns a port and a one-time ticket; the websocket
-//! `…/vncwebsocket?port=…&vncticket=…` (authenticated like any API call) then speaks a
+//! `POST /nodes/{node}/termproxy` (node shell), `…/lxc/{vmid}/termproxy` (container) or
+//! `…/qemu/{vmid}/termproxy` (VM serial port, `serial=serialN`) returns a port and a
+//! one-time ticket; the websocket `…/vncwebsocket?port=…&vncticket=…` next to it
+//! (authenticated like any API call) then speaks a
 //! small text protocol: `user:ticket\n` first (answered with `OK`), then
 //! `0:LEN:DATA` for input, `1:COLS:ROWS:` for a resize and `2` as keep-alive; output
 //! arrives as plain websocket messages. The websocket runs over the same pinned
@@ -19,13 +22,59 @@ use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
 use tokio::sync::mpsc;
 
-use super::super::{Client, Conn, Error, Method, PinVerifier, Sink, enc, valid_node};
+use super::super::{
+    Client, Conn, Error, Kind, Method, PinVerifier, Sink, enc, valid_node, valid_serial,
+};
 use crate::backend::{TermCmd, TermEvent};
 
 #[derive(Clone, Debug)]
 pub struct ShellParams {
     pub conn: Conn,
     pub node: String,
+    /// A guest's console instead of the node shell.
+    pub guest: Option<GuestTarget>,
+}
+
+/// Console of a guest on `ShellParams::node`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GuestTarget {
+    pub kind: Kind,
+    pub vmid: u32,
+    /// VMs: the serial port (`serial0` …) to attach to.
+    pub serial: Option<String>,
+}
+
+/// `/nodes/{node}` or `/nodes/{node}/{qemu|lxc}/{vmid}`; `None` for bad input.
+fn target_base(node: &str, guest: Option<&GuestTarget>) -> Option<String> {
+    if !valid_node(node) {
+        return None;
+    }
+    match guest {
+        None => Some(format!("/nodes/{node}")),
+        Some(g) => {
+            if g.serial.as_deref().is_some_and(|s| !valid_serial(s)) {
+                return None;
+            }
+            Some(format!("/nodes/{node}/{}/{}", g.kind.api(), g.vmid))
+        }
+    }
+}
+
+/// `POST` path of the termproxy and its form (the serial port of a VM).
+pub fn termproxy_request(
+    node: &str,
+    guest: Option<&GuestTarget>,
+) -> Option<(String, Vec<(&'static str, String)>)> {
+    let base = target_base(node, guest)?;
+    let form = match guest {
+        Some(GuestTarget {
+            kind: Kind::Qemu,
+            serial: Some(s),
+            ..
+        }) => vec![("serial", s.clone())],
+        _ => Vec::new(),
+    };
+    Some((format!("{base}/termproxy"), form))
 }
 
 // ------------------------------------------------------------------ termproxy protocol
@@ -49,10 +98,15 @@ pub fn auth_msg(user: &str, ticket: &str) -> Vec<u8> {
 }
 
 /// `vncwebsocket` path for a termproxy port and ticket.
-pub fn websocket_path(node: &str, port: u16, ticket: &str) -> Option<String> {
-    valid_node(node).then(|| {
+pub fn websocket_path(
+    node: &str,
+    guest: Option<&GuestTarget>,
+    port: u16,
+    ticket: &str,
+) -> Option<String> {
+    target_base(node, guest).map(|base| {
         format!(
-            "/api2/json/nodes/{node}/vncwebsocket?port={port}&vncticket={}",
+            "/api2/json{base}/vncwebsocket?port={port}&vncticket={}",
             enc(ticket)
         )
     })
@@ -281,15 +335,24 @@ pub fn spawn(
 }
 
 /// Asks for a termproxy and returns (port, ticket, user).
-fn termproxy(c: &mut Client, node: &str) -> Result<(u16, String, String), String> {
+fn termproxy(
+    c: &mut Client,
+    node: &str,
+    guest: Option<&GuestTarget>,
+) -> Result<(u16, String, String), String> {
+    let (path, form) = termproxy_request(node, guest).ok_or("node")?;
     let v = c
-        .request(Method::Post, &format!("/nodes/{node}/termproxy"), &[])
-        .map_err(|e| match e {
-            Error::Http(403, _) => t!(
+        .request(Method::Post, &path, &form)
+        .map_err(|e| match (e, guest) {
+            (Error::Http(403, _), None) => t!(
                 "Keine Berechtigung für die Node-Shell – das Konto oder Token braucht Sys.Console auf /nodes/{}",
                 node
             ),
-            other => other.to_string(),
+            (Error::Http(403, _), Some(g)) => t!(
+                "Keine Berechtigung für die Konsole – das Konto oder Token braucht VM.Console auf /vms/{}",
+                g.vmid
+            ),
+            (other, _) => other.to_string(),
         })?;
     let port = v["port"]
         .as_u64()
@@ -345,15 +408,18 @@ fn run(
     mut cmds: mpsc::UnboundedReceiver<TermCmd>,
     events: &Sink<TermEvent>,
 ) -> Result<(), String> {
-    if !valid_node(&p.node) {
+    if target_base(&p.node, p.guest.as_ref()).is_none() {
         return Err(t!("ungültiger Node-Name").into());
     }
     if p.conn.pin.is_none() {
         return Err(t!("Zertifikat noch nicht bestätigt").into());
     }
-    events.send(TermEvent::Status(t!("Öffne Shell auf {}…", p.node)));
+    events.send(TermEvent::Status(match &p.guest {
+        None => t!("Öffne Shell auf {}…", p.node),
+        Some(g) => t!("Öffne Konsole von {} auf {}…", g.vmid, p.node),
+    }));
     let mut c = Client::new(&p.conn);
-    let (port, ticket, user) = termproxy(&mut c, &p.node)?;
+    let (port, ticket, user) = termproxy(&mut c, &p.node, p.guest.as_ref())?;
     let user = if user.is_empty() {
         match &p.conn.auth {
             super::super::Auth::Token { id, .. } => id.clone(),
@@ -362,7 +428,7 @@ fn run(
     } else {
         user
     };
-    let path = websocket_path(&p.node, port, &ticket).ok_or("node")?;
+    let path = websocket_path(&p.node, p.guest.as_ref(), port, &ticket).ok_or("node")?;
     let mut tls = connect_tls(&p.conn)?;
 
     // --- handshake
@@ -487,10 +553,55 @@ mod tests {
         assert_eq!(resize_msg(120, 40), b"1:120:40:");
         assert_eq!(auth_msg("root@pam", "PVEVNC:abc"), b"root@pam:PVEVNC:abc\n");
         assert_eq!(
-            websocket_path("pve1", 5900, "PVEVNC:66AA::x/y+z=").unwrap(),
+            websocket_path("pve1", None, 5900, "PVEVNC:66AA::x/y+z=").unwrap(),
             "/api2/json/nodes/pve1/vncwebsocket?port=5900&vncticket=PVEVNC%3A66AA%3A%3Ax%2Fy%2Bz%3D"
         );
-        assert_eq!(websocket_path("../x", 5900, "t"), None);
+        assert_eq!(websocket_path("../x", None, 5900, "t"), None);
+    }
+
+    #[test]
+    fn guest_targets() {
+        let vm = GuestTarget {
+            kind: Kind::Qemu,
+            vmid: 100,
+            serial: Some("serial1".into()),
+        };
+        let ct = GuestTarget {
+            kind: Kind::Lxc,
+            vmid: 101,
+            serial: None,
+        };
+        assert_eq!(
+            termproxy_request("pve1", None).unwrap(),
+            ("/nodes/pve1/termproxy".to_string(), vec![])
+        );
+        assert_eq!(
+            termproxy_request("pve1", Some(&vm)).unwrap(),
+            (
+                "/nodes/pve1/qemu/100/termproxy".to_string(),
+                vec![("serial", "serial1".to_string())]
+            )
+        );
+        assert_eq!(
+            termproxy_request("pve2", Some(&ct)).unwrap(),
+            ("/nodes/pve2/lxc/101/termproxy".to_string(), vec![])
+        );
+        assert_eq!(
+            websocket_path("pve1", Some(&vm), 5901, "T").unwrap(),
+            "/api2/json/nodes/pve1/qemu/100/vncwebsocket?port=5901&vncticket=T"
+        );
+        assert_eq!(
+            websocket_path("pve2", Some(&ct), 5902, "T").unwrap(),
+            "/api2/json/nodes/pve2/lxc/101/vncwebsocket?port=5902&vncticket=T"
+        );
+        // Bad node or serial port: nothing.
+        assert_eq!(termproxy_request("a/b", Some(&ct)), None);
+        let bad = GuestTarget {
+            serial: Some("serial0&x=1".into()),
+            ..vm
+        };
+        assert_eq!(termproxy_request("pve1", Some(&bad)), None);
+        assert_eq!(websocket_path("pve1", Some(&bad), 1, "t"), None);
     }
 
     #[test]
