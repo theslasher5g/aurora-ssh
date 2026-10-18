@@ -7,6 +7,9 @@ use crate::theme;
 use crate::ui::{empty_list, fuzzy, page_header, row_buttons};
 
 pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+    if app.ops.page == 1 {
+        return crate::ui::runbooks::page(app, ui, actions);
+    }
     let count = app.lib.snippets.len();
     if page_header(
         ui,
@@ -18,6 +21,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     ) {
         actions.push(Action::NewSnippet);
     }
+    crate::ui::runbooks::switch(app, ui);
 
     let q = app.snippet_search.clone();
     let mut list: Vec<_> = app

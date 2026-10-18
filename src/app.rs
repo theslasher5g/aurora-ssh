@@ -365,6 +365,8 @@ pub enum Purpose {
     ListContainers,
     /// List the listening ports for the port scan dialog.
     ListPorts,
+    /// Collect a diagnostics bundle (separate connection).
+    Diag,
 }
 
 /// "Container durchsuchen" dialog.
@@ -606,6 +608,8 @@ pub struct App {
     pub termx: crate::ui::history::TermExtras,
     /// Route finder, certificate radar, Wake-on-LAN.
     pub net: crate::ui::net::NetState,
+    /// Runbooks, maintenance windows, diagnostics bundles.
+    pub ops: crate::ui::ops::OpsState,
 }
 
 /// UI intents collected while drawing and applied afterwards.
@@ -691,6 +695,8 @@ pub enum Action {
     Pve(crate::ui::proxmox::PveAction),
     /// Route finder, certificate radar, Wake-on-LAN.
     Net(crate::ui::net::NetAction),
+    /// Runbooks, maintenance windows, diagnostics bundles.
+    Ops(crate::ui::ops::OpsAction),
 }
 
 impl App {
@@ -800,6 +806,7 @@ impl App {
             pve: crate::ui::proxmox::PveState::new(&cc.egui_ctx),
             termx: Default::default(),
             net: Default::default(),
+            ops: Default::default(),
         }
     }
 
@@ -978,6 +985,10 @@ impl App {
         if let Purpose::Log(tab_id) = purpose {
             let params = ssh_params();
             self.start_log(tab_id, backend::container::Target::Ssh(params), ctx);
+            return;
+        }
+        if purpose == Purpose::Diag {
+            crate::ui::diag::start(self, ssh_params(), ctx);
             return;
         }
         if purpose == Purpose::ListPorts {
@@ -2421,8 +2432,12 @@ impl App {
         let mut outcome: Vec<(Uuid, bool)> = Vec::new();
         let record_all = self.lib.settings.record_sessions;
         let time_travel = self.lib.settings.time_travel;
+        // Hosts in a maintenance window: no toasts, attention or "failed" LED.
+        let muted = crate::ui::maintenance::muted_hosts(&self.lib);
         for tab in &mut self.tabs {
             let seen = focused && visible.contains(&tab.id);
+            let quiet = tab.host_id.is_some_and(|h| muted.contains(&h));
+            let before = (toasts.len(), notify, tab.attention);
             match &mut tab.kind {
                 TabKind::Term(t) => {
                     if let Some(log) = t.side_log.as_mut().and_then(|s| s.log.as_mut()) {
@@ -2487,6 +2502,7 @@ impl App {
                                 if let Some(r) = t.recorder.as_mut() {
                                     r.output(&b);
                                 }
+                                crate::ui::runbooks::capture(&mut self.ops, tab.id, &b);
                                 t.term.feed(&b);
                                 t.last_output = Instant::now();
                             }
@@ -2624,8 +2640,13 @@ impl App {
                     }
                 }
             }
+            if quiet {
+                toasts.truncate(before.0);
+                (notify, tab.attention) = (before.1, before.2);
+            }
         }
         self.hostkey_queue.extend(prompts);
+        outcome.retain(|(h, ok)| *ok || !muted.contains(h));
         for (h, ok) in outcome {
             if ok {
                 self.failed.remove(&h);
@@ -3002,6 +3023,7 @@ impl App {
             Action::Confirm(text, inner) => self.confirm_delete = Some((text, *inner)),
             Action::Pve(a) => crate::ui::proxmox::apply(self, a, ctx),
             Action::Net(a) => crate::ui::net::apply(self, a, ctx),
+            Action::Ops(a) => crate::ui::ops::apply(self, a, ctx),
             Action::OpenGroup(gid) => {
                 let hosts: Vec<Host> = self
                     .lib
@@ -3321,6 +3343,12 @@ impl App {
         let mut toggle_record = false;
         let mut open_files = false;
         let mut side_action = None;
+        let maint = host_id.and_then(|h| {
+            crate::ui::maintenance::active_for(&self.lib, h, chrono::Utc::now()).cloned()
+        });
+        let runbooks: Vec<(Uuid, String)> = (self.lib.runbooks.iter())
+            .map(|r| (r.id, r.title.clone()))
+            .collect();
         let TabKind::Term(t) = &mut tab.kind else {
             return;
         };
@@ -3345,6 +3373,7 @@ impl App {
                 if theme::icon_button(ui, "⚡", t!("Snippets ein-/ausblenden")).clicked() {
                     toggle_snippets = true;
                 }
+                crate::ui::runbooks::header_button(ui, &mut self.ops, &runbooks, tab_id, actions);
                 if theme::icon_button(ui, "🔍", t!("Im Terminal suchen (Ctrl+Shift+F)")).clicked()
                 {
                     search = true;
@@ -3422,6 +3451,12 @@ impl App {
         }
         if toggle_rewind {
             self.termx.toggle_rewind(tab_id, &t.spec);
+        }
+        if let Some(m) = &maint
+            && let Some(a) =
+                crate::ui::maintenance::session_banner(ui, egui::Id::new(("term-maint", tab_id)), m)
+        {
+            actions.push(Action::Ops(a));
         }
         if ssh_session
             && drop_target
@@ -3591,6 +3626,10 @@ impl App {
             };
             ui.painter()
                 .vline(r.left(), r.y_range(), egui::Stroke::new(1.0, line));
+        }
+        if let Some(d) = crate::ui::runbooks::terminal_panel(&mut self.ops, ui, tab_id, t, guarded)
+        {
+            danger = Some(d);
         }
 
         // Host terminal profile over the app settings.
@@ -4550,6 +4589,7 @@ impl eframe::App for App {
         crate::ui::containers::show(self, &ctx, &mut actions);
         crate::ui::portscan::show(self, &ctx, &mut actions);
         crate::ui::net::show(self, &ctx, &mut actions);
+        crate::ui::ops::show(self, &ctx, &mut actions);
         self.toasts_ui(&ctx);
 
         for a in actions {

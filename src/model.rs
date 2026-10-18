@@ -868,6 +868,12 @@ pub struct Library {
     /// Port scan results and the certificate radar.
     #[serde(default)]
     pub net: NetData,
+    /// Step-by-step procedures (Snippets page → Runbooks).
+    #[serde(default)]
+    pub runbooks: Vec<crate::backend::runbook::Runbook>,
+    /// Active maintenance windows of hosts and groups.
+    #[serde(default)]
+    pub maintenance: Vec<crate::ui::maintenance::Maintenance>,
 }
 
 /// Network data Aurora remembers between runs.

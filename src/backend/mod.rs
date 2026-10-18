@@ -3,6 +3,7 @@
 
 pub mod certradar;
 pub mod container;
+pub mod diag;
 pub mod hostkey_check;
 pub mod local;
 pub mod logs;
@@ -13,6 +14,7 @@ pub mod rdp_embed;
 pub mod reach;
 pub mod record;
 pub mod route;
+pub mod runbook;
 pub mod scan;
 pub mod serial;
 pub mod sftp;
