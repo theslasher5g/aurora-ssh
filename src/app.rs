@@ -556,6 +556,8 @@ pub struct App {
     /// Command line for a `Purpose::Container` session instead of the container shell.
     pub pending_exec: std::collections::HashMap<u64, String>,
     pub log_picker: Option<LogPicker>,
+    /// Values for the `{{placeholders}}` of a log command about to start.
+    pub log_vars: Option<crate::ui::logvars::LogVarPrompt>,
     /// "Ports scannen" dialog.
     pub port_scan: Option<crate::ui::portscan::PortScan>,
     pub tunnel_sink: Sink<backend::tunnel::TunnelEvent>,
@@ -691,6 +693,8 @@ pub enum Action {
     PickLog(Option<Uuid>),
     /// Open a log tab: (host or this PC, file or command).
     OpenLog(Option<Uuid>, String),
+    /// Start a log right away (placeholders of a log command are already filled in).
+    OpenLogNow(Option<Uuid>, String),
     /// Open a container/pod (not necessarily saved): shell or logs.
     OpenContainer(Box<Host>, bool),
     /// Proxmox page: servers, power actions, consoles.
@@ -771,6 +775,7 @@ impl App {
             pending_containers: Default::default(),
             pending_exec: Default::default(),
             log_picker: None,
+            log_vars: None,
             port_scan: None,
             tunnel_sink,
             tunnel_rx,
@@ -2838,8 +2843,16 @@ impl App {
             }
             Action::OpenLog(host, source) => {
                 self.log_picker = None;
-                self.open_log(host, &source, ctx);
+                match crate::ui::logvars::LogVarPrompt::new(
+                    &source,
+                    crate::ui::logvars::Target::Tab(host),
+                    &self.lib.log_var_history,
+                ) {
+                    Some(p) => self.log_vars = Some(p),
+                    None => self.open_log(host, &source, ctx),
+                }
             }
+            Action::OpenLogNow(host, source) => self.open_log(host, &source, ctx),
             Action::OpenContainer(host, logs) => {
                 if logs {
                     let argv = backend::container::logs_argv(host.protocol, &host.container);
@@ -3940,7 +3953,14 @@ impl App {
                 }
             }
             SideAction::Reconnect => self.reopen_log(tab_id, ctx),
-            SideAction::Start(cmd) => self.open_side_log(tab_id, &cmd, ctx),
+            SideAction::Start(cmd) => match crate::ui::logvars::LogVarPrompt::new(
+                &cmd,
+                crate::ui::logvars::Target::Side(tab_id),
+                &self.lib.log_var_history,
+            ) {
+                Some(p) => self.log_vars = Some(p),
+                None => self.open_side_log(tab_id, &cmd, ctx),
+            },
             SideAction::Save(name, command) => {
                 // Saved for this host only when it is in the host list.
                 let host = host.filter(|h| self.lib.host(*h).is_some());
@@ -4621,6 +4641,7 @@ impl eframe::App for App {
         crate::ui::proxmox::windows(self, &ctx);
         crate::ui::palette::show(self, &ctx, &mut actions);
         crate::ui::dialogs::show(self, &ctx);
+        crate::ui::logvars::show(self, &ctx, &mut actions);
         crate::ui::history::frame(self, &ctx);
         crate::ui::containers::show(self, &ctx, &mut actions);
         crate::ui::portscan::show(self, &ctx, &mut actions);

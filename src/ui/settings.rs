@@ -218,7 +218,7 @@ fn log_commands(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
         rows.full(ui, |ui| {
             ui.label(
                 RichText::new(t!(
-                    "Erscheinen in der Log-Leiste einer SSH-Session (Ctrl+Shift+L) und unter „Log ansehen“. Eine Datei wird mit tail -F verfolgt, alles andere als Befehl ausgeführt."
+                    "Erscheinen in der Log-Leiste einer SSH-Session (Ctrl+Shift+L) und unter „Log ansehen“. Eine Datei wird mit tail -F verfolgt, alles andere als Befehl ausgeführt. Mit {{variable}} oder {{variable=Standard}} fragt Aurora beim Start nach dem Wert, z. B. journalctl -u {{dienst}} -n {{zeilen=200}} – ein Befehl für alle Dienste."
                 ))
                 .size(12.5)
                 .color(theme::text_dim()),

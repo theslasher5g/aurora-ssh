@@ -11,6 +11,7 @@ pub mod hosts;
 pub mod icons;
 pub mod keychain;
 pub mod lock;
+pub mod logvars;
 pub mod logview;
 pub mod maintenance;
 pub mod net;

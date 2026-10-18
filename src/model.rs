@@ -874,6 +874,9 @@ pub struct Library {
     /// Active maintenance windows of hosts and groups.
     #[serde(default)]
     pub maintenance: Vec<crate::ui::maintenance::Maintenance>,
+    /// Recent values of `{{variables}}` in log commands, newest first.
+    #[serde(default)]
+    pub log_var_history: HashMap<String, Vec<String>>,
 }
 
 /// Network data Aurora remembers between runs.

@@ -36,10 +36,6 @@ pub const T: &[(&str, &str)] = &[
     ),
     ("Eigene Befehle", "Own commands"),
     ("Eigene Log-Befehle", "Own log commands"),
-    (
-        "Erscheinen in der Log-Leiste einer SSH-Session (Ctrl+Shift+L) und unter „Log ansehen“. Eine Datei wird mit tail -F verfolgt, alles andere als Befehl ausgeführt.",
-        "Shown in the log panel of an SSH session (Ctrl+Shift+L) and under \"View log\". A file is followed with tail -F, anything else runs as a command.",
-    ),
     ("Journal", "Journal"),
     ("Journal (Warnungen)", "Journal (warnings)"),
     (
