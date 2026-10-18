@@ -9,6 +9,8 @@ use crate::backend::reach::Reach;
 use crate::model::{Host, Protocol};
 use crate::theme;
 use crate::ui::icons::{self, Icon};
+use crate::ui::maintenance::Target;
+use crate::ui::ops::OpsAction;
 use crate::ui::{fuzzy, relative_time};
 
 const ROW_H: f32 = 66.0;
@@ -61,6 +63,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     let mut enter = false;
     ui.horizontal(|ui| {
         theme::page_title(ui, t!("Verbindungen"), Some(app.lib.hosts.len()));
+        crate::ui::maintenance::header_pill(app, ui, actions);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
             let new = theme::btn(ui, theme::Btn::Primary, Some(Icon::Plus), t!("Neu"));
@@ -758,6 +761,20 @@ fn group_tree(
                     .layout(egui::Layout::left_to_right(egui::Align::Center)),
             );
             theme::pill(&mut child, g.env.label(), theme::env_color(g.env));
+            tx += 70.0;
+        }
+        let group_maint =
+            crate::ui::maintenance::active_for_group(&app.lib, g.id, chrono::Utc::now()).cloned();
+        if let Some(m) = &group_maint {
+            let mut child = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(Rect::from_min_size(
+                        Pos2::new(tx, cy - 11.0),
+                        Vec2::new(360.0, 22.0),
+                    ))
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            );
+            theme::tag(&mut child, &m.banner(), Some(theme::amber()));
         }
         // "Alle öffnen" and "+ Host" as quiet links on the right.
         let mut links = ui.new_child(
@@ -805,6 +822,7 @@ fn group_tree(
                     actions.push(Action::NewGroup(Some(g.id)));
                     ui.close();
                 }
+                maintenance_menu(ui, group_maint.as_ref(), Target::Group(g.id), actions);
                 if ui.button(t!("Bearbeiten")).clicked() {
                     actions.push(Action::EditGroup(g.id));
                     ui.close();
@@ -854,6 +872,42 @@ struct RowTag {
     dot: Option<bool>,
     tunnel: Option<Uuid>,
     tip: String,
+}
+
+/// "Wartung starten…" or, while one runs, extend/end it.
+fn maintenance_menu(
+    ui: &mut egui::Ui,
+    active: Option<&crate::ui::maintenance::Maintenance>,
+    target: Target,
+    actions: &mut Vec<Action>,
+) {
+    match active {
+        Some(m) => {
+            ui.menu_button(t!("Wartung"), |ui| {
+                ui.label(RichText::new(m.banner()).size(12.5).color(theme::amber()));
+                if ui.button(t!("Um 30 Minuten verlängern")).clicked() {
+                    actions.push(Action::Ops(OpsAction::MaintExtend(m.id, 30)));
+                    ui.close();
+                }
+                if ui.button(t!("Wartung beenden")).clicked() {
+                    actions.push(Action::Ops(OpsAction::MaintEnd(m.id)));
+                    ui.close();
+                }
+            });
+        }
+        None => {
+            if ui
+                .button(t!("Wartung starten…"))
+                .on_hover_text(t!(
+                    "Wartungsfenster: Warnungen für eine Zeit stummschalten, mit Banner"
+                ))
+                .clicked()
+            {
+                actions.push(Action::Ops(OpsAction::MaintStart(target)));
+                ui.close();
+            }
+        }
+    }
 }
 
 fn host_row(
@@ -955,7 +1009,11 @@ fn host_row(
         .then(|| app.reach.get(h.id))
         .flatten();
     let led_pos = Pos2::new(rect.left() + 22.0, cy);
-    if app.failed.contains(&h.id) && !is_live {
+    let maint = crate::ui::maintenance::active_for(&app.lib, h.id, chrono::Utc::now());
+    if maint.is_some() && !is_live {
+        // Down or failed is expected during maintenance.
+        theme::led(&p, led_pos, theme::amber(), true);
+    } else if app.failed.contains(&h.id) && !is_live {
         theme::led(&p, led_pos, theme::red(), true);
     } else {
         match (is_live, reach) {
@@ -967,7 +1025,9 @@ fn host_row(
     }
     {
         let tip_rect = Rect::from_center_size(led_pos, Vec2::splat(18.0));
-        let tip = if app.failed.contains(&h.id) && !is_live {
+        let tip = if let Some(m) = maint.filter(|_| !is_live) {
+            m.banner()
+        } else if app.failed.contains(&h.id) && !is_live {
             t!("letzte Verbindung fehlgeschlagen").to_string()
         } else if is_live {
             t!("Session offen").to_string()
@@ -1152,6 +1212,15 @@ fn host_row(
 
     // --- tags on the right: updates, protocol, tags, tunnels.
     let mut tags: Vec<RowTag> = Vec::new();
+    if let Some(m) = maint {
+        tags.push(RowTag {
+            text: t!("Wartung {}", m.until_text()),
+            color: Some(theme::amber()),
+            dot: None,
+            tunnel: None,
+            tip: m.banner(),
+        });
+    }
     if let Some(n) = facts.and_then(|f| f.updates).filter(|n| *n > 0) {
         tags.push(RowTag {
             text: if n == 1 {
@@ -1353,6 +1422,18 @@ fn host_row(
             actions.push(Action::PortScan(h.id));
             ui.close();
         }
+        if h.protocol == Protocol::Ssh
+            && ui
+                .button(t!("Diagnose-Paket erstellen…"))
+                .on_hover_text(t!(
+                    "System-, Log- und Dienstinformationen sammeln und als Archiv speichern"
+                ))
+                .clicked()
+        {
+            actions.push(Action::Ops(OpsAction::Diag(h.id)));
+            ui.close();
+        }
+        maintenance_menu(ui, maint, Target::Host(h.id), actions);
         if h.protocol == Protocol::Ssh {
             ui.menu_button(t!("Container auf diesem Host"), |ui| {
                 for p in [Protocol::Docker, Protocol::Kubernetes] {

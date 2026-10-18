@@ -45,6 +45,13 @@ pub enum Icon {
     Logs,
     Record,
     Server,
+    /// Runbook: list with check marks.
+    Checklist,
+    /// Maintenance window.
+    Wrench,
+    Down,
+    /// Diagnostics bundle: heartbeat line.
+    Pulse,
 }
 
 enum Prim {
@@ -153,6 +160,14 @@ fn prims(icon: Icon) -> &'static [Prim] {
             R(3.0, 13.5, 18.0, 7.0, 2.0),
             Path("M7 7h2M7 17h2M13 7h4M13 17h4"),
         ],
+        Icon::Checklist => &[Path(
+            "M4 6.5l1.5 1.5 3-3M4 12.5l1.5 1.5 3-3M4 18.5l1.5 1.5 3-3M12 7h8M12 13h8M12 19h8",
+        )],
+        Icon::Wrench => &[Path(
+            "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z",
+        )],
+        Icon::Down => &[Path("M12 5v14M6 13l6 6 6-6")],
+        Icon::Pulse => &[Path("M3 12h4l3-8 4 16 3-8h4")],
     }
 }
 
@@ -166,7 +181,13 @@ fn weight(icon: Icon) -> f32 {
     match icon {
         Icon::Plus | Icon::Close => 2.6,
         Icon::Chevron => 3.0,
-        Icon::Search | Icon::Wifi | Icon::Up | Icon::Refresh | Icon::Download | Icon::Upload => 2.0,
+        Icon::Search
+        | Icon::Wifi
+        | Icon::Up
+        | Icon::Down
+        | Icon::Refresh
+        | Icon::Download
+        | Icon::Upload => 2.0,
         Icon::Pause => 2.4,
         Icon::Monitor => 1.4,
         Icon::File => 1.6,
@@ -536,7 +557,7 @@ mod tests {
             Hosts, Key, Folder, Bolt, Tunnel, Gear, Sun, Help, Search, Wifi, Plus, Chevron, Star,
             Sparkle, Close, Split, Maximize, Exit, External, Keyboard, Expand, Monitor, Up,
             Refresh, File, Lock, Broadcast, Download, Terminal, Windows, Upload, Trash, Copy, Wrap,
-            Pause, Play, Stop, Server, Logs, Record,
+            Pause, Play, Stop, Server, Logs, Record, Checklist, Wrench, Down, Pulse,
         ] {
             for prim in prims(icon) {
                 if let Prim::Path(d) = prim {

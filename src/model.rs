@@ -777,6 +777,12 @@ pub struct Library {
     pub log_commands: Vec<LogCommand>,
     /// Proxmox VE servers (own page, not part of the host list).
     pub pve_servers: Vec<PveServer>,
+    /// Step-by-step procedures (Snippets page → Runbooks).
+    #[serde(default)]
+    pub runbooks: Vec<crate::backend::runbook::Runbook>,
+    /// Active maintenance windows of hosts and groups.
+    #[serde(default)]
+    pub maintenance: Vec<crate::ui::maintenance::Maintenance>,
 }
 
 /// System facts collected after an SSH login (read-only commands).

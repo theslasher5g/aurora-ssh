@@ -2,6 +2,7 @@
 //! for serial) and talks to the UI exclusively through channels.
 
 pub mod container;
+pub mod diag;
 pub mod local;
 pub mod logs;
 pub mod portscan;
@@ -10,6 +11,7 @@ pub mod rdp;
 pub mod rdp_embed;
 pub mod reach;
 pub mod record;
+pub mod runbook;
 pub mod scan;
 pub mod serial;
 pub mod sftp;
