@@ -1,10 +1,150 @@
-//! Snapshots and backups of one guest (a sheet), and the Proxmox tasks they start.
+//! Snapshots, backups and statistics of one guest (a sheet), and the Proxmox tasks
+//! they start. Clone, migration, hardware, graphs and batch actions live in the
+//! `proxmox_guest_*` files next to this one.
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use super::*;
-use crate::backend::proxmox::{BACKUP_MODES, Backup, Backups, SnapInfo, TaskUpdate};
+use crate::backend::proxmox::{BACKUP_MODES, Backup, Backups, ExtOp, SnapInfo, TaskUpdate};
+
+#[path = "proxmox_guest_batch.rs"]
+mod batch;
+#[path = "proxmox_guest_clone.rs"]
+mod clone;
+#[path = "proxmox_guest_graphs.rs"]
+mod graphs;
+#[path = "proxmox_guest_hw.rs"]
+mod hw;
+
+pub use batch::{
+    RowExt, menu_entries, more_button, more_open, node_heading_hook, row_background, row_ext,
+    row_hook, selection_bar, template_actions,
+};
+pub use clone::save_and_connect;
+pub use graphs::paint_spark;
+
+/// Guest-level extras of the Proxmox page (not persisted).
+#[derive(Default)]
+pub struct GuestExt {
+    sparks: graphs::Sparks,
+    node_stats: Option<graphs::NodeStats>,
+    clone: Option<clone::CloneSheet>,
+    hw: Option<hw::HwSheet>,
+    migrate: Option<hw::MigrateSheet>,
+    sel: batch::Selection,
+    batch_form: Option<batch::BatchForm>,
+    batch: Option<batch::Batch>,
+    /// Cloned guests: what "Verbinden" should use (user, key, static address).
+    hints: HashMap<(Uuid, u32), clone::ConnectHint>,
+}
+
+impl GuestExt {
+    /// The server was edited or deleted: drop everything about it.
+    pub fn forget(&mut self, server: Uuid) {
+        self.sparks.forget(server);
+        if self.node_stats.as_ref().is_some_and(|n| n.server == server) {
+            self.node_stats = None;
+        }
+        if self.clone.as_ref().is_some_and(|c| c.src.server == server) {
+            self.clone = None;
+        }
+        if self.hw.as_ref().is_some_and(|h| h.g.server == server) {
+            self.hw = None;
+        }
+        if self.migrate.as_ref().is_some_and(|m| m.g.server == server) {
+            self.migrate = None;
+        }
+        self.sel.set.retain(|(s, _)| *s != server);
+        if self
+            .batch_form
+            .as_ref()
+            .is_some_and(|b| b.guests.iter().any(|g| g.server == server))
+        {
+            self.batch_form = None;
+        }
+        if let Some(b) = self.batch.as_mut() {
+            b.items.retain(|i| i.g.server != server);
+        }
+        self.hints.retain(|(s, _), _| *s != server);
+    }
+}
+
+/// Actions of the guest extras (row menus, drag & drop, selection bar).
+#[derive(Clone, Debug)]
+pub enum GuestAction {
+    /// Graphs of a node (click on its heading).
+    NodeStats(Uuid, String),
+    /// Clone sheet; `true` = "Neu aus Vorlage".
+    Clone(GuestRef, bool),
+    Hardware(GuestRef),
+    /// Migration sheet for the guest and a target node.
+    Migrate(GuestRef, String),
+    /// Ctrl (1) / Shift (2) / plain (0) click on a row.
+    Select(GuestRef, u8),
+    SelectTag(Uuid, String),
+    ClearSelection,
+    /// Power action for every selected guest.
+    BatchPower(Power),
+    /// Snapshot (0) or backup (1) form for the selection.
+    BatchForm(u8),
+}
+
+impl GuestAction {
+    /// Title and button of the confirmation dialog.
+    pub fn confirm_labels(&self) -> Option<(&'static str, &'static str)> {
+        match self {
+            GuestAction::BatchPower(Power::Shutdown) => {
+                Some((t!("Herunterfahren?"), t!("Herunterfahren")))
+            }
+            GuestAction::BatchPower(Power::Reboot) => Some((t!("Neu starten?"), t!("Neustart"))),
+            _ => None,
+        }
+    }
+}
+
+pub fn apply_ext(app: &mut App, a: GuestAction) {
+    match a {
+        GuestAction::NodeStats(server, node) => graphs::open_node(app, server, node),
+        GuestAction::Clone(g, template) => clone::open(app, g, template),
+        GuestAction::Hardware(g) => hw::open_hw(app, g),
+        GuestAction::Migrate(g, target) => hw::open_migrate(app, g, target),
+        GuestAction::Select(g, mode) => batch::select(app, &g, mode),
+        GuestAction::SelectTag(server, tag) => batch::select_tag(app, server, &tag),
+        GuestAction::ClearSelection => app.pve.ext.sel.set.clear(),
+        GuestAction::BatchPower(p) => batch::run_power(app, p),
+        GuestAction::BatchForm(kind) => batch::open_form(app, kind),
+    }
+}
+
+/// The guest from the last refresh.
+fn live_guest(app: &App, server: Uuid, vmid: u32) -> Option<Guest> {
+    app.pve
+        .live
+        .get(&server)?
+        .snap
+        .as_ref()?
+        .guests
+        .iter()
+        .find(|g| g.vmid == vmid)
+        .cloned()
+}
+
+/// Online nodes of a server.
+fn online_nodes(app: &App, server: Uuid) -> Vec<String> {
+    app.pve
+        .live
+        .get(&server)
+        .and_then(|l| l.snap.as_ref())
+        .map(|s| {
+            s.nodes
+                .iter()
+                .filter(|n| n.online)
+                .map(|n| n.name.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 /// Finished tasks stay visible in the sheet for this long.
 const KEEP_DONE: Duration = Duration::from_secs(90);
@@ -26,6 +166,8 @@ pub struct TaskView {
     pub done: Option<Result<String, String>>,
     pub finished: Option<Instant>,
     pub cancel: Arc<AtomicBool>,
+    /// Part of a batch: no toasts of its own.
+    pub quiet: bool,
 }
 
 /// Data loaded on demand.
@@ -63,13 +205,14 @@ struct Restore {
 
 pub struct GuestPanel {
     pub guest: GuestRef,
-    /// 0 snapshots, 1 backups.
+    /// 0 snapshots, 1 backups, 2 statistics.
     pub tab: usize,
     snaps: Load<Vec<SnapInfo>>,
     backups: Load<Backups>,
     new_snap: Option<NewSnap>,
     new_backup: Option<NewBackup>,
     restore: Option<Restore>,
+    stats: graphs::RrdView,
 }
 
 pub fn open(app: &mut App, g: GuestRef, tab: usize) {
@@ -87,6 +230,7 @@ pub fn open(app: &mut App, g: GuestRef, tab: usize) {
             new_snap: None,
             new_backup: None,
             restore: None,
+            stats: graphs::RrdView::default(),
         });
     } else if let Some(p) = app.pve.panel.as_mut() {
         p.tab = tab;
@@ -102,6 +246,10 @@ fn load(app: &mut App, tab: usize) {
     let Some(s) = server_of(app, g.server) else {
         return;
     };
+    if tab == 2 {
+        graphs::load_guest(app);
+        return;
+    }
     let Some(p) = app.pve.panel.as_mut() else {
         return;
     };
@@ -131,12 +279,29 @@ fn op_label(op: &Op) -> String {
         Op::DeleteSnapshot(name) => t!("Snapshot „{}“ löschen", name),
         Op::Backup { storage, .. } => t!("Backup nach {}", storage),
         Op::Restore { vmid, .. } => t!("Wiederherstellung als {}", vmid),
+        Op::Ext(e) => match e.as_ref() {
+            ExtOp::Power(p) => match p {
+                Power::Start => t!("Start").to_string(),
+                Power::Shutdown => t!("Herunterfahren").to_string(),
+                Power::Stop => t!("Stopp").to_string(),
+                Power::Reboot => t!("Neustart").to_string(),
+                Power::Resume => t!("Fortsetzen").to_string(),
+            },
+            ExtOp::Clone(c) => t!("Klon als {}", c.newid),
+            ExtOp::Migrate(m) => t!("Migration nach {}", m.target),
+            ExtOp::Hardware(_) => t!("Hardware ändern").to_string(),
+        },
     }
 }
 
 pub fn start_task(app: &mut App, g: &GuestRef, op: Op) {
+    start_task_with(app, g, op, false);
+}
+
+/// Starts a tracked task; returns its id (0 if the server is gone).
+fn start_task_with(app: &mut App, g: &GuestRef, op: Op, quiet: bool) -> u64 {
     let Some(s) = server_of(app, g.server) else {
-        return;
+        return 0;
     };
     let id = app.pve.next_task;
     app.pve.next_task += 1;
@@ -155,28 +320,43 @@ pub fn start_task(app: &mut App, g: &GuestRef, op: Op) {
         done: None,
         finished: None,
         cancel: cancel.clone(),
+        quiet,
     });
     let c = conn(app, &s);
-    pve::spawn_task(
-        &app.rt,
-        s.id,
-        app.pve.epoch(s.id),
-        c,
-        g.id(),
-        op,
-        id,
-        cancel,
-        app.pve.sink.clone(),
-    );
+    match op {
+        Op::Ext(e) => pve::spawn_ext_task(
+            &app.rt,
+            s.id,
+            app.pve.epoch(s.id),
+            c,
+            g.id(),
+            *e,
+            id,
+            cancel,
+            app.pve.sink.clone(),
+        ),
+        op => pve::spawn_task(
+            &app.rt,
+            s.id,
+            app.pve.epoch(s.id),
+            c,
+            g.id(),
+            op,
+            id,
+            cancel,
+            app.pve.sink.clone(),
+        ),
+    }
     // The open sheet shows the task itself.
     let shown = app
         .pve
         .panel
         .as_ref()
         .is_some_and(|p| p.guest.server == g.server && p.guest.vmid == g.vmid);
-    if !shown {
+    if !shown && !quiet {
         app.toast(t!("{}: {} gestartet", g.display(), what), theme::accent());
     }
+    id
 }
 
 /// Rounded group inside the sheet (same look as the form groups).
@@ -225,7 +405,27 @@ pub fn on_payload(app: &mut App, server: Uuid, vmid: u32, payload: GuestPayload)
             }
         }
         GuestPayload::Task { task, update } => task_update(app, server, vmid, task, update),
+        GuestPayload::Ext(p) => on_ext(app, server, vmid, *p),
         GuestPayload::Address(_) | GuestPayload::Spice(_) => {}
+    }
+}
+
+fn on_ext(app: &mut App, server: Uuid, vmid: u32, p: pve::ExtPayload) {
+    use pve::ExtPayload as E;
+    match p {
+        E::Rrd { target, tf, result } => graphs::on_rrd(app, server, target, tf, result),
+        E::Sparks(list) => graphs::on_sparks(app, server, list),
+        E::Stores { content, result } => {
+            let result = result.map_err(|e| e.to_string());
+            if content == "backup" {
+                batch::on_stores(app, result);
+            } else {
+                clone::on_stores(app, server, vmid, &result);
+                hw::on_stores(app, server, vmid, &result);
+            }
+        }
+        E::CloneInfo(r) => clone::on_info(app, server, vmid, r),
+        E::Hardware(r) => hw::on_config(app, server, vmid, r),
     }
 }
 
@@ -248,9 +448,13 @@ fn task_update(app: &mut App, server: Uuid, vmid: u32, task: u64, update: TaskUp
                 Op::Backup { .. } | Op::Restore { .. } => 1,
                 _ => 0,
             };
-            t.done = Some(result);
+            t.done = Some(result.clone());
             t.finished = Some(Instant::now());
-            app.toast(text, color);
+            if !t.quiet {
+                app.toast(text, color);
+            }
+            batch::task_done(app, task, &result);
+            hw::task_done(app, task);
             if app
                 .pve
                 .panel
@@ -295,9 +499,20 @@ enum Cmd {
 }
 
 pub fn panel(app: &mut App, ctx: &egui::Context) {
+    // Tasks of open sheets and batches are needed until those are closed.
+    let keep: Vec<u64> = batch::held_tasks(app);
     app.pve
         .tasks
-        .retain(|t| t.finished.is_none_or(|f| f.elapsed() < KEEP_DONE));
+        .retain(|t| t.finished.is_none_or(|f| f.elapsed() < KEEP_DONE) || keep.contains(&t.id));
+    graphs::pump_sparks(app);
+    batch::pump(app);
+    graphs::node_sheet(app, ctx);
+    clone::sheet(app, ctx);
+    hw::hw_sheet(app, ctx);
+    hw::migrate_sheet(app, ctx);
+    batch::form_sheet(app, ctx);
+    batch::result_sheet(app, ctx);
+    stats_refresh(app);
     let running = app
         .pve
         .panel
@@ -336,7 +551,11 @@ pub fn panel(app: &mut App, ctx: &egui::Context) {
         &title,
         |ui| {
             ui.horizontal(|ui| {
-                if let Some(i) = theme::segmented(ui, &[t!("Snapshots"), t!("Backups")], p.tab) {
+                if let Some(i) = theme::segmented(
+                    ui,
+                    &[t!("Snapshots"), t!("Backups"), t!("Statistik")],
+                    p.tab,
+                ) {
                     cmds.push(Cmd::Tab(i));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -345,7 +564,9 @@ pub fn panel(app: &mut App, ctx: &egui::Context) {
                         cmds.push(Cmd::Reload(p.tab));
                     }
                     let busy = tasks.iter().any(|t| t.done.is_none());
-                    if p.tab == 0 {
+                    if p.tab == 2 {
+                        // Statistics: only the reload button.
+                    } else if p.tab == 0 {
                         ui.add_enabled_ui(!busy && p.new_snap.is_none(), |ui| {
                             if theme::btn(
                                 ui,
@@ -389,7 +610,12 @@ pub fn panel(app: &mut App, ctx: &egui::Context) {
             });
             ui.add_space(6.0);
             task_list(ui, &tasks);
-            if p.tab == 0 {
+            if p.tab == 2 {
+                if let Some(tf) = graphs::stats_body(ui, &mut p.stats, false) {
+                    p.stats.tf = tf;
+                    cmds.push(Cmd::Reload(2));
+                }
+            } else if p.tab == 0 {
                 snapshots_tab(ui, p, running, &mut cmds);
             } else {
                 backups_tab(ui, p, &mut cmds);
@@ -408,10 +634,10 @@ pub fn panel(app: &mut App, ctx: &egui::Context) {
             Cmd::Tab(i) => {
                 if let Some(p) = app.pve.panel.as_mut() {
                     p.tab = i;
-                    let loaded = if i == 0 {
-                        p.snaps.data.is_some()
-                    } else {
-                        p.backups.data.is_some()
+                    let loaded = match i {
+                        0 => p.snaps.data.is_some(),
+                        1 => p.backups.data.is_some(),
+                        _ => p.stats.has(p.stats.tf),
                     };
                     if loaded {
                         continue;
@@ -960,5 +1186,17 @@ fn restore_dialog(p: &mut GuestPanel, ctx: &egui::Context, cmds: &mut Vec<Cmd>) 
         }
         Some(false) => p.restore = None,
         None => {}
+    }
+}
+
+/// Statistics tab: reload every minute while it is shown.
+fn stats_refresh(app: &mut App) {
+    let due = app
+        .pve
+        .panel
+        .as_ref()
+        .is_some_and(|p| p.tab == 2 && p.stats.stale());
+    if due {
+        load(app, 2);
     }
 }

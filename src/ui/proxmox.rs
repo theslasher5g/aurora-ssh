@@ -22,7 +22,7 @@ use crate::ui::icons::{self, Icon};
 
 #[path = "proxmox_guest.rs"]
 mod guest;
-pub use guest::{GuestPanel, TaskView};
+pub use guest::{GuestAction, GuestExt, GuestPanel, TaskView};
 
 const ROW_H: f32 = 66.0;
 /// Refresh period while the page is visible.
@@ -89,6 +89,8 @@ pub struct PveState {
     counter: Epoch,
     base: Epoch,
     gens: HashMap<Uuid, Epoch>,
+    /// Graphs, clone, migration, hardware, selection and batches.
+    pub ext: GuestExt,
 }
 
 /// Asks for the address of a guest that reported none.
@@ -102,6 +104,8 @@ pub struct IpPrompt {
 enum AddressFor {
     SaveHost,
     Console,
+    /// Save as host and open a session (after a clone).
+    Connect,
 }
 
 impl PveState {
@@ -124,6 +128,7 @@ impl PveState {
             counter: 0,
             base: 0,
             gens: HashMap::new(),
+            ext: GuestExt::default(),
         }
     }
 
@@ -143,6 +148,7 @@ impl PveState {
         self.counter += 1;
         self.base = self.counter;
         self.gens.clear();
+        self.ext = GuestExt::default();
     }
 
     /// Current generation of a server's live state; jobs carry it and their results
@@ -156,6 +162,7 @@ impl PveState {
         self.counter += 1;
         self.gens.insert(server, self.counter);
         self.live.remove(&server);
+        self.ext.forget(server);
         self.resolving.retain(|(s, _), _| *s != server);
         for t in self.tasks.iter().filter(|t| t.server == server) {
             t.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -237,6 +244,8 @@ pub enum PveAction {
     BrowserConsole(GuestRef),
     /// SPICE console in virt-viewer.
     Spice(GuestRef),
+    /// Graphs, clone, migration, hardware, batches (`proxmox_guest_*`).
+    Ext(GuestAction),
 }
 
 impl PveAction {
@@ -253,6 +262,7 @@ impl PveAction {
             PveAction::Task(_, Op::DeleteSnapshot(_)) => {
                 Some((t!("Snapshot löschen?"), t!("Löschen")))
             }
+            PveAction::Ext(a) => a.confirm_labels(),
             _ => None,
         }
     }
@@ -632,6 +642,7 @@ pub fn apply(app: &mut App, action: PveAction, ctx: &egui::Context) {
             );
             app.toast(t!("SPICE-Konsole wird geöffnet…"), theme::accent());
         }
+        PveAction::Ext(a) => guest::apply_ext(app, a),
     }
 }
 
@@ -683,7 +694,10 @@ fn address_found(
             let ctx = app.pve.sink.ctx();
             console(app, &g, ip.map(|i| i.to_string()), &ctx);
         }
-        AddressFor::SaveHost => match ip {
+        AddressFor::SaveHost | AddressFor::Connect => match ip {
+            Some(ip) if what == AddressFor::Connect => {
+                guest::save_and_connect(app, &g, ip.to_string())
+            }
             Some(ip) => save_as_host(app, &g, ip.to_string()),
             None => {
                 app.pve.ip_prompt = Some(IpPrompt {
@@ -1051,6 +1065,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         });
     });
     ui.add_space(14.0);
+    guest::selection_bar(app, ui, actions);
 
     let servers = app.lib.pve_servers.clone();
     let query = app.pve.search.trim().to_string();
@@ -1268,7 +1283,8 @@ fn server_section(
             continue;
         }
         ui.add_space(10.0);
-        node_heading(ui, n);
+        let heading = node_heading(ui, n);
+        guest::node_heading_hook(ui, s.id, &n.name, &heading, actions);
         if guests.is_empty() {
             ui.add_space(2.0);
             ui.horizontal(|ui| {
@@ -1282,6 +1298,7 @@ fn server_section(
             continue;
         }
         ui.add_space(6.0);
+        let rows = guest::row_ext(&mut app.pve, s.id, &guests);
         let live = app.pve.live.get(&s.id);
         theme::card(ui, theme::bg_deep(), |ui| {
             for (i, g) in guests.iter().enumerate() {
@@ -1293,14 +1310,15 @@ fn server_section(
                     .iter()
                     .find(|t| t.server == s.id && t.vmid == g.vmid && t.done.is_none())
                     .map(|t| t.what.clone());
-                guest_row(ui, s, g, ips, busy, task, i > 0, actions);
+                guest_row(ui, s, g, ips, busy, task, i > 0, &rows[i], actions);
             }
         });
     }
 }
 
-fn node_heading(ui: &mut egui::Ui, n: &pve::Node) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::hover());
+fn node_heading(ui: &mut egui::Ui, n: &pve::Node) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::click());
     let p = ui.painter();
     let cy = rect.center().y;
     let icon = Rect::from_center_size(Pos2::new(rect.left() + 10.0, cy), Vec2::splat(14.0));
@@ -1348,6 +1366,7 @@ fn node_heading(ui: &mut egui::Ui, n: &pve::Node) {
             theme::text_dim(),
         );
     }
+    resp.on_hover_text(t!("Statistik des Nodes"))
 }
 
 /// Paints a rounded tag at `x` (left edge); returns its width.
@@ -1371,15 +1390,19 @@ fn guest_row(
     busy: bool,
     task: Option<String>,
     divider: bool,
+    ext: &guest::RowExt,
     actions: &mut Vec<Action>,
 ) {
-    let (rect, resp) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), ROW_H),
+        Sense::click_and_drag(),
+    );
     let hovered = ui.rect_contains_pointer(rect.shrink2(Vec2::new(0.0, 0.5)));
     let p = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     if hovered {
         p.rect_filled(rect, CornerRadius::ZERO, theme::hover());
     }
+    guest::row_background(&p, rect, ext);
     if divider {
         p.line_segment(
             [
@@ -1438,10 +1461,15 @@ fn guest_row(
     if g.template {
         x += paint_tag(&p, x, y1, t!("Vorlage"), None) + 6.0;
     }
+    let mut tag_rects = Vec::new();
     for t in g.tags.iter().take(3) {
-        x += paint_tag(&p, x, y1, t, None) + 6.0;
+        let w = paint_tag(&p, x, y1, t, None);
+        tag_rects.push((
+            Rect::from_min_size(Pos2::new(x, y1 - 10.0), Vec2::new(w, 20.0)),
+            t.clone(),
+        ));
+        x += w + 6.0;
     }
-    let _ = x;
 
     // --- line 2: address, uptime
     let mut parts: Vec<(String, bool)> = Vec::new();
@@ -1493,8 +1521,11 @@ fn guest_row(
     }
 
     let r = GuestRef::of(s.id, g);
-    let show_actions = (hovered || resp.context_menu_opened()) && !g.template;
-    if !show_actions {
+    let active = hovered || resp.context_menu_opened() || guest::more_open(ui.ctx(), &r);
+    let show_actions = active && !g.template;
+    if active && g.template {
+        guest::template_actions(ui, rect, g, &r, ext, actions);
+    } else if !show_actions {
         // --- right: CPU and RAM
         if g.running() {
             let right = rect.right() - 18.0;
@@ -1545,6 +1576,22 @@ fn guest_row(
                 FontId::proportional(12.0),
                 theme::text_dim(),
             );
+            // CPU of the last hour, where the row has room for it.
+            let spark = Rect::from_min_size(
+                Pos2::new(right - bar_w - 230.0, cy - 11.0),
+                Vec2::new(84.0, 22.0),
+            );
+            if let Some(v) = &ext.spark
+                && x.max(x2) + 12.0 < spark.left()
+            {
+                guest::paint_spark(&p, spark, v, kind_color(g.kind));
+                ui.interact(
+                    spark,
+                    ui.id().with(("pve-spark", s.id, g.vmid)),
+                    Sense::hover(),
+                )
+                .on_hover_text(t!("CPU der letzten Stunde"));
+            }
         }
     } else {
         let mut child = ui.new_child(
@@ -1580,6 +1627,7 @@ fn guest_row(
             if theme::icon_btn(ui, Icon::External, t!("Konsole im Browser (noVNC)")).clicked() {
                 actions.push(Action::Pve(PveAction::BrowserConsole(r.clone())));
             }
+            guest::more_button(ui, g, &r, ext, actions);
             for (power, label) in power_buttons(g) {
                 if theme::btn(ui, theme::Btn::Small, None, label).clicked() {
                     actions.push(power_action(&r, power));
@@ -1590,9 +1638,11 @@ fn guest_row(
     if resp.double_clicked() && !g.template {
         actions.push(Action::Pve(PveAction::Console(r.clone())));
     }
+    guest::row_hook(ui, &resp, g, &r, ext, &tag_rects, actions);
     resp.context_menu(|ui| {
         if g.template {
             ui.label(RichText::new(t!("Vorlage")).color(theme::text_dim()));
+            guest::menu_entries(ui, g, &r, ext, actions);
             return;
         }
         if ui.button(t!("Konsole")).clicked() {
@@ -1628,6 +1678,7 @@ fn guest_row(
             actions.push(Action::Pve(PveAction::OpenGuest(r.clone(), 1)));
             ui.close();
         }
+        guest::menu_entries(ui, g, &r, ext, actions);
         ui.separator();
         for (power, label) in power_buttons(g).into_iter().rev() {
             if ui.button(label).clicked() {

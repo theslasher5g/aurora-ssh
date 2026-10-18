@@ -30,6 +30,10 @@ use super::Sink;
 mod ops;
 pub use ops::*;
 
+#[path = "proxmox_guest_ops.rs"]
+mod guest_ops;
+pub use guest_ops::*;
+
 // ------------------------------------------------------------------ data
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -563,8 +567,12 @@ impl Client {
             (Auth::Password { .. }, None) => {}
         }
         let result = match method {
-            Method::Post => {
-                let mut req = self.agent.post(&url);
+            Method::Post | Method::Put => {
+                let mut req = if method == Method::Post {
+                    self.agent.post(&url)
+                } else {
+                    self.agent.put(&url)
+                };
                 for (k, v) in &headers {
                     req = req.header(*k, v);
                 }
@@ -597,6 +605,7 @@ impl Client {
 enum Method {
     Get,
     Post,
+    Put,
     Delete,
 }
 

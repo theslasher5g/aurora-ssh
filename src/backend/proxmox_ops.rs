@@ -491,6 +491,8 @@ pub enum Op {
         volid: String,
         vmid: u32,
     },
+    /// Clone, migrate, hardware, batch power: see `proxmox_guest_ops`.
+    Ext(Box<super::ExtOp>),
 }
 
 impl Op {
@@ -566,6 +568,7 @@ impl Op {
                     form,
                 )
             }
+            Op::Ext(_) => return None,
         })
     }
 }
@@ -618,6 +621,8 @@ pub enum GuestPayload {
     Address(Result<Option<IpAddr>, Error>),
     /// `.vv` settings from `spiceproxy`, or why there is no SPICE display.
     Spice(Result<Vec<(String, String)>, Error>),
+    /// Graphs, clone, hardware: see `proxmox_guest_ops`.
+    Ext(Box<super::ExtPayload>),
 }
 
 fn send(sink: &Sink<PveEvent>, server: Uuid, epoch: Epoch, c: &Client, vmid: u32, p: GuestPayload) {
