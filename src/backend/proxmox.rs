@@ -33,6 +33,9 @@ pub use ops::*;
 #[path = "proxmox_guest_ops.rs"]
 mod guest_ops;
 pub use guest_ops::*;
+/// Cluster-wide views (tasks, storage, alerts), node shells and Proxmox Backup Server.
+#[path = "proxmox_cluster.rs"]
+pub mod cluster;
 
 // ------------------------------------------------------------------ data
 
@@ -393,6 +396,8 @@ struct Client {
     pin: Option<String>,
     auth: Auth,
     session: Option<Session>,
+    /// Proxmox Backup Server: other header / cookie names (see `cluster::pbs`).
+    pbs: bool,
 }
 
 /// Tickets are valid for two hours; renew a bit earlier.
@@ -438,7 +443,34 @@ impl Client {
                 .session
                 .clone()
                 .filter(|s| s.at.elapsed() < TICKET_MAX_AGE),
+            pbs: false,
         }
+    }
+
+    /// Token header, or ticket cookie (+ CSRF token for writes).
+    fn auth_headers(&self, method: Method) -> Vec<(&'static str, String)> {
+        let mut headers = Vec::new();
+        match (&self.auth, &self.session) {
+            (Auth::Token { id, secret }, _) if self.pbs => {
+                headers.push(("Authorization", format!("PBSAPIToken={id}:{secret}")));
+            }
+            (Auth::Token { id, secret }, _) => {
+                headers.push(("Authorization", format!("PVEAPIToken={id}={secret}")));
+            }
+            (Auth::Password { .. }, Some(s)) => {
+                let cookie = if self.pbs {
+                    "PBSAuthCookie"
+                } else {
+                    "PVEAuthCookie"
+                };
+                headers.push(("Cookie", format!("{cookie}={}", s.ticket)));
+                if method != Method::Get {
+                    headers.push(("CSRFPreventionToken", s.csrf.clone()));
+                }
+            }
+            (Auth::Password { .. }, None) => {}
+        }
+        headers
     }
 
     /// Turns a transport error into a pin error when the certificate was the reason.
@@ -553,19 +585,7 @@ impl Client {
         form: &[(&str, String)],
     ) -> Result<(u16, String), Error> {
         let url = format!("{}{path}", self.base);
-        let mut headers: Vec<(&str, String)> = Vec::new();
-        match (&self.auth, &self.session) {
-            (Auth::Token { id, secret }, _) => {
-                headers.push(("Authorization", format!("PVEAPIToken={id}={secret}")));
-            }
-            (Auth::Password { .. }, Some(s)) => {
-                headers.push(("Cookie", format!("PVEAuthCookie={}", s.ticket)));
-                if method != Method::Get {
-                    headers.push(("CSRFPreventionToken", s.csrf.clone()));
-                }
-            }
-            (Auth::Password { .. }, None) => {}
-        }
+        let headers = self.auth_headers(method);
         let result = match method {
             Method::Post | Method::Put => {
                 let mut req = if method == Method::Post {

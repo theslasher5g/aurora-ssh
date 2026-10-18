@@ -24,6 +24,9 @@ use crate::ui::icons::{self, Icon};
 mod guest;
 pub use guest::{GuestAction, GuestExt, GuestPanel, TaskView};
 
+#[path = "proxmox_cluster.rs"]
+pub mod cluster;
+
 const ROW_H: f32 = 66.0;
 /// Refresh period while the page is visible.
 const POLL: Duration = Duration::from_secs(10);
@@ -91,6 +94,8 @@ pub struct PveState {
     gens: HashMap<Uuid, Epoch>,
     /// Graphs, clone, migration, hardware, selection and batches.
     pub ext: GuestExt,
+    /// Overview, task log, alerts, node shells/updates, backup servers.
+    pub cluster: cluster::ClusterState,
 }
 
 /// Asks for the address of a guest that reported none.
@@ -129,6 +134,7 @@ impl PveState {
             base: 0,
             gens: HashMap::new(),
             ext: GuestExt::default(),
+            cluster: cluster::ClusterState::new(ctx),
         }
     }
 
@@ -149,6 +155,7 @@ impl PveState {
         self.base = self.counter;
         self.gens.clear();
         self.ext = GuestExt::default();
+        self.cluster.lock();
     }
 
     /// Current generation of a server's live state; jobs carry it and their results
@@ -163,6 +170,7 @@ impl PveState {
         self.gens.insert(server, self.counter);
         self.live.remove(&server);
         self.ext.forget(server);
+        self.cluster.reset_server(server);
         self.resolving.retain(|(s, _), _| *s != server);
         for t in self.tasks.iter().filter(|t| t.server == server) {
             t.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -246,6 +254,8 @@ pub enum PveAction {
     Spice(GuestRef),
     /// Graphs, clone, migration, hardware, batches (`proxmox_guest_*`).
     Ext(GuestAction),
+    /// Cluster views, node shell / updates, backup servers.
+    Cluster(cluster::ClusterAction),
 }
 
 impl PveAction {
@@ -512,6 +522,7 @@ pub fn pump(app: &mut App) {
     for id in due {
         refresh(app, id);
     }
+    cluster::pump(app);
 }
 
 /// Refreshes `server` after each of `secs` seconds.
@@ -590,6 +601,7 @@ pub fn apply(app: &mut App, action: PveAction, ctx: &egui::Context) {
                 return;
             };
             let c = conn(app, &s);
+            cluster::note_own_action(app, s.id, g.vmid);
             app.pve.live.entry(s.id).or_default().busy.insert(g.vmid);
             pve::spawn_power(
                 &app.rt,
@@ -643,6 +655,7 @@ pub fn apply(app: &mut App, action: PveAction, ctx: &egui::Context) {
             app.toast(t!("SPICE-Konsole wird geöffnet…"), theme::accent());
         }
         PveAction::Ext(a) => guest::apply_ext(app, a),
+        PveAction::Cluster(a) => cluster::apply(app, a, ctx),
     }
 }
 
@@ -1012,6 +1025,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         .sum();
     ui.horizontal(|ui| {
         theme::page_title(ui, "Proxmox", Some(total));
+        cluster::page_switch(app, ui, actions);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
             if theme::btn(ui, theme::Btn::Primary, Some(Icon::Plus), t!("Server"))
@@ -1020,7 +1034,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             {
                 actions.push(Action::Pve(PveAction::NewServer));
             }
-            if !app.lib.pve_servers.is_empty() {
+            cluster::bell(app, ui, actions);
+            if !cluster::guests_page(app) {
+                if theme::icon_btn(ui, Icon::Refresh, t!("Jetzt aktualisieren")).clicked() {
+                    actions.push(Action::Pve(PveAction::Cluster(
+                        cluster::ClusterAction::Refresh,
+                    )));
+                }
+            } else if !app.lib.pve_servers.is_empty() {
                 if theme::icon_btn(ui, Icon::Refresh, t!("Jetzt aktualisieren")).clicked() {
                     actions.push(Action::Pve(PveAction::Refresh));
                 }
@@ -1037,6 +1058,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     });
     ui.add_space(18.0);
 
+    if cluster::show_page(app, ui, actions) {
+        return;
+    }
     if app.lib.pve_servers.is_empty() {
         empty_state(ui, actions);
         return;
@@ -1285,6 +1309,7 @@ fn server_section(
         ui.add_space(10.0);
         let heading = node_heading(ui, n);
         guest::node_heading_hook(ui, s.id, &n.name, &heading, actions);
+        cluster::node_links(app, ui, heading.rect, s.id, n, actions);
         if guests.is_empty() {
             ui.add_space(2.0);
             ui.horizontal(|ui| {
@@ -1728,6 +1753,7 @@ fn power_action(r: &GuestRef, power: Power) -> Action {
 pub fn windows(app: &mut App, ctx: &egui::Context) {
     editor(app, ctx);
     guest::panel(app, ctx);
+    cluster::windows(app, ctx);
     ip_prompt(app, ctx);
     trust(app, ctx);
 }
@@ -1924,6 +1950,7 @@ fn editor(app: &mut App, ctx: &egui::Context) {
                     "SSH-Host für die Nodes: Container öffnen sich dort mit „pct enter“, VMs ohne bekannte IP mit „qm terminal“. Liegt der Gast auf einem anderen Node, springt Aurora per SSH dorthin."
                 ),
             );
+            cluster::editor_switch(ui, s);
             theme::form_caption(ui, t!("Zertifikat"));
             theme::form(ui, 110.0, |ui, f| {
                 f.full(ui, |ui| {

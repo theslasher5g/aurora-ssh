@@ -21,6 +21,7 @@ mod ui_v062;
 mod ui_v062_keys;
 mod ui_v062_pve;
 mod ui_v062_rdp;
+mod ui_v063_pve_cluster;
 mod ui_v063_pve_guest;
 mod ui_vnc;
 
@@ -43,6 +44,7 @@ const TABLES: &[&[(&str, &str)]] = &[
     ui_v062_keys::T,
     ui_v062_pve::T,
     ui_v063_pve_guest::T,
+    ui_v063_pve_cluster::T,
     ui_vnc::T,
 ];
 

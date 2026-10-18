@@ -542,6 +542,8 @@ pub struct Keychain {
     pub identities: Vec<Identity>,
     /// Proxmox server id → API token secret or password.
     pub pve_secrets: HashMap<Uuid, String>,
+    /// Proxmox Backup Server id → API token secret or password.
+    pub pbs_secrets: HashMap<Uuid, String>,
     /// Groups on the keys page, in display order.
     pub groups: Vec<KeyGroup>,
 }
@@ -623,6 +625,8 @@ pub struct PveServer {
     pub tls_pin: String,
     /// SSH host that reaches the nodes (consoles via `pct enter` / `qm terminal`).
     pub ssh_host: Option<Uuid>,
+    /// Alerts (guest down, node offline, failed task, full storage) while Aurora runs.
+    pub notify: bool,
 }
 
 impl Default for PveServer {
@@ -636,6 +640,47 @@ impl Default for PveServer {
             user: String::new(),
             tls_pin: String::new(),
             ssh_host: None,
+            notify: true,
+        }
+    }
+}
+
+/// A Proxmox Backup Server (own list on the Proxmox page). The secret lives in the
+/// keychain (`Keychain::pbs_secrets`).
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[serde(default)]
+pub struct PbsServer {
+    pub id: Uuid,
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    /// API token (`user@realm!name`) instead of user + password.
+    pub token: bool,
+    pub user: String,
+    /// SHA-256 fingerprint of the trusted certificate, empty = not yet.
+    pub tls_pin: String,
+}
+
+impl Default for PbsServer {
+    fn default() -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: String::new(),
+            host: String::new(),
+            port: 8007,
+            token: true,
+            user: String::new(),
+            tls_pin: String::new(),
+        }
+    }
+}
+
+impl PbsServer {
+    pub fn display_name(&self) -> &str {
+        if self.name.trim().is_empty() {
+            self.host.trim()
+        } else {
+            self.name.trim()
         }
     }
 }
@@ -777,6 +822,8 @@ pub struct Library {
     pub log_commands: Vec<LogCommand>,
     /// Proxmox VE servers (own page, not part of the host list).
     pub pve_servers: Vec<PveServer>,
+    /// Proxmox Backup Servers (listed on the Proxmox page).
+    pub pbs_servers: Vec<PbsServer>,
 }
 
 /// System facts collected after an SSH login (read-only commands).
@@ -1094,6 +1141,13 @@ mod tests {
         assert!(kc.pve_secrets.is_empty());
         let s: PveServer = serde_json::from_str(r#"{"host":"pve"}"#).unwrap();
         assert_eq!((s.port, s.token, s.display_name()), (8006, true, "pve"));
+        assert!(
+            s.notify,
+            "alerts are on for servers saved before the switch existed"
+        );
+        assert!(lib.pbs_servers.is_empty() && kc.pbs_secrets.is_empty());
+        let b: PbsServer = serde_json::from_str(r#"{"host":"pbs"}"#).unwrap();
+        assert_eq!((b.port, b.display_name()), (8007, "pbs"));
     }
 
     #[test]

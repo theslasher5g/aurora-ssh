@@ -41,6 +41,8 @@ pub enum ConnectSpec {
     Local(Vec<String>),
     /// Plays a recorded session (`.cast` file).
     Replay(std::path::PathBuf),
+    /// Shell on a Proxmox node through the API (termproxy), no SSH.
+    PveShell(crate::backend::proxmox::cluster::term::ShellParams),
 }
 
 pub enum ConnState {
@@ -1167,6 +1169,23 @@ impl App {
         self.focus_term = Some(id);
     }
 
+    /// Terminal tab with a shell on a Proxmox node (termproxy over the API).
+    pub fn open_pve_shell(
+        &mut self,
+        title: String,
+        subtitle: String,
+        params: crate::backend::proxmox::cluster::term::ShellParams,
+        ctx: &egui::Context,
+    ) {
+        let host = Host {
+            label: title,
+            hostname: params.conn.host.clone(),
+            protocol: Protocol::Telnet,
+            ..Default::default()
+        };
+        self.push_term_tab(&host, ConnectSpec::PveShell(params), subtitle, ctx);
+    }
+
     /// Terminal tab for a container shell (the host may be unsaved).
     fn push_term_tab(
         &mut self,
@@ -1357,6 +1376,9 @@ impl App {
             ConnectSpec::Telnet(p) => backend::telnet::spawn(&self.rt, p.clone(), 80, 24, sink),
             ConnectSpec::Local(argv) => backend::local::spawn(argv.clone(), 80, 24, sink),
             ConnectSpec::Replay(path) => backend::record::spawn_replay(path.clone(), sink),
+            ConnectSpec::PveShell(p) => {
+                backend::proxmox::cluster::term::spawn(p.clone(), 80, 24, sink)
+            }
         };
         TermTab {
             spec,
@@ -1929,6 +1951,10 @@ impl App {
             identities: self.keychain.identities.clone(),
             known_hosts: self.lib.known_hosts.clone(),
             key_groups: self.keychain.groups.clone(),
+            pve_servers: self.lib.pve_servers.clone(),
+            pve_secrets: self.keychain.pve_secrets.clone(),
+            pbs_servers: self.lib.pbs_servers.clone(),
+            pbs_secrets: self.keychain.pbs_secrets.clone(),
         };
         let path = PathBuf::from(self.export_path.trim());
         let r = serde_json::to_vec(&bundle)
@@ -1959,7 +1985,7 @@ impl App {
             .and_then(|plain| {
                 serde_json::from_slice::<crate::store::ExportBundle>(&plain).map_err(Into::into)
             });
-        let bundle = match r {
+        let mut bundle = match r {
             Ok(b) => b,
             Err(e) => {
                 self.toast(
@@ -1969,7 +1995,7 @@ impl App {
                 return;
             }
         };
-        let mut n = 0;
+        let mut n = bundle.merge_proxmox(&mut self.lib, &mut self.keychain);
         for g in bundle.groups {
             if self.lib.group(g.id).is_none() {
                 self.lib.groups.push(g);
