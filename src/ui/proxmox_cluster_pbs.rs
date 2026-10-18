@@ -421,22 +421,26 @@ pub fn page(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     for id in due {
         refresh(app, id);
     }
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(t!(
-                "Proxmox Backup Server: Datastores, Snapshots und Prune-Vorschau (nur lesend)."
-            ))
-            .color(theme::text_dim()),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    theme::toolbar(
+        ui,
+        "pbs-head",
+        |ui| {
+            ui.label(
+                RichText::new(t!(
+                    "Proxmox Backup Server: Datastores, Snapshots und Prune-Vorschau (nur lesend)."
+                ))
+                .color(theme::text_dim()),
+            );
+        },
+        |ui, _| {
             if theme::btn(ui, theme::Btn::Small, Some(Icon::Plus), t!("Backup-Server"))
                 .on_hover_text(t!("Proxmox Backup Server hinzufügen"))
                 .clicked()
             {
                 actions.push(pbs(PbsAction::New));
             }
-        });
-    });
+        },
+    );
     ui.add_space(14.0);
     if app.lib.pbs_servers.is_empty() {
         theme::card(ui, theme::bg_deep(), |ui| {
@@ -559,60 +563,82 @@ fn server_section(app: &mut App, ui: &mut egui::Ui, s: &PbsServer, actions: &mut
                 Icon::Download,
                 theme::text_dim(),
             );
-            p.text(
-                Pos2::new(x + 28.0, cy - 8.0),
-                egui::Align2::LEFT_CENTER,
-                &d.name,
-                theme::semibold(14.0),
-                theme::text(),
-            );
-            p.text(
-                Pos2::new(x + 28.0, cy + 10.0),
-                egui::Align2::LEFT_CENTER,
-                if d.comment.is_empty() {
-                    t!("Datastore")
-                } else {
-                    d.comment.as_str()
-                },
-                FontId::proportional(12.0),
-                theme::text_dim(),
-            );
-            let bx = rect.left() + rect.width() * 0.4;
-            if let Some(e) = &d.error {
-                p.text(
-                    Pos2::new(bx, cy),
-                    egui::Align2::LEFT_CENTER,
-                    e,
-                    FontId::proportional(12.5),
-                    theme::amber(),
-                );
-            } else if d.total > 0 {
-                let bar = egui::Rect::from_min_size(Pos2::new(bx, cy - 4.0), Vec2::new(200.0, 8.0));
-                super::paint_bar(p, bar, d.usage());
-                p.text(
-                    Pos2::new(bx + 214.0, cy),
-                    egui::Align2::LEFT_CENTER,
-                    format!(
-                        "{} %  ·  {} / {}",
-                        (d.usage() * 100.0).round(),
-                        bytes(d.used),
-                        bytes(d.total)
-                    ),
-                    FontId::proportional(12.5),
-                    if d.usage() > crate::backend::proxmox::cluster::STORAGE_WARN {
-                        super::level_color(d.usage())
-                    } else {
-                        theme::text_dim()
-                    },
-                );
-            }
-            p.text(
-                Pos2::new(rect.right() - 18.0, cy),
-                egui::Align2::RIGHT_CENTER,
-                t!("Snapshots ›"),
+            // Columns: name | bar + numbers | "Snapshots ›"; the bar shrinks and the
+            // texts truncate on narrow windows.
+            let link = p.layout_no_wrap(
+                t!("Snapshots ›").to_string(),
                 theme::medium(13.0),
                 theme::accent(),
             );
+            let link_left = rect.right() - 18.0 - link.size().x;
+            p.galley(
+                Pos2::new(link_left, cy - link.size().y / 2.0),
+                link,
+                theme::accent(),
+            );
+            let bx = rect.left() + rect.width() * 0.4;
+            let name_w = bx - (x + 28.0) - 12.0;
+            let g = theme::truncated(p, &d.name, theme::semibold(14.0), theme::text(), name_w);
+            p.galley(
+                Pos2::new(x + 28.0, cy - 8.0 - g.size().y / 2.0),
+                g,
+                theme::text(),
+            );
+            let comment = if d.comment.is_empty() {
+                t!("Datastore")
+            } else {
+                d.comment.as_str()
+            };
+            let g = theme::truncated(
+                p,
+                comment,
+                FontId::proportional(12.0),
+                theme::text_dim(),
+                name_w,
+            );
+            p.galley(
+                Pos2::new(x + 28.0, cy + 10.0 - g.size().y / 2.0),
+                g,
+                theme::text_dim(),
+            );
+            let room = link_left - 16.0 - bx;
+            if let Some(e) = &d.error {
+                let g = theme::truncated(p, e, FontId::proportional(12.5), theme::amber(), room);
+                p.galley(Pos2::new(bx, cy - g.size().y / 2.0), g, theme::amber());
+            } else if d.total > 0 && room > 40.0 {
+                let text = format!(
+                    "{} %  ·  {} / {}",
+                    (d.usage() * 100.0).round(),
+                    bytes(d.used),
+                    bytes(d.total)
+                );
+                let color = if d.usage() > crate::backend::proxmox::cluster::STORAGE_WARN {
+                    super::level_color(d.usage())
+                } else {
+                    theme::text_dim()
+                };
+                let tw = p
+                    .layout_no_wrap(text.clone(), FontId::proportional(12.5), color)
+                    .size()
+                    .x;
+                let bar_w = (room - tw - 14.0).min(200.0);
+                let tx = if bar_w >= 40.0 {
+                    let bar =
+                        egui::Rect::from_min_size(Pos2::new(bx, cy - 4.0), Vec2::new(bar_w, 8.0));
+                    super::paint_bar(p, bar, d.usage());
+                    bx + bar_w + 14.0
+                } else {
+                    bx
+                };
+                let g = theme::truncated(
+                    p,
+                    text,
+                    FontId::proportional(12.5),
+                    color,
+                    link_left - 16.0 - tx,
+                );
+                p.galley(Pos2::new(tx, cy - g.size().y / 2.0), g, color);
+            }
             if resp
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .clicked()

@@ -94,7 +94,7 @@ pub fn overview(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
 
 fn overview_card(ui: &mut egui::Ui, s: &PveServer, ov: &Overview, actions: &mut Vec<Action>) {
     let online = ov.nodes.iter().filter(|n| n.online).count();
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
         ui.label(RichText::new(s.display_name()).font(theme::semibold(16.0)));
         if let Some(c) = &ov.cluster {
@@ -150,6 +150,9 @@ fn overview_card(ui: &mut egui::Ui, s: &PveServer, ov: &Overview, actions: &mut 
             .inner_margin(egui::Margin::symmetric(18, 14))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
+                // Narrow windows: secondary columns go, bars shrink, the rest truncates.
+                let width = ui.available_width();
+                let narrow = width < 640.0;
                 ui.spacing_mut().item_spacing.y = 6.0;
                 theme::section_title(ui, t!("Nodes"));
                 for n in &ov.nodes {
@@ -172,20 +175,22 @@ fn overview_card(ui: &mut egui::Ui, s: &PveServer, ov: &Overview, actions: &mut 
                             egui::Label::new(RichText::new(&n.name).font(theme::medium(13.5)))
                                 .truncate(),
                         );
-                        col(
-                            ui,
-                            120.0,
-                            egui::Label::new(
-                                theme::mono(
-                                    n.version
-                                        .as_deref()
-                                        .map(|v| format!("PVE {v}"))
-                                        .unwrap_or_else(|| "–".into()),
-                                    12.0,
-                                )
-                                .color(theme::text_dim()),
-                            ),
-                        );
+                        if !narrow {
+                            col(
+                                ui,
+                                120.0,
+                                egui::Label::new(
+                                    theme::mono(
+                                        n.version
+                                            .as_deref()
+                                            .map(|v| format!("PVE {v}"))
+                                            .unwrap_or_else(|| "–".into()),
+                                        12.0,
+                                    )
+                                    .color(theme::text_dim()),
+                                ),
+                            );
+                        }
                         col(
                             ui,
                             120.0,
@@ -240,11 +245,15 @@ fn overview_card(ui: &mut egui::Ui, s: &PveServer, ov: &Overview, actions: &mut 
                             egui::Label::new(RichText::new(&st.id).font(theme::medium(13.5)))
                                 .truncate(),
                         );
-                        col(
-                            ui,
-                            70.0,
-                            egui::Label::new(theme::mono(&st.kind, 12.0).color(theme::text_dim())),
-                        );
+                        if !narrow {
+                            col(
+                                ui,
+                                70.0,
+                                egui::Label::new(
+                                    theme::mono(&st.kind, 12.0).color(theme::text_dim()),
+                                ),
+                            );
+                        }
                         col(
                             ui,
                             90.0,
@@ -273,22 +282,26 @@ fn overview_card(ui: &mut egui::Ui, s: &PveServer, ov: &Overview, actions: &mut 
                             );
                             return;
                         }
-                        usage_bar(ui, 220.0, st.usage());
-                        ui.label(
-                            RichText::new(format!(
-                                "{} %  ·  {} / {}",
-                                (st.usage() * 100.0).round(),
-                                bytes(st.used),
-                                bytes(st.total)
-                            ))
-                            .size(12.5)
-                            .color(
-                                if st.usage() > crate::backend::proxmox::cluster::STORAGE_WARN {
-                                    level_color(st.usage())
-                                } else {
-                                    theme::text_dim()
-                                },
-                            ),
+                        let used = 140.0 + 90.0 + 30.0 + if narrow { 0.0 } else { 80.0 };
+                        usage_bar(ui, (width - used - 190.0).clamp(50.0, 220.0), st.usage());
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(format!(
+                                    "{} %  ·  {} / {}",
+                                    (st.usage() * 100.0).round(),
+                                    bytes(st.used),
+                                    bytes(st.total)
+                                ))
+                                .size(12.5)
+                                .color(
+                                    if st.usage() > crate::backend::proxmox::cluster::STORAGE_WARN {
+                                        level_color(st.usage())
+                                    } else {
+                                        theme::text_dim()
+                                    },
+                                ),
+                            )
+                            .truncate(),
                         );
                     });
                 }
@@ -307,7 +320,7 @@ fn overview_card(ui: &mut egui::Ui, s: &PveServer, ov: &Overview, actions: &mut 
                             );
                             col(
                                 ui,
-                                160.0,
+                                if narrow { 80.0 } else { 160.0 },
                                 egui::Label::new(
                                     RichText::new(&p.node).size(12.5).color(theme::text_dim()),
                                 ),
@@ -326,16 +339,20 @@ fn overview_card(ui: &mut egui::Ui, s: &PveServer, ov: &Overview, actions: &mut 
                             } else {
                                 p.alloc as f32 / p.size as f32
                             };
-                            usage_bar(ui, 140.0, frac);
-                            ui.label(
-                                RichText::new(format!(
-                                    "{} / {} · frag {} %",
-                                    bytes(p.alloc),
-                                    bytes(p.size),
-                                    p.frag
-                                ))
-                                .size(12.5)
-                                .color(theme::text_dim()),
+                            let used = 140.0 + 90.0 + 50.0 + if narrow { 80.0 } else { 160.0 };
+                            usage_bar(ui, (width - used - 170.0).clamp(40.0, 140.0), frac);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(format!(
+                                        "{} / {} · frag {} %",
+                                        bytes(p.alloc),
+                                        bytes(p.size),
+                                        p.frag
+                                    ))
+                                    .size(12.5)
+                                    .color(theme::text_dim()),
+                                )
+                                .truncate(),
                             );
                         });
                     }
@@ -357,11 +374,16 @@ fn overview_card(ui: &mut egui::Ui, s: &PveServer, ov: &Overview, actions: &mut 
                             } else {
                                 h.status.clone()
                             };
-                            ui.label(RichText::new(text).size(12.5).color(if h.bad() {
-                                theme::red()
-                            } else {
-                                theme::text_dim()
-                            }));
+                            ui.add(
+                                egui::Label::new(RichText::new(text).size(12.5).color(
+                                    if h.bad() {
+                                        theme::red()
+                                    } else {
+                                        theme::text_dim()
+                                    },
+                                ))
+                                .truncate(),
+                            );
                         });
                     }
                 }
@@ -369,7 +391,7 @@ fn overview_card(ui: &mut egui::Ui, s: &PveServer, ov: &Overview, actions: &mut 
                 if let Some(c) = &ov.ceph {
                     ui.add_space(10.0);
                     theme::section_title(ui, "Ceph");
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         theme::pill(
                             ui,
                             &c.status,
@@ -498,24 +520,41 @@ fn guest_names(app: &App, server: Uuid) -> std::collections::HashMap<u32, String
         .unwrap_or_default()
 }
 
-/// Column x offsets (fraction of the row width) and their titles.
-fn columns() -> [(f32, &'static str); 7] {
-    [
-        (0.0, t!("Zeit")),
-        (0.12, t!("Node")),
-        (0.22, t!("Typ")),
-        (0.40, t!("Gast")),
-        (0.58, t!("Benutzer")),
-        (0.74, t!("Status")),
-        (0.90, t!("Dauer")),
-    ]
+/// Column x offsets (fraction of the row width) and their titles. Narrow tables drop the
+/// user column (zero width) so the others keep readable widths.
+fn columns(width: f32) -> [(f32, &'static str); 7] {
+    if width < 700.0 {
+        [
+            (0.0, t!("Zeit")),
+            (0.15, t!("Node")),
+            (0.26, t!("Typ")),
+            (0.47, t!("Gast")),
+            (0.68, t!("Benutzer")),
+            (0.68, t!("Status")),
+            (0.87, t!("Dauer")),
+        ]
+    } else {
+        [
+            (0.0, t!("Zeit")),
+            (0.12, t!("Node")),
+            (0.22, t!("Typ")),
+            (0.40, t!("Gast")),
+            (0.58, t!("Benutzer")),
+            (0.74, t!("Status")),
+            (0.90, t!("Dauer")),
+        ]
+    }
 }
 
 fn task_header(ui: &mut egui::Ui) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::hover());
     let inner = rect.shrink2(Vec2::new(18.0, 0.0));
     let p = ui.painter();
-    for (x, title) in columns() {
+    let cols = columns(inner.width());
+    for (i, (x, title)) in cols.iter().copied().enumerate() {
+        if cols.get(i + 1).is_some_and(|n| n.0 <= x) {
+            continue;
+        }
         p.text(
             Pos2::new(inner.left() + inner.width() * x, rect.center().y),
             egui::Align2::LEFT_CENTER,
@@ -544,7 +583,7 @@ fn task_row(
     }
     let inner = rect.shrink2(Vec2::new(18.0, 0.0));
     let cy = rect.center().y;
-    let cols = columns();
+    let cols = columns(inner.width());
     let x = |i: usize| inner.left() + inner.width() * cols[i].0;
     let w = |i: usize| {
         let next = cols.get(i + 1).map(|c| c.0).unwrap_or(1.0);
@@ -576,10 +615,12 @@ fn task_row(
         (None, _) => t.id.clone(),
     };
     cell(p, x(3), cy, w(3), &guest, font.clone(), theme::text_dim());
-    cell(p, x(4), cy, w(4), &t.user, font.clone(), theme::text_dim());
+    if w(4) > 0.0 {
+        cell(p, x(4), cy, w(4), &t.user, font.clone(), theme::text_dim());
+    }
     let (status, color) = status_of(t);
     let sx = x(5);
-    let g = p.layout_no_wrap(status.clone(), theme::medium(11.5), color);
+    let g = theme::truncated(p, status.clone(), theme::medium(11.5), color, w(5) - 14.0);
     let pw = (g.size().x + 14.0).min(w(5));
     let pill = Rect::from_min_size(Pos2::new(sx, cy - 10.0), Vec2::new(pw, 20.0));
     p.rect_filled(pill, CornerRadius::same(10), theme::soft(color));

@@ -71,32 +71,39 @@ const GROUPS: &[(&str, Entries)] = &[
 ];
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        theme::page_title(ui, t!("Tastenkürzel"), None);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    theme::page_header(
+        ui,
+        "help",
+        |ui| theme::page_title(ui, t!("Tastenkürzel"), None),
+        |_| {},
+        |ui, bar| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            theme::kbd(ui, "?");
-            ui.label(
-                RichText::new(t!("oder"))
-                    .size(13.0)
-                    .color(theme::text_dim()),
-            );
-            theme::kbd(ui, "F1");
-            ui.label(
-                RichText::new(t!("Öffnen mit"))
-                    .size(13.0)
-                    .color(theme::text_dim()),
-            );
-            ui.add_space(10.0);
+            // The hint is the first to go when room runs out.
+            if !bar.compact {
+                theme::kbd(ui, "?");
+                ui.label(
+                    RichText::new(t!("oder"))
+                        .size(13.0)
+                        .color(theme::text_dim()),
+                );
+                theme::kbd(ui, "F1");
+                ui.label(
+                    RichText::new(t!("Öffnen mit"))
+                        .size(13.0)
+                        .color(theme::text_dim()),
+                );
+                ui.add_space(10.0);
+            }
+            let width = bar.flex(160.0, 240.0);
             theme::search_field(
                 ui,
                 &mut app.help_filter,
                 t!("Kürzel suchen"),
-                240.0,
+                width,
                 egui::Id::new("help-search"),
             );
-        });
-    });
+        },
+    );
     ui.add_space(22.0);
     let filter = app.help_filter.trim().to_lowercase();
     egui::ScrollArea::vertical()

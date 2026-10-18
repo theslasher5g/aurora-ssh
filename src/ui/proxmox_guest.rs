@@ -18,7 +18,7 @@ mod graphs;
 mod hw;
 
 pub use batch::{
-    RowExt, menu_entries, more_button, more_open, node_heading_hook, row_background, row_ext,
+    RowExt, menu_entries, more_button_with, more_open, node_heading_hook, row_background, row_ext,
     row_hook, selection_bar, template_actions,
 };
 pub use clone::save_and_connect;

@@ -163,24 +163,29 @@ struct Row {
 
 pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     let count = app.keychain.identities.len();
-    ui.horizontal(|ui| {
-        theme::page_title(ui, t!("Schlüssel"), Some(count));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
+    theme::page_header(
+        ui,
+        "keys",
+        |ui| theme::page_title(ui, t!("Schlüssel"), Some(count)),
+        |_| {},
+        |ui, bar| {
             if theme::btn(ui, theme::Btn::Primary, Some(Icon::Plus), t!("Neu")).clicked() {
                 actions.push(Action::NewIdentity);
             }
-            if theme::btn(
-                ui,
-                theme::Btn::Normal,
-                Some(Icon::Folder),
-                t!("Neue Gruppe"),
-            )
-            .clicked()
-            {
+            let group = if bar.compact {
+                theme::icon_btn(ui, Icon::Folder, t!("Neue Gruppe"))
+            } else {
+                theme::btn(
+                    ui,
+                    theme::Btn::Normal,
+                    Some(Icon::Folder),
+                    t!("Neue Gruppe"),
+                )
+            };
+            if group.clicked() {
                 actions.push(Action::KeyGroup(KeyGroupOp::New));
             }
-            let width = (ui.available_width() - 24.0).clamp(180.0, 300.0);
+            let width = bar.flex(if bar.compact { 150.0 } else { 190.0 }, 300.0);
             let search = theme::search_field(
                 ui,
                 &mut app.keychain_search,
@@ -193,8 +198,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             {
                 app.keychain_search.clear();
             }
-        });
-    });
+        },
+    );
     ui.add_space(18.0);
     group_editor(app, ui.ctx());
 

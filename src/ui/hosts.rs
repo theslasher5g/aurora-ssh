@@ -61,11 +61,19 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     }
     // Header: title, search/quick connect, primary action.
     let mut enter = false;
-    ui.horizontal(|ui| {
-        theme::page_title(ui, t!("Verbindungen"), Some(app.lib.hosts.len()));
-        crate::ui::maintenance::header_pill(app, ui, actions);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
+    let mut pill_actions = Vec::new();
+    let count = app.lib.hosts.len();
+    let mut search_text = std::mem::take(&mut app.search);
+    let app_ref = &*app;
+    theme::page_header(
+        ui,
+        "hosts",
+        |ui| {
+            theme::page_title(ui, t!("Verbindungen"), Some(count));
+            crate::ui::maintenance::header_pill(app_ref, ui, &mut pill_actions);
+        },
+        |_| {},
+        |ui, bar| {
             let new = theme::btn(ui, theme::Btn::Primary, Some(Icon::Plus), t!("Neu"));
             egui::Popup::menu(&new).show(|ui| {
                 ui.set_min_width(210.0);
@@ -108,28 +116,36 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     ui.close();
                 }
             });
-            if crate::ui::certradar::header_button(app, ui).clicked() {
+            if crate::ui::certradar::header_button(app_ref, ui).clicked() {
                 actions.push(Action::Net(crate::ui::net::NetAction::OpenRadar));
             }
-            if theme::btn(ui, theme::Btn::Normal, Some(Icon::Wifi), t!("Netz scannen"))
-                .on_hover_text(t!(
-                    "Geräte mit SSH/RDP im lokalen Netz finden und übernehmen"
-                ))
-                .clicked()
-            {
+            let scan_tip = t!("Geräte mit SSH/RDP im lokalen Netz finden und übernehmen");
+            let scan = if bar.compact {
+                theme::icon_btn(
+                    ui,
+                    Icon::Wifi,
+                    &format!("{}\n{}", t!("Netz scannen"), scan_tip),
+                )
+            } else {
+                theme::btn(ui, theme::Btn::Normal, Some(Icon::Wifi), t!("Netz scannen"))
+                    .on_hover_text(scan_tip)
+            };
+            if scan.clicked() {
                 actions.push(Action::OpenScan);
             }
-            let width = (ui.available_width() - 24.0).clamp(180.0, 300.0);
+            let width = bar.flex(if bar.compact { 150.0 } else { 190.0 }, 300.0);
             let search = theme::search_field(
                 ui,
-                &mut app.search,
+                &mut search_text,
                 t!("Suchen oder user@host verbinden"),
                 width,
                 egui::Id::new("host-search"),
             );
             enter = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        });
-    });
+        },
+    );
+    app.search = search_text;
+    actions.append(&mut pill_actions);
     ui.add_space(18.0);
 
     if app.lib.hosts.is_empty() && app.search.trim().is_empty() {
@@ -137,26 +153,31 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         return;
     }
 
-    ui.horizontal(|ui| {
-        if let Some(i) = theme::segmented(
-            ui,
-            &[
-                "Alle",
-                "SSH",
-                "Desktop",
-                "Konsole",
-                "Container",
-                "Favoriten",
-            ]
-            .map(crate::i18n::tr),
-            app.host_filter,
-        ) {
-            app.host_filter = i;
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
-            let mut changed = false;
-            let compact = app.lib.settings.compact;
+    let mut filter = app.host_filter;
+    let settings = &mut app.lib.settings;
+    let mut changed = false;
+    theme::toolbar(
+        ui,
+        "host-filter",
+        |ui| {
+            if let Some(i) = theme::segmented(
+                ui,
+                &[
+                    "Alle",
+                    "SSH",
+                    "Desktop",
+                    "Konsole",
+                    "Container",
+                    "Favoriten",
+                ]
+                .map(crate::i18n::tr),
+                filter,
+            ) {
+                filter = i;
+            }
+        },
+        |ui, bar| {
+            let compact = settings.compact;
             let kind = if compact {
                 theme::Btn::SmallPrimary
             } else {
@@ -166,39 +187,36 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 .on_hover_text(t!("Kleinere Zeilen für viele Hosts"))
                 .clicked()
             {
-                app.lib.settings.compact = !compact;
+                settings.compact = !compact;
                 changed = true;
             }
             let labels = ["Name", "Zuletzt verwendet", "Online zuerst"];
             egui::ComboBox::from_id_salt("host-sort")
                 .selected_text(
-                    RichText::new(crate::i18n::tr(
-                        labels[app.lib.settings.sort.min(2) as usize],
-                    ))
-                    .font(theme::medium(13.0)),
+                    RichText::new(crate::i18n::tr(labels[settings.sort.min(2) as usize]))
+                        .font(theme::medium(13.0)),
                 )
-                .width(150.0)
+                .width(if bar.compact { 120.0 } else { 150.0 })
                 .show_ui(ui, |ui| {
                     for (i, l) in labels.iter().enumerate() {
                         changed |= ui
-                            .selectable_value(
-                                &mut app.lib.settings.sort,
-                                i as u8,
-                                crate::i18n::tr(l),
-                            )
+                            .selectable_value(&mut settings.sort, i as u8, crate::i18n::tr(l))
                             .changed();
                     }
                 });
-            ui.label(
-                RichText::new(t!("Sortierung"))
-                    .size(13.0)
-                    .color(theme::text_dim()),
-            );
-            if changed {
-                app.save_library();
+            if !bar.compact {
+                ui.label(
+                    RichText::new(t!("Sortierung"))
+                        .size(13.0)
+                        .color(theme::text_dim()),
+                );
             }
-        });
-    });
+        },
+    );
+    app.host_filter = filter;
+    if changed {
+        app.save_library();
+    }
     ui.add_space(14.0);
     selection_bar(app, ui, actions);
     ui.ctx()
@@ -871,6 +889,11 @@ fn uptime_text(secs: u64) -> String {
     }
 }
 
+/// "…" menu of a narrow host row (keeps the row in its hover state while open).
+fn more_menu_id(id: Uuid) -> egui::Id {
+    egui::Id::new(("host-row-more", id))
+}
+
 pub fn rename_id() -> egui::Id {
     egui::Id::new("aurora-rename")
 }
@@ -1055,11 +1078,75 @@ fn host_row(
 
     let col_name = rect.left() + 42.0;
 
+    // --- the right side decides first where the text has to stop.
+    let show_actions = hovered
+        || resp.context_menu_opened()
+        || egui::Popup::is_id_open(ui.ctx(), more_menu_id(h.id));
+    let offline = !is_live && (app.failed.contains(&h.id) || matches!(reach, Some(Reach::Down)));
+    let can_files = matches!(h.protocol, Protocol::Ssh | Protocol::Rdp);
+    let can_wake = offline && crate::ui::wol::can_wake(h) && app.net.wol.waiting(h.id).is_none();
+    let connect_w = theme::btn_width(ui, theme::Btn::SmallPrimary, None, t!("Verbinden"));
+    let mut full_w =
+        connect_w + 6.0 + theme::btn_width(ui, theme::Btn::Small, None, t!("Bearbeiten"));
+    if can_files {
+        full_w += 6.0 + theme::btn_width(ui, theme::Btn::Small, None, t!("Dateien"));
+    }
+    if can_wake {
+        full_w += 6.0 + theme::btn_width(ui, theme::Btn::Small, Some(Icon::Power), t!("Aufwecken"));
+    }
+    // Narrow rows keep the main button and move the rest into a "…" menu.
+    let collapsed = rect.width() - 42.0 - 150.0 - 8.0 < full_w;
+    let strip_w = if collapsed {
+        connect_w + 6.0 + theme::btn_width(ui, theme::Btn::Small, None, "…")
+    } else {
+        full_w
+    };
+    // Meta (latency, last use): a fixed column on wide rows, hidden on very narrow ones.
+    let mut meta_parts = Vec::new();
+    if let Some(Reach::Up(ms)) = reach {
+        meta_parts.push(format!("{ms} ms"));
+    }
+    if let Some(t) = h.last_connected {
+        meta_parts.push(relative_time(t));
+    }
+    let meta = meta_parts.join(" · ");
+    let wol_pill = app.net.wol.pill_text(h.id);
+    let meta_w = if wol_pill.is_some() {
+        150.0
+    } else {
+        p.layout_no_wrap(meta.clone(), FontId::proportional(12.5), theme::text_dim())
+            .size()
+            .x
+    };
+    let slot = if meta_w <= 0.5 || rect.width() < 470.0 {
+        0.0
+    } else if rect.width() >= 640.0 {
+        meta_w.max(150.0)
+    } else {
+        meta_w
+    };
+    let strip_left = rect.right() - 8.0 - strip_w;
+    let text_right = if show_actions {
+        strip_left - 14.0
+    } else if slot > 0.0 {
+        rect.right() - 16.0 - slot - 12.0
+    } else {
+        rect.right() - 16.0
+    };
+    let name_max = if compact {
+        ((text_right - col_name) * 0.5).max(60.0)
+    } else {
+        (text_right - col_name).max(40.0)
+    };
+
     // --- name (or inline rename)
     let renaming: Option<(Uuid, String)> = ui.ctx().data(|d| d.get_temp(rename_id()));
     let mut nx;
     if let Some((_, mut text)) = renaming.filter(|(rid, _)| *rid == h.id) {
-        let r = Rect::from_min_size(Pos2::new(col_name - 6.0, y1 - 14.0), Vec2::new(260.0, 28.0));
+        let r = Rect::from_min_size(
+            Pos2::new(col_name - 6.0, y1 - 14.0),
+            Vec2::new((text_right - col_name + 6.0).clamp(120.0, 260.0), 28.0),
+        );
         let edit = ui.put(
             r,
             egui::TextEdit::singleline(&mut text)
@@ -1086,10 +1173,12 @@ fn host_row(
         }
         nx = r.right() + 8.0;
     } else {
-        let name_galley = p.layout_no_wrap(
-            h.display_name().to_string(),
+        let name_galley = theme::truncated(
+            &p,
+            h.display_name(),
             theme::semibold(15.0),
             theme::text(),
+            name_max,
         );
         let name_w = name_galley.size().x;
         p.galley(
@@ -1099,7 +1188,7 @@ fn host_row(
         );
         nx = col_name + name_w + 8.0;
     }
-    if h.favorite {
+    if h.favorite && nx + 14.0 <= text_right {
         icons::paint(
             &p,
             Rect::from_center_size(Pos2::new(nx + 6.0, y1), Vec2::splat(13.0)),
@@ -1109,7 +1198,12 @@ fn host_row(
         nx += 20.0;
     }
     let env = app.lib.env_of(h);
-    if env != crate::model::Env::None {
+    let pill_w = p
+        .layout_no_wrap(env.label().to_uppercase(), theme::bold(10.5), theme::text())
+        .size()
+        .x
+        + 14.0;
+    if env != crate::model::Env::None && nx + pill_w <= text_right {
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(Rect::from_min_size(
@@ -1121,7 +1215,7 @@ fn host_row(
         let r = theme::pill(&mut child, env.label(), theme::env_color(env));
         nx = r.rect.right() + 8.0;
     }
-    if !h.notes.trim().is_empty() {
+    if !h.notes.trim().is_empty() && nx + 14.0 <= text_right {
         let r = Rect::from_center_size(Pos2::new(nx + 7.0, y1), Vec2::splat(14.0));
         icons::paint(&p, r, Icon::File, theme::text_dim());
         ui.interact(r, ui.id().with(("notes", h.id)), Sense::hover())
@@ -1189,24 +1283,52 @@ fn host_row(
         }
     }
     let (ax, ay) = if compact {
-        (nx.max(col_name + 180.0) + 8.0, y1)
+        (nx.max(col_name + 180.0_f32.min(name_max)) + 8.0, y1)
     } else {
         (col_name, y2)
     };
-    let mut x = ax;
-    if !addr.is_empty() {
-        let g = p.layout_no_wrap(addr, FontId::monospace(12.0), theme::text_dim());
-        let gw = g.size().x;
-        p.galley(Pos2::new(x, ay - g.size().y / 2.0), g, theme::text_dim());
-        x += gw;
+    // Address and facts as one line, cut with "…" where the right side begins.
+    let mut job = egui::text::LayoutJob::default();
+    let format = |font: FontId, color: Color32| egui::TextFormat {
+        font_id: font,
+        color,
+        valign: egui::Align::Center,
+        ..Default::default()
+    };
+    let addr_empty = addr.is_empty();
+    if !addr_empty {
+        job.append(
+            &addr,
+            0.0,
+            format(FontId::monospace(12.0), theme::text_dim()),
+        );
     }
-    let info_start = x;
+    let addr_w = if addr_empty {
+        0.0
+    } else {
+        p.layout_no_wrap(addr, FontId::monospace(12.0), theme::text_dim())
+            .size()
+            .x
+    };
     for (i, (text, color)) in extra.iter().enumerate() {
-        let sep = if i == 0 && x == ax { "" } else { "  ·  " };
-        let g = p.layout_no_wrap(format!("{sep}{text}"), FontId::proportional(12.5), *color);
+        let sep = if i == 0 && addr_empty { "" } else { "  ·  " };
+        job.append(
+            &format!("{sep}{text}"),
+            0.0,
+            format(FontId::proportional(12.5), *color),
+        );
+    }
+    let mut x = ax;
+    let info_start;
+    if text_right - ax >= 30.0 && !job.sections.is_empty() {
+        job.wrap = egui::text::TextWrapping::truncate_at_width(text_right - ax);
+        let g = p.layout_job(job);
         let gw = g.size().x;
-        p.galley(Pos2::new(x, ay - g.size().y / 2.0), g, *color);
+        p.galley(Pos2::new(ax, ay - g.size().y / 2.0), g, theme::text_dim());
+        info_start = (ax + addr_w).min(ax + gw);
         x += gw;
+    } else {
+        info_start = x;
     }
     if let Some(f) = facts {
         let info_rect = Rect::from_min_max(
@@ -1309,29 +1431,22 @@ fn host_row(
         });
     }
 
-    let show_actions = hovered || resp.context_menu_opened();
-    let slot = 150.0;
     if !show_actions {
         // Meta: latency and last use.
-        let mut parts = Vec::new();
-        if let Some(Reach::Up(ms)) = reach {
-            parts.push(format!("{ms} ms"));
+        if slot > 0.0 {
+            if let Some(text) = &wol_pill {
+                crate::ui::wol::paint_pill(&p, Pos2::new(rect.right() - 16.0, cy), text);
+            } else {
+                p.text(
+                    Pos2::new(rect.right() - 16.0, cy),
+                    egui::Align2::RIGHT_CENTER,
+                    meta,
+                    FontId::proportional(12.5),
+                    theme::text_dim(),
+                );
+            }
         }
-        if let Some(t) = h.last_connected {
-            parts.push(relative_time(t));
-        }
-        if let Some(text) = app.net.wol.pill_text(h.id) {
-            crate::ui::wol::paint_pill(&p, Pos2::new(rect.right() - 16.0, cy), &text);
-        } else {
-            p.text(
-                Pos2::new(rect.right() - 16.0, cy),
-                egui::Align2::RIGHT_CENTER,
-                parts.join(" · "),
-                FontId::proportional(12.5),
-                theme::text_dim(),
-            );
-        }
-        let mut tx = rect.right() - 16.0 - slot - 12.0;
+        let mut tx = text_right;
         let left_limit = x.max(nx) + 16.0;
         for tag in tags.iter().rev() {
             let fg = tag.color.unwrap_or_else(theme::text_dim);
@@ -1382,10 +1497,31 @@ fn host_row(
             tx = r.left() - 6.0;
         }
     } else {
+        // Opaque strip (row colour, short fade) so nothing shows through the buttons.
+        let layers = [
+            theme::surface(),
+            if selected {
+                theme::accent_soft()
+            } else {
+                theme::hover()
+            },
+        ];
+        theme::fade_cover(
+            &p,
+            Rect::from_min_max(
+                Pos2::new(
+                    strip_left - 6.0,
+                    rect.top() + if divider { 1.0 } else { 0.0 },
+                ),
+                rect.right_bottom(),
+            ),
+            16.0,
+            &layers,
+        );
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(Rect::from_min_max(
-                    Pos2::new(rect.right() - 400.0, rect.top()),
+                    Pos2::new(strip_left - 4.0, rect.top()),
                     rect.right_bottom() - Vec2::new(8.0, 0.0),
                 ))
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
@@ -1397,24 +1533,39 @@ fn host_row(
         {
             actions.push(Action::Connect(h.id));
         }
-        if matches!(h.protocol, Protocol::Ssh | Protocol::Rdp)
+        if collapsed {
+            let more = theme::btn(&mut child, theme::Btn::Small, None, "…")
+                .on_hover_text(t!("Weitere Aktionen"));
+            egui::Popup::menu(&more).id(more_menu_id(h.id)).show(|ui| {
+                if can_files && ui.button(t!("Dateien (SFTP)")).clicked() {
+                    actions.push(Action::OpenSftp(h.id));
+                    ui.close();
+                }
+                if ui.button(t!("Bearbeiten")).clicked() {
+                    actions.push(Action::EditHost(h.id));
+                    ui.close();
+                }
+                if can_wake && ui.button(t!("Aufwecken und verbinden")).clicked() {
+                    actions.push(Action::Net(crate::ui::net::NetAction::Wake(h.id, true)));
+                    ui.close();
+                }
+            });
+        } else if can_files
             && theme::btn(&mut child, theme::Btn::Small, None, t!("Dateien"))
                 .on_hover_text(t!("Dateien (SFTP) öffnen"))
                 .clicked()
         {
             actions.push(Action::OpenSftp(h.id));
         }
-        if theme::btn(&mut child, theme::Btn::Small, None, t!("Bearbeiten"))
-            .on_hover_text(t!("Host bearbeiten"))
-            .clicked()
+        if !collapsed
+            && theme::btn(&mut child, theme::Btn::Small, None, t!("Bearbeiten"))
+                .on_hover_text(t!("Host bearbeiten"))
+                .clicked()
         {
             actions.push(Action::EditHost(h.id));
         }
-        let offline =
-            !is_live && (app.failed.contains(&h.id) || matches!(reach, Some(Reach::Down)));
-        if offline
-            && crate::ui::wol::can_wake(h)
-            && app.net.wol.waiting(h.id).is_none()
+        if !collapsed
+            && can_wake
             && theme::btn(
                 &mut child,
                 theme::Btn::Small,

@@ -1427,6 +1427,230 @@ pub fn page_title(ui: &mut egui::Ui, title: &str, count: Option<usize>) {
     });
 }
 
+/// Room the right-hand group of a [`page_header`] gets on the current frame.
+pub struct Bar {
+    /// Not even the right group fits on a row of its own: drop labels, keep icons.
+    pub compact: bool,
+    slack: f32,
+    extra: f32,
+}
+
+impl Bar {
+    /// Width for a flexible element (search field): `min` plus whatever room is left,
+    /// up to `max`.
+    pub fn flex(&mut self, min: f32, max: f32) -> f32 {
+        let w = (min + self.slack.max(0.0)).clamp(min, max.max(min));
+        self.slack -= w - min;
+        self.extra += w - min;
+        w
+    }
+}
+
+/// Measured widths of the header groups (last frame), keyed by the header id.
+#[derive(Clone, Copy, Default, PartialEq)]
+struct HeaderWidths {
+    left: f32,
+    middle: f32,
+    /// Right group with all labels and flexible elements at their minimum.
+    right: f32,
+    /// Same, in compact mode.
+    right_compact: f32,
+    /// `right_compact` was measured (not just copied from `right`).
+    compact_measured: bool,
+}
+
+/// Header row that never overlaps: `left` (title), an optional `middle` (page switch,
+/// filter) and right-aligned controls. Wraps into two or three rows when the groups don't
+/// fit side by side; flexible elements (see [`Bar::flex`]) shrink first. Pass `|_| {}` for
+/// no middle group.
+pub fn page_header(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    left: impl FnOnce(&mut egui::Ui),
+    middle: impl FnOnce(&mut egui::Ui),
+    right: impl FnOnce(&mut egui::Ui, &mut Bar),
+) {
+    adaptive_row(ui, id_salt, false, left, middle, right);
+}
+
+/// Filter row: `left` (segmented filter) and right-aligned options. Unlike
+/// [`page_header`] it first tries the compact right group on the same row, then wraps.
+pub fn toolbar(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    left: impl FnOnce(&mut egui::Ui),
+    right: impl FnOnce(&mut egui::Ui, &mut Bar),
+) {
+    adaptive_row(ui, id_salt, true, left, |_| {}, right);
+}
+
+fn adaptive_row(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    compact_first: bool,
+    left: impl FnOnce(&mut egui::Ui),
+    middle: impl FnOnce(&mut egui::Ui),
+    right: impl FnOnce(&mut egui::Ui, &mut Bar),
+) {
+    const GAP: f32 = 16.0;
+    let id = ui.id().with(("adaptive-header", id_salt));
+    let old: Option<HeaderWidths> = ui.ctx().data(|d| d.get_temp(id));
+    let w = old.unwrap_or_default();
+    let avail = ui.available_width();
+    let fits = |parts: &[f32]| {
+        let used: Vec<f32> = parts.iter().copied().filter(|p| *p > 0.5).collect();
+        used.iter().sum::<f32>() + GAP * (used.len().max(1) - 1) as f32 <= avail
+    };
+    let compact = w.right > avail + 0.5
+        || (compact_first
+            && !fits(&[w.left, w.middle, w.right])
+            && (!w.compact_measured || fits(&[w.left, w.middle, w.right_compact])));
+    let right_w = if compact { w.right_compact } else { w.right };
+    // Rows: which group starts a new row.
+    let (middle_row, right_row) = if fits(&[w.left, w.middle, right_w]) {
+        (0, 0)
+    } else if fits(&[w.left, right_w]) {
+        (1, 0)
+    } else if fits(&[w.left, w.middle]) {
+        (0, 1)
+    } else if fits(&[w.middle, right_w]) {
+        (1, 1)
+    } else {
+        (1, 2)
+    };
+    let mut new = w;
+    let right_group = move |ui: &mut egui::Ui, gap: f32, new: &mut HeaderWidths| {
+        let mut bar = Bar {
+            compact,
+            slack: ui.available_width() - gap - right_w,
+            extra: 0.0,
+        };
+        let r = ui
+            .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                right(ui, &mut bar)
+            })
+            .response;
+        let width = (r.rect.width() - bar.extra).max(0.0);
+        if compact {
+            new.right_compact = width;
+            new.compact_measured = true;
+        } else {
+            new.right = width;
+            if new.right_compact <= 0.0 {
+                new.right_compact = width;
+            }
+        }
+    };
+    let mut right_cell = Some(right_group);
+    let mut middle_cell = Some(middle);
+    let mut left_cell = Some(left);
+    for row in 0..3 {
+        if row > 0 && middle_row < row && right_row < row {
+            break;
+        }
+        if row > 0 {
+            ui.add_space(12.0);
+        }
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            let start = ui.cursor().left();
+            if let Some(l) = left_cell.take() {
+                new.left = ui.horizontal(l).response.rect.width();
+            }
+            if middle_row == row
+                && let Some(m) = middle_cell.take()
+            {
+                if row == 0 {
+                    ui.add_space(GAP - 10.0);
+                }
+                new.middle = ui.horizontal(m).response.rect.width();
+            }
+            if right_row == row
+                && let Some(r) = right_cell.take()
+            {
+                let gap = if ui.cursor().left() - start > 0.5 {
+                    GAP
+                } else {
+                    0.0
+                };
+                r(ui, gap, &mut new);
+            }
+        });
+    }
+    if old != Some(new) {
+        ui.ctx().data_mut(|d| d.insert_temp(id, new));
+        let moved = |a: f32, b: f32| (a - b).abs() > 0.5;
+        if old.is_none()
+            || moved(w.left, new.left)
+            || moved(w.middle, new.middle)
+            || moved(w.right, new.right)
+            || moved(w.right_compact, new.right_compact)
+        {
+            ui.ctx().request_discard("page header layout");
+        }
+    }
+}
+
+/// Text cut to `max_w` with "…" (single line).
+pub fn truncated(
+    painter: &egui::Painter,
+    text: impl Into<String>,
+    font: FontId,
+    color: Color32,
+    max_w: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple_singleline(text.into(), font, color);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(max_w.max(1.0));
+    painter.layout_job(job)
+}
+
+/// Covers `rect` with the given background layers, fading in over `fade` px on the left,
+/// so row text never shows through hover buttons.
+pub fn fade_cover(painter: &egui::Painter, rect: Rect, fade: f32, layers: &[Color32]) {
+    for &c in layers {
+        let mut mesh = egui::Mesh::default();
+        let l = rect.left() - fade;
+        let (t, b) = (rect.top(), rect.bottom());
+        let pts = [
+            (Pos2::new(l, t), Color32::TRANSPARENT),
+            (Pos2::new(rect.left(), t), c),
+            (Pos2::new(rect.right(), t), c),
+            (Pos2::new(l, b), Color32::TRANSPARENT),
+            (Pos2::new(rect.left(), b), c),
+            (Pos2::new(rect.right(), b), c),
+        ];
+        for (p, col) in pts {
+            mesh.colored_vertex(p, col);
+        }
+        mesh.add_triangle(0, 1, 4);
+        mesh.add_triangle(0, 4, 3);
+        mesh.add_triangle(1, 2, 5);
+        mesh.add_triangle(1, 5, 4);
+        painter.add(egui::Shape::mesh(mesh));
+    }
+}
+
+/// Width [`btn`] will take for these arguments.
+pub fn btn_width(ui: &egui::Ui, kind: Btn, icon: Option<Icon>, label: &str) -> f32 {
+    let (h, font, pad) = match kind {
+        Btn::Normal | Btn::Primary => (34.0, medium(13.5), 14.0),
+        Btn::Small | Btn::SmallPrimary => (28.0, medium(13.0), 12.0),
+        Btn::Link => (26.0, medium(12.5), 8.0),
+    };
+    if label.is_empty() {
+        return h;
+    }
+    let font = if matches!(kind, Btn::Primary | Btn::SmallPrimary) {
+        semibold(font.size)
+    } else {
+        font
+    };
+    let g = ui
+        .painter()
+        .layout_no_wrap(label.to_string(), font, Color32::PLACEHOLDER);
+    g.size().x + if icon.is_some() { 21.0 } else { 0.0 } + pad * 2.0
+}
+
 /// Rounded card for lists and grouped settings.
 pub fn card_frame() -> egui::Frame {
     egui::Frame::NONE
@@ -1553,8 +1777,14 @@ pub fn segmented(ui: &mut egui::Ui, items: &[&str], selected: usize) -> Option<u
                 .layout_no_wrap(l.to_string(), font.clone(), Color32::PLACEHOLDER)
         })
         .collect();
-    let widths: Vec<f32> = galleys.iter().map(|g| g.size().x + 28.0).collect();
-    let total = widths.iter().sum::<f32>() + 2.0 * (items.len() as f32 - 1.0) + 4.0;
+    // Segments give up padding before the control runs out of room.
+    let n = items.len().max(1) as f32;
+    let text_w: f32 = galleys.iter().map(|g| g.size().x).sum();
+    let chrome = 2.0 * (n - 1.0) + 4.0;
+    let room = ui.available_width();
+    let pad = ((room - text_w - chrome) / n).clamp(12.0, 28.0);
+    let widths: Vec<f32> = galleys.iter().map(|g| g.size().x + pad).collect();
+    let total = widths.iter().sum::<f32>() + chrome;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(total, 32.0), egui::Sense::hover());
     ui.painter()
         .rect_filled(rect, CornerRadius::same(9), fill());
@@ -2013,7 +2243,8 @@ pub fn sheet<B, F>(
             70
         }))
         .show(ctx, |ui| {
-            ui.set_width(width);
+            // Small windows: the sheet shrinks with them (the body scrolls).
+            ui.set_width(width.min(ctx.content_rect().width() - 48.0).max(260.0));
             ui.spacing_mut().item_spacing.y = 0.0;
             egui::Frame::NONE
                 .inner_margin(Margin {
@@ -2032,7 +2263,8 @@ pub fn sheet<B, F>(
                         });
                     });
                 });
-            let max_h = (ctx.content_rect().height() * 0.72).max(200.0);
+            let screen_h = ctx.content_rect().height();
+            let max_h = (screen_h * 0.72).min(screen_h - 170.0).max(160.0);
             let b = egui::ScrollArea::vertical()
                 .id_salt(id.with("body"))
                 .max_height(max_h)

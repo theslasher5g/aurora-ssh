@@ -680,13 +680,12 @@ pub fn apply(app: &mut App, action: ClusterAction, ctx: &egui::Context) {
 // ------------------------------------------------------------------ page hooks
 
 /// Segmented switch next to the page title.
-pub fn page_switch(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+pub fn page_switch(app: &App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     let pages = [Page::Guests, Page::Overview, Page::Tasks, Page::Backup];
     let cur = pages
         .iter()
         .position(|p| *p == app.pve.cluster.page)
         .unwrap_or(0);
-    ui.add_space(14.0);
     if let Some(i) = theme::segmented(
         ui,
         &["Gäste", "Übersicht", "Aufgaben", "Backup-Server"].map(crate::i18n::tr),

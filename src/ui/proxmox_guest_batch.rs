@@ -180,14 +180,30 @@ pub fn more_button(
     ext: &RowExt,
     actions: &mut Vec<Action>,
 ) {
+    more_button_with(ui, g, r, ext, actions, |_, _| false);
+}
+
+/// "Mehr" button with extra entries on top (row buttons that didn't fit); `extra` returns
+/// whether it added any.
+pub fn more_button_with(
+    ui: &mut egui::Ui,
+    g: &Guest,
+    r: &GuestRef,
+    ext: &RowExt,
+    actions: &mut Vec<Action>,
+    extra: impl FnOnce(&mut egui::Ui, &mut Vec<Action>) -> bool,
+) {
     let resp = theme::icon_btn(
         ui,
         Icon::Chevron,
         t!("Klonen, Hardware, Statistik, Migration"),
     );
-    egui::Popup::menu(&resp)
-        .id(more_id(r))
-        .show(|ui| menu_entries(ui, g, r, ext, actions));
+    egui::Popup::menu(&resp).id(more_id(r)).show(|ui| {
+        if extra(ui, actions) {
+            ui.separator();
+        }
+        menu_entries(ui, g, r, ext, actions)
+    });
 }
 
 fn more_id(r: &GuestRef) -> egui::Id {
