@@ -142,15 +142,52 @@ async fn exec_capped(handle: &SshHandle, cmd: &str) -> anyhow::Result<String> {
         .map_err(|_| anyhow::anyhow!(t!("Zeitüberschreitung")))?
 }
 
+/// On Windows a tool that is not installed natively may live in WSL (Docker started inside
+/// the default distribution): `wsl.exe -e <tool> …` runs it there.
+fn wsl_exe() -> Option<std::path::PathBuf> {
+    if cfg!(windows) {
+        super::local::find_program("wsl.exe")
+    } else {
+        None
+    }
+}
+
+/// Tools missing on this PC but found in WSL.
+async fn wsl_has(tool: &str) -> bool {
+    let Some(wsl) = wsl_exe() else { return false };
+    let mut cmd = tokio::process::Command::new(wsl);
+    cmd.args(["-e", "sh", "-c", "command -v \"$1\"", "sh", tool])
+        .kill_on_drop(true)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000);
+    matches!(
+        tokio::time::timeout(Duration::from_secs(15), cmd.status()).await,
+        Ok(Ok(s)) if s.success()
+    )
+}
+
 async fn run_local(argv: &[String]) -> Seg {
-    let Some(exe) = super::local::find_program(&argv[0]) else {
-        return Seg {
-            rc: 127,
-            out: format!("{}: not found", argv[0]),
-        };
+    let mut args: Vec<String> = argv[1..].to_vec();
+    let exe = match super::local::find_program(&argv[0]) {
+        Some(e) => e,
+        None => match wsl_exe() {
+            Some(wsl) if wsl_has(&argv[0]).await => {
+                args.splice(0..0, ["-e".to_string(), argv[0].clone()]);
+                wsl
+            }
+            _ => {
+                return Seg {
+                    rc: 127,
+                    out: format!("{}: not found", argv[0]),
+                };
+            }
+        },
     };
     let mut cmd = tokio::process::Command::new(exe);
-    cmd.args(&argv[1..]).kill_on_drop(true);
+    cmd.args(&args).kill_on_drop(true);
     cmd.stdin(std::process::Stdio::null());
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
@@ -325,11 +362,15 @@ pub fn spawn_probe(
 ) {
     rt.spawn(async move {
         let res = match &target {
-            Target::Local => Ok(["docker", "podman", "kubectl"]
-                .iter()
-                .filter(|c| super::local::find_program(c).is_some())
-                .map(|c| c.to_string())
-                .collect()),
+            Target::Local => {
+                let mut found = Vec::new();
+                for c in ["docker", "podman", "kubectl"] {
+                    if super::local::find_program(c).is_some() || wsl_has(c).await {
+                        found.push(c.to_string());
+                    }
+                }
+                Ok(found)
+            }
             Target::Ssh(_) => run(&target, &[p::probe_argv()], prompts)
                 .await
                 .map(|s| p::parse_names(&s[0].out))
