@@ -47,13 +47,30 @@ impl Default for Options {
 
 /// Default protocol mapping: everything Aurora can open; web links and unknown types are
 /// left out.
+/// `https://host[:port]` for a web entry of another tool (`HTTP` in the source = plain http).
+fn web_url(it: &ImportItem, host: &str) -> String {
+    let scheme = if it.raw_type.trim().eq_ignore_ascii_case("http") {
+        "http"
+    } else {
+        "https"
+    };
+    if host.contains("://") {
+        host.to_string()
+    } else {
+        match it.port {
+            Some(p) => format!("{scheme}://{host}:{p}"),
+            None => format!("{scheme}://{host}"),
+        }
+    }
+}
+
 pub fn default_map() -> HashMap<Kind, Option<Protocol>> {
     HashMap::from([
         (Kind::Ssh, Some(Protocol::Ssh)),
         (Kind::Rdp, Some(Protocol::Rdp)),
         (Kind::Vnc, Some(Protocol::Vnc)),
         (Kind::Telnet, Some(Protocol::Telnet)),
-        (Kind::Web, None),
+        (Kind::Web, Some(Protocol::Web)),
         (Kind::Other, None),
     ])
 }
@@ -251,6 +268,10 @@ pub fn apply(
                     h.identity_id = identity;
                 }
                 h.group_id = gid;
+                if proto == Protocol::Web {
+                    h.web.url = web_url(it, host_name);
+                    let _ = crate::backend::web::sync_host(h);
+                }
                 rep.overwritten += 1;
             }
             _ => {
@@ -271,6 +292,12 @@ pub fn apply(
                     notes: it.notes.clone(),
                     ..Default::default()
                 });
+                if proto == Protocol::Web
+                    && let Some(h) = lib.hosts.last_mut()
+                {
+                    h.web.url = web_url(it, host_name);
+                    let _ = crate::backend::web::sync_host(h);
+                }
                 rep.imported += 1;
             }
         }
@@ -424,7 +451,7 @@ mod tests {
         let d = doc(vec![
             item("a", "h1", &[], Kind::Ssh),
             item("b", "h2", &[], Kind::Ssh),
-            item("w", "wiki", &[], Kind::Web),
+            item("w", "wiki", &[], Kind::Other),
             item("bad", "h; rm -rf /", &[], Kind::Ssh),
         ]);
         let r = apply(
@@ -437,9 +464,9 @@ mod tests {
         assert_eq!(r.imported, 1);
         assert_eq!(r.skipped_total(), 2);
         assert!(lib.groups.is_empty());
-        // mapping Web → Telnet takes it
+        // mapping an unmapped kind → Telnet takes it
         let mut o = Options::default();
-        o.map.insert(Kind::Web, Some(Protocol::Telnet));
+        o.map.insert(Kind::Other, Some(Protocol::Telnet));
         let mut lib = Library::default();
         let r = apply(
             &mut lib,
@@ -532,5 +559,26 @@ mod tests {
         assert_eq!(r.imported, 5000);
         assert_eq!(lib.groups.len(), 51);
         assert!(t.elapsed().as_secs() < 5);
+    }
+
+    #[test]
+    fn web_entries_become_web_hosts() {
+        let mut lib = Library::default();
+        let mut a = item("fw", "10.0.0.1", &[], Kind::Web);
+        a.raw_type = "HTTPS".into();
+        a.port = Some(8443);
+        let mut b = item("old", "switch.lan", &[], Kind::Web);
+        b.raw_type = "HTTP".into();
+        let d = doc(vec![a, b]);
+        let r = apply(
+            &mut lib,
+            &mut Keychain::default(),
+            &d,
+            &[true, true],
+            &Options::default(),
+        );
+        assert_eq!(r.imported, 2);
+        assert_eq!(lib.hosts[0].web.url, "https://10.0.0.1:8443/");
+        assert_eq!(lib.hosts[1].web.url, "http://switch.lan/");
     }
 }

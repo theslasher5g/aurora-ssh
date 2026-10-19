@@ -774,6 +774,7 @@ fn preview_page(l: &mut Loaded, ui: &mut egui::Ui, vault_open: &bool) {
                         Protocol::Rdp,
                         Protocol::Vnc,
                         Protocol::Telnet,
+                        Protocol::Web,
                     ] {
                         if ui.selectable_label(cur == Some(p), p.label()).clicked() {
                             l.map.insert(k, Some(p));
