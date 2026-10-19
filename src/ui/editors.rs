@@ -356,6 +356,16 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                  mit allen laufenden Programmen."
                             ));
                         crate::ui::reconnect_auto::host_row(ui, f, &mut h.auto_reconnect);
+                        f.switch(
+                            ui,
+                            t!("Shell-Integration beim Start automatisch einrichten"),
+                            &mut h.shell_integration,
+                        )
+                        .on_hover_text(t!(
+                            "Schickt nach dem Login eine kurze Zeile an bash, zsh oder fish, damit \
+                             Befehlsblöcke Exit-Codes und Arbeitsordner kennen. Ändert keine \
+                             Konfigurationsdateien und gilt nur für diese Sitzung."
+                        ));
                     });
                     crate::ui::sshca::host_section(ui, h, has_ca);
                     let key_id = format!("{}:{}", h.hostname.trim(), h.port);

@@ -341,6 +341,9 @@ pub struct Host {
     /// reference is stored here.
     #[serde(default)]
     pub credential_source: Option<crate::backend::pwmanager_types::CredentialSource>,
+    /// SSH: set up shell integration (OSC 133/7 marks) in the login shell after login.
+    #[serde(default)]
+    pub shell_integration: bool,
 }
 
 /// Per-host override of the global "reconnect automatically" switch.
@@ -395,6 +398,7 @@ impl Default for Host {
             wol: WolSettings::default(),
             auto_reconnect: ReconnectMode::Default,
             credential_source: None,
+            shell_integration: false,
         }
     }
 }
@@ -796,6 +800,8 @@ pub struct Settings {
     pub inventory: crate::backend::inventory_rules::InventorySettings,
     /// Password-manager integration (Bitwarden, 1Password, KeePassXC, Proton Pass).
     pub pwm: crate::backend::pwmanager_types::PwmSettings,
+    /// Command blocks in the terminal (gutter marks, toolbar, jump keys).
+    pub command_blocks: bool,
 }
 
 impl Default for Settings {
@@ -830,6 +836,7 @@ impl Default for Settings {
             custom_themes: Vec::new(),
             inventory: Default::default(),
             pwm: Default::default(),
+            command_blocks: true,
         }
     }
 }

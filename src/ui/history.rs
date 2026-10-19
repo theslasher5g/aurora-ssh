@@ -51,6 +51,8 @@ pub struct TermExtras {
     pub rewinds: HashMap<u64, Rewind>,
     /// Tab id → open rewind overlay.
     pub rewind_views: HashMap<u64, RewindView>,
+    /// Markers, recording search and session history.
+    pub slog: crate::ui::sessionlog_ui::State,
 }
 
 impl TermExtras {

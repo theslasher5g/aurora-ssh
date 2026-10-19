@@ -73,6 +73,11 @@ impl Rewind {
         rw
     }
 
+    /// Position on this buffer's timeline of a moment.
+    pub fn time_at(&self, at: Instant) -> f64 {
+        at.saturating_duration_since(self.epoch).as_secs_f64()
+    }
+
     /// Seconds since this buffer was created.
     pub fn now(&self) -> f64 {
         self.epoch.elapsed().as_secs_f64()
@@ -298,9 +303,10 @@ pub fn show(
     live_rw: Option<&Rewind>,
     v: &mut RewindView,
     view: TermView<'_>,
+    marks: &[(f64, String)],
 ) -> Shown {
     let own = v.own.take();
-    let shown = show_inner(ui, id, own.as_ref().or(live_rw), v, view);
+    let shown = show_inner(ui, id, own.as_ref().or(live_rw), v, view, marks);
     v.own = own;
     shown
 }
@@ -311,6 +317,7 @@ fn show_inner(
     rw: Option<&Rewind>,
     v: &mut RewindView,
     view: TermView<'_>,
+    marks: &[(f64, String)],
 ) -> Shown {
     let full = ui.available_rect_before_wrap();
     let mut live = false;
@@ -460,7 +467,7 @@ fn show_inner(
                     }
                     ui.add_space(6.0);
                     let w = ui.available_width().max(60.0);
-                    timeline(ui, rw, v, (a, b), w, accent);
+                    timeline(ui, rw, v, (a, b), w, accent, marks);
                 });
             });
         });
@@ -475,6 +482,7 @@ fn timeline(
     (a, b): (f64, f64),
     w: f32,
     accent: egui::Color32,
+    marks: &[(f64, String)],
 ) {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 30.0), egui::Sense::click_and_drag());
     let len = (b - a).max(1e-6);
@@ -524,6 +532,36 @@ fn timeline(
         Stroke::new(2.0, accent),
     );
     p.circle_filled(Pos2::new(x, track.top() - 3.0), 4.5, accent);
+    // Session markers: small flags with the note as tooltip; a click jumps there.
+    for (i, (mt, label)) in marks.iter().enumerate() {
+        if *mt < a || *mt > b {
+            continue;
+        }
+        let mx = x_of(*mt);
+        let flag =
+            Rect::from_min_size(Pos2::new(mx - 1.0, track.top() - 8.0), Vec2::new(11.0, 9.0));
+        let p = ui.painter();
+        p.line_segment(
+            [
+                Pos2::new(mx, track.top() - 8.0),
+                Pos2::new(mx, track.bottom()),
+            ],
+            Stroke::new(1.0, theme::amber()),
+        );
+        p.rect_filled(flag, CornerRadius::same(2), theme::amber());
+        let hit = ui.interact(
+            flag.expand2(Vec2::new(4.0, 4.0)),
+            resp.id.with(("mark", i)),
+            egui::Sense::click(),
+        );
+        if hit
+            .on_hover_text(format!("{} · {}", rw.label(*mt), label))
+            .clicked()
+        {
+            v.t = *mt;
+            v.playing = false;
+        }
+    }
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }

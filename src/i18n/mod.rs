@@ -29,6 +29,7 @@ mod ui_v063_sec;
 mod ui_v063_term;
 mod ui_v071;
 mod ui_v071_layout;
+mod ui_v072_blocks;
 mod ui_v072_comfort;
 mod ui_v072_inv;
 mod ui_v072_logvars;
@@ -66,6 +67,7 @@ const TABLES: &[&[(&str, &str)]] = &[
     ui_v072_inv::T,
     ui_v072_pwm::T,
     ui_vnc::T,
+    ui_v072_blocks::T,
 ];
 
 /// "de", "en" or "" (follow the system: German for German locales, English otherwise).

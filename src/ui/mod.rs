@@ -1,3 +1,5 @@
+pub mod blocks_core;
+pub mod blocks_setup;
 pub mod certradar;
 pub mod chrome;
 pub mod containers;
@@ -30,6 +32,11 @@ pub mod rdp;
 pub mod reconnect_auto;
 pub mod route;
 pub mod runbooks;
+pub mod sessionlog_export;
+pub mod sessionlog_history;
+pub mod sessionlog_index;
+pub mod sessionlog_markers;
+pub mod sessionlog_ui;
 pub mod settings;
 pub mod sftp;
 pub mod snippets;

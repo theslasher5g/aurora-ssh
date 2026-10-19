@@ -1,8 +1,11 @@
 //! Terminal widget: vt100 state machine + egui renderer + keyboard translation.
 
+use std::time::Instant;
+
 use egui::{Color32, CornerRadius, Event, FontId, Key, Modifiers, Pos2, Rect, Sense, Stroke, Vec2};
 
 use crate::theme;
+use crate::ui::blocks_core::{Blocks, join_command, join_output};
 
 fn idx_color(i: u8, ansi: &[Color32; 16]) -> Color32 {
     match i {
@@ -42,6 +45,110 @@ pub struct Hooks {
     bell: bool,
     /// Answers to terminal queries (device attributes, cursor position …) for the session.
     replies: Vec<u8>,
+    /// Command blocks (OSC 133 or the prompt heuristic).
+    blocks: Blocks,
+    scroll: Scroll,
+    epoch: Option<Instant>,
+}
+
+/// Counts the lines that scrolled off the screen top, so marks can be stored with absolute
+/// line numbers. vt100 does not tell, but while the view is scrolled back by one row it
+/// moves with every scroll (even when the scrollback is full and drops its oldest line):
+/// `Terminal::feed` parks the view at offset 1 and reads the count back from it.
+#[derive(Default)]
+struct Scroll {
+    /// Lines scrolled off before the chunk being processed.
+    total: usize,
+    /// `Some(1)`: counted through the view offset; `Some(0)`: scrollback was empty, the
+    /// count is its length; `None`: not counting (alternate screen).
+    tracking: Option<usize>,
+    /// Scrollback length of the main screen when the alternate screen was entered.
+    main_len: Option<usize>,
+}
+
+impl Hooks {
+    fn now(&mut self) -> f64 {
+        self.epoch
+            .get_or_insert_with(Instant::now)
+            .elapsed()
+            .as_secs_f64()
+    }
+
+    /// Lines scrolled off since the chunk began.
+    fn scrolled_now(&self, screen: &mut vt100::Screen) -> usize {
+        match self.scroll.tracking {
+            Some(1) if !screen.alternate_screen() => screen.scrollback().saturating_sub(1),
+            Some(0) if !screen.alternate_screen() => scrollback_len(screen),
+            _ => 0,
+        }
+    }
+
+    fn osc133(&mut self, screen: &mut vt100::Screen, kind: u8, rest: &[&[u8]]) {
+        let (row, col) = screen.cursor_position();
+        let top = self.scroll.total + self.scrolled_now(screen);
+        let line = top + row as usize;
+        let now = self.now();
+        let arg = rest
+            .first()
+            .map(|a| String::from_utf8_lossy(a).into_owned());
+        let cols = screen.size().1;
+        self.blocks
+            .osc_mark(kind, (line, col), arg.as_deref(), now, |cmd_pos| {
+                let Some((bl, bc)) = cmd_pos else {
+                    return String::new();
+                };
+                let last = if col == 0 && line > bl {
+                    line - 1
+                } else {
+                    line
+                };
+                join_command(&read_lines(screen, top, bl, last, cols), bc)
+            });
+    }
+}
+
+/// Length of the scrollback of the shown screen.
+fn scrollback_len(screen: &mut vt100::Screen) -> usize {
+    let keep = screen.scrollback();
+    screen.set_scrollback(usize::MAX);
+    let n = screen.scrollback();
+    screen.set_scrollback(keep);
+    n
+}
+
+/// Text of the absolute lines `from..=to` as `(text, wrapped into the next row)`.
+/// `top` is the absolute number of screen row 0. Lines that are gone are skipped.
+fn read_lines(
+    screen: &mut vt100::Screen,
+    top: usize,
+    from: usize,
+    to: usize,
+    cols: u16,
+) -> Vec<(String, bool)> {
+    let keep = screen.scrollback();
+    screen.set_scrollback(usize::MAX);
+    let len = screen.scrollback();
+    let rows = screen.size().0 as usize;
+    let oldest = top.saturating_sub(len);
+    let mut out = Vec::new();
+    let mut n = from.max(oldest);
+    while n <= to && out.len() < 100_000 {
+        let idx = n - oldest;
+        let head = idx.min(len);
+        screen.set_scrollback(len - head);
+        let k = idx - head;
+        if k >= rows {
+            break;
+        }
+        let take = (rows - k).min(to - n + 1);
+        let texts: Vec<String> = screen.rows(0, cols).skip(k).take(take).collect();
+        for (i, text) in texts.into_iter().enumerate() {
+            out.push((text, screen.row_wrapped((k + i) as u16)));
+        }
+        n += take;
+    }
+    screen.set_scrollback(keep);
+    out
 }
 
 impl vt100::Callbacks for Hooks {
@@ -90,7 +197,15 @@ impl vt100::Callbacks for Hooks {
         }
     }
 
-    fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
+    fn unhandled_osc(&mut self, screen: &mut vt100::Screen, params: &[&[u8]]) {
+        // OSC 133 ; A|B|C|D[;code]: shell integration marks (prompt, command, output, end).
+        if let [b"133", kind, rest @ ..] = params
+            && let Some(&k) = kind.first()
+            && matches!(k, b'A' | b'B' | b'C' | b'D')
+            && !screen.alternate_screen()
+        {
+            self.osc133(screen, k, rest);
+        }
         // OSC 7 ; file://host/path
         if let [b"7", url, ..] = params {
             let url = String::from_utf8_lossy(url);
@@ -143,6 +258,58 @@ struct Search {
     focus: bool,
 }
 
+/// Buttons of the hover toolbar of a command block.
+#[derive(Clone, Copy, PartialEq)]
+enum ToolItem {
+    Cmd,
+    Output,
+    Both,
+    Rerun,
+    Fold,
+}
+
+impl ToolItem {
+    fn label(self, b: Option<&crate::ui::blocks_core::Block>) -> &'static str {
+        match self {
+            ToolItem::Cmd => t!("Befehl"),
+            ToolItem::Output => t!("Ausgabe"),
+            ToolItem::Both => t!("Beides"),
+            ToolItem::Rerun => t!("Erneut"),
+            ToolItem::Fold if b.is_some_and(|b| b.collapsed) => t!("Ausklappen"),
+            ToolItem::Fold => t!("Einklappen"),
+        }
+    }
+
+    fn tip(self) -> &'static str {
+        match self {
+            ToolItem::Cmd => t!("Befehl kopieren"),
+            ToolItem::Output => t!("Ausgabe kopieren"),
+            ToolItem::Both => t!("Befehl und Ausgabe kopieren"),
+            ToolItem::Rerun => {
+                t!("Befehl am Prompt eintippen (PROD: nur eintippen, Enter bleibt bei dir)")
+            }
+            ToolItem::Fold => t!("Ausgabe ein- oder ausklappen"),
+        }
+    }
+
+    fn visible(self, b: Option<&crate::ui::blocks_core::Block>) -> bool {
+        let Some(b) = b else { return false };
+        match self {
+            ToolItem::Cmd | ToolItem::Both | ToolItem::Rerun => !b.command.is_empty(),
+            ToolItem::Output => b.ran(),
+            ToolItem::Fold => b.out_end.zip(b.out_start).is_some_and(|(e, s)| e > s),
+        }
+    }
+}
+
+/// What a display row shows: a screen row, the placeholder of a folded block, or nothing.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum RowSrc {
+    Src(u16),
+    Fold { id: u64, lines: usize, src: u16 },
+    Blank,
+}
+
 pub struct Terminal {
     parser: vt100::Parser<Hooks>,
     /// Per-pane zoom (Ctrl+mouse wheel).
@@ -154,6 +321,10 @@ pub struct Terminal {
     scrollback_rows: usize,
     selection: Option<(CellPos, CellPos)>,
     selecting: bool,
+    last_feed: Instant,
+    /// Block under the pointer in the previous frame (its toolbar stays while the pointer
+    /// moves onto it).
+    hover_block: Option<u64>,
 }
 
 #[derive(Default)]
@@ -169,6 +340,12 @@ pub struct TermOutput {
     pub paste: Option<String>,
     /// Ctrl+R at a shell prompt: open Aurora's command history for this host.
     pub history_search: bool,
+    /// "Rerun" of a command block: type this command at the prompt.
+    pub rerun: Option<String>,
+    /// Short message for the user (copied …).
+    pub notice: Option<String>,
+    /// Ctrl+Shift+M: set a marker at the current time.
+    pub marker: bool,
 }
 
 pub struct TermView<'a> {
@@ -183,6 +360,8 @@ pub struct TermView<'a> {
     pub overlay: Option<&'a str>,
     /// Ctrl+R at a prompt opens the history popup instead of going to the shell.
     pub ctrl_r: bool,
+    /// Command blocks: gutter, hover toolbar, Ctrl+↑/↓ navigation.
+    pub blocks: bool,
 }
 
 impl Terminal {
@@ -197,6 +376,8 @@ impl Terminal {
             font_scale: 1.0,
             zoom_hint_until: 0.0,
             search: None,
+            last_feed: Instant::now(),
+            hover_block: None,
         }
     }
 
@@ -344,10 +525,212 @@ impl Terminal {
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
+        self.last_feed = Instant::now();
+        let alt0 = self.parser.screen().alternate_screen();
+        let user_off = self.parser.screen().scrollback();
+        let len0 = if alt0 {
+            0
+        } else {
+            scrollback_len(self.parser.screen_mut())
+        };
+        let mode = (!alt0).then_some(usize::from(len0 >= 1));
+        self.parser.callbacks_mut().scroll.tracking = mode;
+        if mode == Some(1) {
+            self.parser.screen_mut().set_scrollback(1);
+        }
         self.parser.process(bytes);
+        let alt1 = self.parser.screen().alternate_screen();
+        let h = self.parser.callbacks_mut();
+        h.scroll.tracking = None;
+        if alt1 && !alt0 {
+            h.scroll.main_len = Some(len0);
+        }
+        if !alt1 {
+            let screen = self.parser.screen_mut();
+            let len1 = scrollback_len(screen);
+            let off = screen.scrollback();
+            let h = self.parser.callbacks_mut();
+            let k = match mode {
+                // The view offset moved along with every scroll.
+                Some(1) if off >= 1 => off - 1,
+                // Offset reset by a visit to the alternate screen: best effort.
+                Some(_) => len1.saturating_sub(len0),
+                // Back from the alternate screen: the main scrollback grew meanwhile.
+                None => len1.saturating_sub(h.scroll.main_len.take().unwrap_or(len1)),
+            };
+            h.scroll.total += k;
+            let total = h.scroll.total;
+            h.blocks.trim(total.saturating_sub(len1));
+            let keep = if user_off == 0 {
+                0
+            } else {
+                (user_off + k).min(len1)
+            };
+            self.parser.screen_mut().set_scrollback(keep);
+            self.scrollback_rows = keep;
+        }
         if let Some(s) = self.search.as_mut() {
             s.dirty = true;
         }
+    }
+
+    // ---- command blocks
+
+    pub fn blocks(&self) -> &Blocks {
+        &self.parser.callbacks().blocks
+    }
+
+    pub fn blocks_mut(&mut self) -> &mut Blocks {
+        &mut self.parser.callbacks_mut().blocks
+    }
+
+    /// Absolute number of screen row 0 of the live screen.
+    fn live_top(&self) -> usize {
+        self.parser.callbacks().scroll.total
+    }
+
+    /// Absolute number of the first row shown (the view may be scrolled back).
+    fn view_top(&self) -> usize {
+        self.live_top().saturating_sub(self.scrollback_rows)
+    }
+
+    /// Line after the cursor line (end of a command that is still running).
+    fn live_end(&self) -> usize {
+        self.live_top() + self.parser.screen().cursor_position().0 as usize + 1
+    }
+
+    /// The shell sits at its prompt (no program runs, no full-screen mode).
+    pub fn at_shell_prompt(&self) -> bool {
+        !self.parser.screen().alternate_screen()
+            && if self.blocks().osc {
+                self.blocks().at_prompt()
+            } else {
+                self.at_prompt()
+            }
+    }
+
+    /// Text of the absolute lines `from..to` (end exclusive).
+    fn lines_text(&mut self, from: usize, to: usize) -> Vec<(String, bool)> {
+        if to <= from {
+            return Vec::new();
+        }
+        let top = self.live_top();
+        let cols = self.cols;
+        read_lines(self.parser.screen_mut(), top, from, to - 1, cols)
+    }
+
+    /// Command and output text of a block.
+    pub fn block_text(&mut self, id: u64) -> Option<(String, String)> {
+        let live_end = self.live_end();
+        let b = self.blocks().get(id)?.clone();
+        let output = match b.output_lines(live_end) {
+            Some((s, e)) => join_output(&self.lines_text(s, e)),
+            None => String::new(),
+        };
+        Some((b.command, output))
+    }
+
+    /// Scrolls so that absolute line `line` is at the top of the view.
+    pub fn scroll_to_line(&mut self, line: usize) {
+        let total = self.live_top();
+        let want = total.saturating_sub(line);
+        self.parser.screen_mut().set_scrollback(want);
+        self.scrollback_rows = self.parser.screen().scrollback();
+    }
+
+    /// Back to the live screen.
+    pub fn scroll_to_end(&mut self) {
+        self.parser.screen_mut().set_scrollback(0);
+        self.scrollback_rows = 0;
+    }
+
+    /// Jumps to the previous (`-1`) or next (`1`) block start. Returns whether it moved.
+    pub fn jump_block(&mut self, dir: i32) -> bool {
+        let top = self.view_top();
+        if dir < 0 {
+            match self.blocks().prev_start(top.max(1)) {
+                Some(l) => {
+                    self.scroll_to_line(l);
+                    true
+                }
+                None => false,
+            }
+        } else if let Some(l) = self.blocks().next_start(top) {
+            self.scroll_to_line(l);
+            true
+        } else if self.scrollback_rows > 0 {
+            self.scroll_to_end();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Jumps to the newest block that failed.
+    pub fn jump_last_error(&mut self) -> bool {
+        match self.blocks().last_failed().map(|b| b.prompt) {
+            Some(l) => {
+                self.scroll_to_line(l);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Heuristic blocks: call once per frame. Notices the prompt when the output has settled.
+    pub fn tick_blocks(&mut self) {
+        if self.blocks().osc
+            || self.parser.screen().alternate_screen()
+            || self.last_feed.elapsed().as_millis() < 250
+            || !self.at_prompt()
+        {
+            return;
+        }
+        let line = self.live_top() + self.parser.screen().cursor_position().0 as usize;
+        let now = self.parser.callbacks_mut().now();
+        self.blocks_mut().heur_prompt(line, now);
+    }
+
+    /// Heuristic blocks: Enter is about to run `command` (or the line at the prompt).
+    pub fn note_enter(&mut self, command: Option<&str>) {
+        if self.blocks().osc || self.parser.screen().alternate_screen() {
+            return;
+        }
+        let cmd = match command {
+            Some(c) => c.to_string(),
+            None => match self.prompt_command() {
+                Some(c) => c,
+                None => return,
+            },
+        };
+        let line = self.live_top() + self.parser.screen().cursor_position().0 as usize;
+        let now = self.parser.callbacks_mut().now();
+        self.blocks_mut().heur_prompt(line, now);
+        self.blocks_mut().heur_enter(line, line + 1, &cmd, now);
+    }
+
+    /// New complete lines since `*mark` (absolute numbers), for text indexing of recordings.
+    /// The cursor line is left out until the cursor has moved on.
+    pub fn take_new_lines(&mut self, mark: &mut usize) -> Vec<(String, bool)> {
+        if self.parser.screen().alternate_screen() {
+            return Vec::new();
+        }
+        let top = self.live_top();
+        let end = top + self.parser.screen().cursor_position().0 as usize;
+        let from = (*mark).max(top.saturating_sub(scrollback_len(self.parser.screen_mut())));
+        *mark = end.max(*mark);
+        self.lines_text(from, end)
+    }
+
+    /// All remaining lines up to and including the cursor line (end of a recording).
+    pub fn take_last_lines(&mut self, mark: &mut usize) -> Vec<(String, bool)> {
+        let end = self.live_end();
+        let from = (*mark).max(
+            self.live_top()
+                .saturating_sub(scrollback_len(self.parser.screen_mut())),
+        );
+        *mark = end;
+        self.lines_text(from, end)
     }
 
     /// Remote working directory, if the shell reports it (OSC 7 or the window title).
@@ -546,6 +929,284 @@ impl Terminal {
         Some(bar)
     }
 
+    /// Display rows: the screen rows, with the output of folded blocks replaced by one
+    /// placeholder row each. At the live screen the content stays anchored at the bottom.
+    fn row_map(&self, enabled: bool) -> Vec<RowSrc> {
+        let rows = self.rows;
+        let plain = || (0..rows).map(RowSrc::Src).collect::<Vec<_>>();
+        if !enabled || self.parser.screen().alternate_screen() {
+            return plain();
+        }
+        let folds: Vec<(u64, usize, usize)> = self
+            .blocks()
+            .list
+            .iter()
+            .filter(|b| b.collapsed && b.out_end.is_some())
+            .filter_map(|b| b.output_lines(usize::MAX).map(|(s, e)| (b.id, s, e)))
+            .filter(|(_, s, e)| e > s)
+            .collect();
+        if folds.is_empty() {
+            return plain();
+        }
+        let top = self.view_top();
+        let mut out = Vec::with_capacity(rows as usize);
+        let mut last = None;
+        for r in 0..rows {
+            let abs = top + r as usize;
+            match folds.iter().find(|(_, s, e)| abs >= *s && abs < *e) {
+                Some(&(id, s, e)) => {
+                    if last != Some(id) {
+                        out.push(RowSrc::Fold {
+                            id,
+                            lines: e - s,
+                            src: r,
+                        });
+                        last = Some(id);
+                    }
+                }
+                None => {
+                    last = None;
+                    out.push(RowSrc::Src(r));
+                }
+            }
+        }
+        let pad = rows as usize - out.len();
+        if pad > 0 {
+            if self.scrollback_rows == 0 {
+                out.splice(0..0, std::iter::repeat_n(RowSrc::Blank, pad));
+            } else {
+                out.extend(std::iter::repeat_n(RowSrc::Blank, pad));
+            }
+        }
+        out
+    }
+
+    /// Gutter marks, hover highlight and the mini toolbar of the command blocks.
+    #[allow(clippy::too_many_arguments)]
+    fn blocks_overlay(
+        &mut self,
+        ui: &mut egui::Ui,
+        resp: &egui::Response,
+        full: Rect,
+        inner: Rect,
+        ch: f32,
+        map: &[RowSrc],
+        accent: Color32,
+        out: &mut TermOutput,
+    ) {
+        if self.parser.screen().alternate_screen() {
+            self.hover_block = None;
+            return;
+        }
+        let top = self.view_top();
+        let live_end = self.live_end();
+        let btns = self.toolbar_items();
+        let hover_prev = self.hover_block;
+        let blocks_ref = &self.parser.callbacks().blocks;
+        let abs_of = |m: &RowSrc| match m {
+            RowSrc::Src(r) => Some(top + *r as usize),
+            RowSrc::Fold { src, .. } => Some(top + *src as usize),
+            RowSrc::Blank => None,
+        };
+        let row_block: Vec<Option<u64>> = map
+            .iter()
+            .map(|m| {
+                abs_of(m)
+                    .and_then(|a| blocks_ref.at_line(a, live_end))
+                    .map(|b| b.id)
+            })
+            .collect();
+        let row_rect = |d: usize| {
+            Rect::from_min_size(
+                Pos2::new(full.left() + 2.0, inner.top() + d as f32 * ch),
+                Vec2::new(full.width() - 4.0, ch),
+            )
+        };
+        // The toolbar sits at the right edge of the first shown row of the block.
+        let first_row = |id: u64| row_block.iter().position(|b| *b == Some(id));
+        let tb_width = |ui: &egui::Ui, id: u64| -> f32 {
+            let b = blocks_ref.get(id);
+            let mut w = 12.0;
+            let g = |s: &str| {
+                ui.painter()
+                    .layout_no_wrap(s.to_string(), FontId::proportional(11.5), theme::text())
+                    .size()
+                    .x
+            };
+            if let Some(d) = b.and_then(|b| b.duration()) {
+                w += g(&t!("Dauer {}", crate::ui::blocks_core::duration_label(d))) + 10.0;
+            }
+            for item in &btns {
+                if item.visible(b) {
+                    w += g(item.label(b)) + 14.0;
+                }
+            }
+            w
+        };
+        let toolbar_rect = |ui: &egui::Ui, id: u64| -> Option<Rect> {
+            let d = first_row(id)?;
+            let w = tb_width(ui, id).min(full.width() - 40.0);
+            Some(Rect::from_min_size(
+                Pos2::new(full.right() - 14.0 - w, inner.top() + d as f32 * ch - 1.0),
+                Vec2::new(w, ch + 2.0),
+            ))
+        };
+        let ptr = ui.input(|i| i.pointer.hover_pos());
+        let mut hovered = None;
+        if let Some(p) = ptr.filter(|p| full.contains(*p)) {
+            let d = ((p.y - inner.top()) / ch).floor();
+            if d >= 0.0 {
+                hovered = row_block.get(d as usize).copied().flatten();
+            }
+            if let Some(prev) = hover_prev
+                && toolbar_rect(ui, prev).is_some_and(|r| r.expand(2.0).contains(p))
+            {
+                hovered = Some(prev);
+            }
+        }
+        // Gutter marks (and a faint tint over the hovered block).
+        let painter = ui.painter_at(full);
+        for (d, id) in row_block.iter().enumerate() {
+            let Some(id) = id else { continue };
+            let Some(b) = blocks_ref.get(*id) else {
+                continue;
+            };
+            let color = if b.running() {
+                accent
+            } else if b.failed() {
+                theme::red()
+            } else if b.exit == Some(0) {
+                theme::green()
+            } else {
+                theme::text_dim().gamma_multiply(0.6)
+            };
+            let r = row_rect(d);
+            let hot = hovered == Some(*id);
+            if hot {
+                painter.rect_filled(r, CornerRadius::ZERO, accent.gamma_multiply(0.07));
+            }
+            let bar = Rect::from_min_size(
+                Pos2::new(full.left() + 8.0, r.top() + 1.0),
+                Vec2::new(if hot { 4.0 } else { 3.0 }, ch - 2.0),
+            );
+            painter.rect_filled(bar, CornerRadius::same(2), color);
+        }
+
+        let rect = hovered.and_then(|id| toolbar_rect(ui, id));
+        self.hover_block = hovered;
+
+        // A click on the placeholder of a folded block unfolds it.
+        if resp.clicked()
+            && let Some(p) = ptr
+        {
+            let d = ((p.y - inner.top()) / ch).floor();
+            if d >= 0.0
+                && let Some(RowSrc::Fold { id, .. }) = map.get(d as usize)
+                && let Some(b) = self.blocks_mut().get_mut(*id)
+            {
+                b.collapsed = false;
+            }
+        }
+
+        let (Some(id), Some(rect)) = (hovered, rect) else {
+            return;
+        };
+        let Some(block) = self.blocks().get(id).cloned() else {
+            return;
+        };
+        painter.rect(
+            rect,
+            CornerRadius::same(6),
+            theme::bg_card(),
+            Stroke::new(1.0, theme::border()),
+            egui::StrokeKind::Inside,
+        );
+        let mut x = rect.left() + 8.0;
+        let mid = rect.center().y;
+        if let Some(dur) = block.duration() {
+            let g = painter.layout_no_wrap(
+                t!("Dauer {}", crate::ui::blocks_core::duration_label(dur)),
+                FontId::proportional(11.5),
+                theme::text_dim(),
+            );
+            painter.galley(
+                Pos2::new(x, mid - g.size().y / 2.0),
+                g.clone(),
+                theme::text_dim(),
+            );
+            x += g.size().x + 10.0;
+        }
+        let mut action = None;
+        for (i, item) in btns.iter().enumerate() {
+            if !item.visible(Some(&block)) {
+                continue;
+            }
+            let label = item.label(Some(&block));
+            let g = painter.layout_no_wrap(
+                label.to_string(),
+                FontId::proportional(11.5),
+                theme::text(),
+            );
+            let r = Rect::from_min_size(
+                Pos2::new(x - 4.0, rect.top() + 2.0),
+                Vec2::new(g.size().x + 10.0, rect.height() - 4.0),
+            );
+            let hit = ui.interact(r, egui::Id::new(("block-btn", id, i)), Sense::click());
+            if hit.hovered() {
+                painter.rect_filled(r, CornerRadius::same(4), theme::bg_hover());
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            painter.galley(
+                Pos2::new(x + 1.0, mid - g.size().y / 2.0),
+                g.clone(),
+                theme::text(),
+            );
+            x += g.size().x + 14.0;
+            let hit = hit.on_hover_text(item.tip());
+            if hit.clicked() {
+                action = Some(*item);
+            }
+        }
+        let Some(action) = action else { return };
+        match action {
+            ToolItem::Rerun => {
+                out.rerun = crate::ui::blocks_core::rerunnable(&block.command);
+                if out.rerun.is_none() {
+                    out.notice = Some(t!("Dieser Befehl lässt sich nicht erneut eintippen").into());
+                }
+            }
+            ToolItem::Fold => {
+                if let Some(b) = self.blocks_mut().get_mut(id) {
+                    b.collapsed = !b.collapsed;
+                }
+            }
+            ToolItem::Cmd | ToolItem::Output | ToolItem::Both => {
+                let (cmd, output) = self.block_text(id).unwrap_or_default();
+                let (text, note) = match action {
+                    ToolItem::Cmd => (cmd, t!("Befehl kopiert")),
+                    ToolItem::Output => (output, t!("Ausgabe kopiert")),
+                    _ => (format!("{cmd}\n{output}"), t!("Befehl und Ausgabe kopiert")),
+                };
+                if text.trim().is_empty() {
+                    out.notice = Some(t!("Nichts zu kopieren").into());
+                } else {
+                    ui.ctx().copy_text(text);
+                    out.notice = Some(note.into());
+                }
+            }
+        }
+    }
+
+    /// Buttons of the block toolbar (`Rerun` only while the shell is at its prompt).
+    fn toolbar_items(&self) -> Vec<ToolItem> {
+        let mut v = vec![ToolItem::Cmd, ToolItem::Output, ToolItem::Both];
+        if self.at_shell_prompt() {
+            v.push(ToolItem::Rerun);
+        }
+        v.push(ToolItem::Fold);
+        v
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui, id: egui::Id, view: TermView<'_>) -> TermOutput {
         let mut out = TermOutput::default();
         let pal = view.palette.unwrap_or_else(theme::palette);
@@ -570,7 +1231,12 @@ impl Terminal {
             );
         }
 
-        let inner = full.shrink2(Vec2::new(12.0, 10.0));
+        // Slim gutter for the command block marks.
+        let gutter = if view.blocks { 8.0 } else { 0.0 };
+        let inner = Rect::from_min_max(
+            full.min + Vec2::new(12.0 + gutter, 10.0),
+            full.max - Vec2::new(12.0, 10.0),
+        );
         let cols = ((inner.width() / cw).floor() as u16).max(10);
         let rows = ((inner.height() / ch).floor() as u16).max(3);
         if (cols, rows) != (self.cols, self.rows) {
@@ -581,9 +1247,29 @@ impl Terminal {
             out.resize = Some((cols, rows));
         }
 
-        let to_cell = |p: Pos2| CellPos {
-            row: (((p.y - inner.top()) / ch).floor().max(0.0) as u16).min(rows - 1),
-            col: (((p.x - inner.left()) / cw).floor().max(0.0) as u16).min(cols - 1),
+        let map0 = self.row_map(view.blocks);
+        let first_src = map0
+            .iter()
+            .find_map(|m| {
+                if let RowSrc::Src(r) = m {
+                    Some(*r)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0);
+        let to_cell = |p: Pos2| {
+            let d = (((p.y - inner.top()) / ch).floor().max(0.0) as usize)
+                .min(map0.len().saturating_sub(1));
+            let row = match map0.get(d) {
+                Some(RowSrc::Src(r)) => *r,
+                Some(RowSrc::Fold { src, .. }) => *src,
+                _ => first_src,
+            };
+            CellPos {
+                row: row.min(rows - 1),
+                col: (((p.x - inner.left()) / cw).floor().max(0.0) as u16).min(cols - 1),
+            }
         };
 
         // --- mouse: focus, selection, scrollback, context menu
@@ -657,6 +1343,10 @@ impl Terminal {
         }
         let selected = self.selected_text();
         let mut open_search = false;
+        let mut copy_last = false;
+        let mut jump_error = false;
+        let has_failed = view.blocks && self.blocks().last_failed().is_some();
+        let has_done = view.blocks && self.blocks().last_done().is_some();
         resp.context_menu(|ui| {
             if ui
                 .add_enabled(selected.is_some(), egui::Button::new(t!("📋 Kopieren")))
@@ -689,6 +1379,33 @@ impl Terminal {
                 ui.ctx().copy_text(self.contents());
                 ui.close();
             }
+            if view.blocks {
+                ui.separator();
+                if ui
+                    .add_enabled(
+                        has_done,
+                        egui::Button::new(t!("Letzte Ausgabe kopieren  (Ctrl+Shift+O)")),
+                    )
+                    .clicked()
+                {
+                    copy_last = true;
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        has_failed,
+                        egui::Button::new(t!("Zum letzten Fehler springen")),
+                    )
+                    .clicked()
+                {
+                    jump_error = true;
+                    ui.close();
+                }
+            }
+            if ui.button(t!("Marker setzen  (Ctrl+Shift+M)")).clicked() {
+                out.marker = true;
+                ui.close();
+            }
             if ui.button(t!("🗑 Bildschirm leeren")).clicked() {
                 out.input.extend_from_slice(b"\x0c");
                 ui.close();
@@ -711,6 +1428,9 @@ impl Terminal {
             });
             let (events, mods) = ui.input(|i| (i.events.clone(), i.modifiers));
             let app_cursor = self.parser.screen().application_cursor();
+            let shell_idle =
+                view.blocks && self.at_shell_prompt() && self.blocks().list.iter().any(|b| b.ran());
+            let mut nav = 0;
             for ev in events {
                 match ev {
                     Event::Text(t) => out.input.extend_from_slice(t.as_bytes()),
@@ -738,6 +1458,38 @@ impl Terminal {
                         modifiers,
                         ..
                     } if modifiers.command && modifiers.shift => open_search = true,
+                    Event::Key {
+                        key: Key::ArrowUp,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if shell_idle && modifiers.ctrl && !modifiers.shift && !modifiers.alt => {
+                        nav = -1
+                    }
+                    Event::Key {
+                        key: Key::ArrowDown,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if shell_idle && modifiers.ctrl && !modifiers.shift && !modifiers.alt => {
+                        nav = 1
+                    }
+                    Event::Key {
+                        key: Key::O,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if view.blocks && modifiers.command && modifiers.shift && !modifiers.alt => {
+                        copy_last = true
+                    }
+                    Event::Key {
+                        key: Key::M,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if modifiers.command && modifiers.shift && !modifiers.alt => {
+                        out.marker = true
+                    }
                     Event::Key {
                         key: Key::R,
                         pressed: true,
@@ -768,6 +1520,29 @@ impl Terminal {
                 self.parser.screen_mut().set_scrollback(0);
                 self.scrollback_rows = 0;
             }
+            if nav != 0 {
+                self.jump_block(nav);
+            }
+        }
+        if view.blocks {
+            self.tick_blocks();
+            if !self.blocks().osc && !self.parser.screen().alternate_screen() {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(300));
+            }
+        }
+        if jump_error && !self.jump_last_error() {
+            out.notice = Some(t!("Kein fehlgeschlagener Befehl bekannt").into());
+        }
+        if copy_last {
+            let id = self.blocks().last_done().map(|b| b.id);
+            match id.and_then(|id| self.block_text(id)) {
+                Some((_, output)) if !output.is_empty() => {
+                    ui.ctx().copy_text(output);
+                    out.notice = Some(t!("Ausgabe des letzten Befehls kopiert").into());
+                }
+                _ => out.notice = Some(t!("Keine Ausgabe zum Kopieren").into()),
+            }
         }
 
         if open_search {
@@ -779,10 +1554,34 @@ impl Terminal {
         }
 
         // --- paint grid
+        let map = self.row_map(view.blocks);
         let screen = self.parser.screen();
         let (cur_row, cur_col) = screen.cursor_position();
-        for row in 0..rows {
-            let y = inner.top() + row as f32 * ch;
+        for (d, src) in map.iter().enumerate() {
+            let y = inner.top() + d as f32 * ch;
+            let row = match src {
+                RowSrc::Src(r) => *r,
+                RowSrc::Fold { lines, .. } => {
+                    let r = Rect::from_min_size(
+                        Pos2::new(inner.left(), y + 1.0),
+                        Vec2::new(inner.width(), ch - 2.0),
+                    );
+                    painter.rect_filled(
+                        r,
+                        CornerRadius::same(4),
+                        theme::lerp(term_bg, term_fg, 0.10),
+                    );
+                    painter.text(
+                        Pos2::new(inner.left() + 8.0, y + ch / 2.0),
+                        egui::Align2::LEFT_CENTER,
+                        t!("+ {} Zeilen eingeklappt", lines),
+                        FontId::proportional((font.size * 0.85).max(10.0)),
+                        term_fg.gamma_multiply(0.75),
+                    );
+                    continue;
+                }
+                RowSrc::Blank => continue,
+            };
             let mut col = 0u16;
             while col < cols {
                 let Some(cell) = screen.cell(row, col) else {
@@ -869,11 +1668,17 @@ impl Terminal {
         }
 
         // --- cursor
-        if self.scrollback_rows == 0 && !screen.hide_cursor() && cur_row < rows && cur_col < cols {
+        let cur_d = map.iter().position(|m| *m == RowSrc::Src(cur_row));
+        if self.scrollback_rows == 0
+            && !screen.hide_cursor()
+            && cur_row < rows
+            && cur_col < cols
+            && let Some(cur_d) = cur_d
+        {
             let r = Rect::from_min_size(
                 Pos2::new(
                     inner.left() + cur_col as f32 * cw,
-                    inner.top() + cur_row as f32 * ch,
+                    inner.top() + cur_d as f32 * ch,
                 ),
                 Vec2::new(cw, ch),
             );
@@ -911,10 +1716,16 @@ impl Terminal {
                 if line < top || line >= top + rows as usize {
                     continue;
                 }
+                let Some(d) = map
+                    .iter()
+                    .position(|m| *m == RowSrc::Src((line - top) as u16))
+                else {
+                    continue;
+                };
                 let r = Rect::from_min_size(
                     Pos2::new(
                         inner.left() + start as f32 * cw,
-                        inner.top() + (line - top) as f32 * ch,
+                        inner.top() + d as f32 * ch,
                     ),
                     Vec2::new(len as f32 * cw, ch),
                 );
@@ -932,6 +1743,10 @@ impl Terminal {
             }
         }
 
+        if view.blocks {
+            self.blocks_overlay(ui, &resp, full, inner, ch, &map, view.accent, &mut out);
+        }
+
         if ui.input(|i| i.time) < self.zoom_hint_until {
             let label = format!("{:.0} %", self.font_scale * 100.0);
             let g = painter.layout_no_wrap(label, FontId::proportional(13.0), theme::text());
@@ -943,7 +1758,7 @@ impl Terminal {
 
         if self.scrollback_rows > 0 && search_rect.is_none() {
             let label = t!("⬆ {} Zeilen zurück", self.scrollback_rows);
-            let pos = full.right_top() + Vec2::new(-14.0, 10.0);
+            let pos = full.right_bottom() + Vec2::new(-14.0, -34.0);
             let g = painter.layout_no_wrap(label, FontId::proportional(11.0), theme::text());
             let bg = Rect::from_min_size(
                 pos - Vec2::new(g.size().x + 16.0, 0.0),
@@ -1152,5 +1967,126 @@ mod query_tests {
         assert_eq!(replies(b"ab\x1b[6n"), b"\x1b[1;3R");
         assert!(replies(b"\x1b[>0q").starts_with(b"\x1bP>|Aurora "));
         assert!(replies(b"plain text \x1b[1m").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod block_tests {
+    use super::*;
+
+    /// One prompt + command + output cycle of a shell with OSC 133 integration.
+    fn cycle(cmd: &str, out: &str, code: i32) -> Vec<u8> {
+        format!(
+            "\x1b]133;A\x07u@h:~$ \x1b]133;B\x07{cmd}\r\n\x1b]133;C\x07{out}\x1b]133;D;{code}\x07"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn osc_133_blocks_and_output() {
+        let mut t = Terminal::with_size(40, 6, 100);
+        t.feed(&cycle("echo hi", "hi\r\n", 0));
+        t.feed(&cycle("false", "", 1));
+        t.feed(b"\x1b]133;A\x07u@h:~$ ");
+        let blocks = t.blocks();
+        assert!(blocks.osc);
+        // Two commands and the prompt that waits for the next one.
+        assert_eq!(blocks.list.len(), 3);
+        let (a, b) = (blocks.list[0].clone(), blocks.list[1].clone());
+        assert_eq!(a.command, "echo hi");
+        assert_eq!(a.exit, Some(0));
+        assert_eq!(a.output_lines(99), Some((1, 2)));
+        assert_eq!(b.command, "false");
+        assert_eq!(b.exit, Some(1));
+        assert_eq!(b.output_lines(99), Some((3, 3)));
+        assert_eq!(t.block_text(a.id), Some(("echo hi".into(), "hi".into())));
+        assert!(t.at_shell_prompt());
+        assert_eq!(t.blocks().last_failed().map(|b| b.id), Some(b.id));
+    }
+
+    #[test]
+    fn blocks_survive_scrolling_and_trimming() {
+        // 6 rows, 20 lines of scrollback: far more output than fits.
+        let mut t = Terminal::with_size(40, 6, 20);
+        for i in 0..40 {
+            t.feed(&cycle(
+                &format!("cmd{i}"),
+                &format!("out{i}\r\nmore{i}\r\n"),
+                i % 3,
+            ));
+        }
+        t.feed(b"\x1b]133;A\x07u@h:~$ ");
+        // The oldest blocks are gone, the newest are intact with the right text.
+        let list = &t.blocks().list;
+        assert!(list.len() < 40 && list.len() >= 5, "{}", list.len());
+        let last = list.iter().rev().nth(1).unwrap().clone();
+        assert_eq!(last.command, "cmd39");
+        let (cmd, out) = t.block_text(last.id).unwrap();
+        assert_eq!((cmd.as_str(), out.as_str()), ("cmd39", "out39\nmore39"));
+        // Absolute numbers: 40 blocks of 3 lines each, the prompt is on line 120.
+        assert_eq!(last.prompt, 39 * 3);
+        assert_eq!(
+            t.live_top() + t.parser.screen().cursor_position().0 as usize,
+            120
+        );
+        // Every kept block reads back its own output.
+        let ids: Vec<u64> = t.blocks().list.iter().map(|b| b.id).collect();
+        for id in ids {
+            let b = t.blocks().get(id).unwrap().clone();
+            if b.truncated || !b.ran() {
+                continue;
+            }
+            let n: usize = b.command.trim_start_matches("cmd").parse().unwrap();
+            let (_, out) = t.block_text(id).unwrap();
+            assert_eq!(out, format!("out{n}\nmore{n}"), "{}", b.command);
+        }
+    }
+
+    #[test]
+    fn keeps_counting_while_scrolled_back_and_in_alternate_screen() {
+        let mut t = Terminal::with_size(30, 4, 10);
+        for i in 0..30 {
+            t.feed(format!("line {i}\r\n").as_bytes());
+        }
+        assert_eq!(t.live_top(), 27);
+        // The user looks back; new output keeps the view where it is.
+        t.parser.screen_mut().set_scrollback(5);
+        t.scrollback_rows = 5;
+        t.feed(b"x\r\ny\r\n");
+        assert_eq!(t.live_top(), 29);
+        assert_eq!(t.scrollback_rows, 7);
+        // A full-screen program: nothing is lost afterwards.
+        t.scroll_to_end();
+        t.feed(b"\x1b[?1049h\x1b[2Jfull screen\r\n\r\n\r\n\r\n\r\n\x1b[?1049l");
+        assert_eq!(t.live_top(), 29);
+        t.feed(b"a\r\nb\r\n");
+        assert_eq!(t.live_top(), 31);
+    }
+
+    #[test]
+    fn prompt_heuristic_without_marks() {
+        let mut t = Terminal::with_size(40, 6, 100);
+        t.feed(b"u@h:~$ ");
+        t.last_feed = Instant::now() - std::time::Duration::from_secs(1);
+        t.tick_blocks();
+        assert_eq!(t.blocks().list.len(), 1);
+        t.feed(b"ls -l");
+        t.note_enter(None);
+        t.feed(b"\r\ntotal 0\r\nfile\r\nu@h:~$ ");
+        t.last_feed = Instant::now() - std::time::Duration::from_secs(1);
+        t.tick_blocks();
+        let list = &t.blocks().list;
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].command, "ls -l");
+        assert!(list[0].heuristic);
+        assert_eq!(list[0].output_lines(99), Some((1, 3)));
+        let id = list[0].id;
+        assert_eq!(t.block_text(id).unwrap().1, "total 0\nfile");
+        // While output is still flowing a prompt-like line end does not end the block.
+        t.feed(b"sleep");
+        t.note_enter(None);
+        t.feed(b"\r\nProgress: 50%");
+        t.tick_blocks();
+        assert!(t.blocks().running().is_some());
     }
 }

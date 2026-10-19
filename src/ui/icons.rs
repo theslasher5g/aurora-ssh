@@ -64,6 +64,8 @@ pub enum Icon {
     Cube,
     /// Table of servers.
     Table,
+    /// Session marker.
+    Flag,
 }
 
 enum Prim {
@@ -202,6 +204,7 @@ fn prims(icon: Icon) -> &'static [Prim] {
             R(3.0, 4.0, 18.0, 16.0, 2.0),
             Path("M3 10h18M3 15h18M9 10v10"),
         ],
+        Icon::Flag => &[Path("M5 21V4M5 5h12l-2.5 4L17 13H5")],
     }
 }
 

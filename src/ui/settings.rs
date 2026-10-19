@@ -198,7 +198,10 @@ fn terminal(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>, changed
     ui.add_space(22.0);
     log_commands(app, ui, changed);
     ui.add_space(22.0);
+    crate::ui::blocks_setup::settings_card(app, ui, changed);
+    ui.add_space(22.0);
     recordings(app, ui, actions, changed);
+    crate::ui::sessionlog_ui::settings_cards(app, ui, actions);
     ui.add_space(22.0);
     caption(ui, t!("Gedächtnis & Schutz"));
     crate::ui::history::settings_card(app, ui, changed);
@@ -334,7 +337,26 @@ fn recordings(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>, chang
             rows.setting(ui, &name, Some(&help), |ui| {
                 if theme::icon_btn(ui, crate::ui::icons::Icon::Trash, t!("Löschen")).clicked() {
                     let _ = std::fs::remove_file(&path);
+                    let _ =
+                        std::fs::remove_file(crate::ui::sessionlog_markers::sidecar_path(&path));
                 }
+                ui.menu_button(t!("Export"), |ui| {
+                    use crate::ui::sessionlog_export::Kind;
+                    if ui.button("Markdown").clicked() {
+                        actions.push(Action::SessionLog(crate::ui::sessionlog_ui::Act::Export(
+                            path.clone(),
+                            Kind::Markdown,
+                        )));
+                        ui.close();
+                    }
+                    if ui.button(t!("Text")).clicked() {
+                        actions.push(Action::SessionLog(crate::ui::sessionlog_ui::Act::Export(
+                            path.clone(),
+                            Kind::Text,
+                        )));
+                        ui.close();
+                    }
+                });
                 if theme::btn(
                     ui,
                     theme::Btn::Small,
