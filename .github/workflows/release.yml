@@ -1,5 +1,5 @@
 # Builds Windows, Linux and macOS packages and publishes them together in ONE release.
-#   tag v0.8.0 -> Windows installer + portable zip, .deb + portable tar.gz, SHA256SUMS.txt
+#   tag v0.8.1 -> Windows installer + portable zip, .deb + portable tar.gz, SHA256SUMS.txt
 # Either push the tag, or run the workflow manually (it then creates the tag itself).
 name: Release
 
@@ -11,7 +11,7 @@ on:
     inputs:
       version:
         description: Version (without v)
-        default: "0.8.0"
+        default: "0.8.1"
 
 permissions:
   contents: write
@@ -204,7 +204,7 @@ jobs:
           body: |
             **Aurora ${{ env.VERSION }}** – Windows, Linux and macOS
 
-            **New in 0.8.0:** built-in file editor and transfer queue · Docker/Kubernetes page and server inventory · password managers (Bitwarden, 1Password, KeePassXC, Proton Pass) · command blocks, session markers and automatic reconnect · custom themes · a "What is new" sheet after updates. Full list: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/v${{ env.VERSION }}/CHANGELOG.md)
+            **New in 0.8.1:** inventory detail view (services, firewall, ports) and info snippets · system documentation export (Markdown, HTML, JSON) · terminal reflow on resize and selection that scrolls · history cleanup · Docker in WSL and right after `usermod -aG docker` · log commands with `watch`. Full list: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/v${{ env.VERSION }}/CHANGELOG.md)
 
             | System | File | Install |
             |---|---|---|
