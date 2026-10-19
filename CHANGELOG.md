@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.9.0
+
+### Web interfaces
+- **New host type "Web interface"** (like the web entries of Devolutions Remote Desktop
+  Manager): keep the web UIs of firewalls, switches, NAS boxes, Proxmox, iDRAC/iLO … next to
+  your SSH and RDP hosts and open them from Aurora. *New -> Web interface*, or pick the
+  *Web* filter in the host list. Groups, tags, favorites, colors, environments, notes,
+  search/palette, reachability LED, certificate radar, Wake-on-LAN and the inventory
+  ("Web only - no facts") work like for any other host.
+- **Own window, own profile per entry:** the page opens in the new helper `aurora-web`
+  (WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux). Cookies and logins of every
+  entry are isolated in `web-profiles/<id>` in the Aurora data folder; the window title is
+  the entry name. The Aurora tab shows the status, page title, address and the pinned
+  certificate, with *Bring window to front*, *Reload* and *Close*. Closing the tab closes the
+  window and the other way round; opening an entry again raises its window. (Embedding the
+  page inside the Aurora window is planned for a later version.)
+- **Vendor templates** in the form (pfSense, OPNsense, FortiGate, Sophos, UniFi, MikroTik
+  WebFig, Synology DSM, TrueNAS, Proxmox VE :8006, Proxmox Backup :8007, iDRAC, iLO,
+  Ubiquiti, generic): fill port, path, login field hints, tag and TLS mode.
+- **TLS certificate errors, three ways:** *Strict* (system trust only), *Self-signed (pin)*
+  - on first open Aurora shows the SHA-256 fingerprint and asks; afterwards exactly that
+  certificate is accepted, and a changed certificate opens a loud warning that needs the
+  host name typed to accept - and *Ignore all* (explicit per-entry opt-in with a warning).
+  The check runs in the helper itself, not only in Aurora.
+- **Auto-login:** fills the login form with the entry's identity or password-manager
+  credentials (user and password selectors configurable, default: first visible password
+  field and the text field before it) and optionally presses the login button - at most once
+  per open, so a wrong password cannot lock the account. Secrets travel over a stdin pipe to
+  the helper only: never in argv, URLs, logs or on disk outside the vault. The script is built
+  with escaped string literals (unit-tested against quote and `</script>` injection) and the
+  page checks its own origin before anything is filled.
+- **Navigation limits:** the window stays on the entry's origin (plus hosts you list for SSO);
+  links to other origins open in the system browser, `javascript:`, `file:` and `data:`
+  addresses are refused, `window.open` never creates a second window, developer tools are off
+  in release builds. Downloads are saved to `Downloads/Aurora` with a sanitized file name.
+- Packages: the helper ships in the Windows installer and zip, the .deb (new dependency
+  `libwebkit2gtk-4.1-0`), the tar.gz and the macOS app. The Windows installer points to the
+  WebView2 runtime if it is missing (it is part of Windows 11 and current Windows 10).
+- macOS: certificate pinning is not available yet (WKWebView offers no hook through the web
+  view library); only certificates the system trusts load there.
+
 ## 0.8.1
 
 ### Servers

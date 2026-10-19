@@ -9,8 +9,9 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
 MAIN="$ROOT/target/release/aurora-term"
 HELPER="$ROOT/crates/aurora-rdp/target/release/aurora-rdp"
+WEB="$ROOT/crates/aurora-web/target/release/aurora-web"
 
-[[ -x "$MAIN" && -x "$HELPER" ]] || { echo "Build first: cargo build --release (+ crates/aurora-rdp)"; exit 1; }
+[[ -x "$MAIN" && -x "$HELPER" && -x "$WEB" ]] || { echo "Build first: cargo build --release (+ crates/aurora-rdp, crates/aurora-web)"; exit 1; }
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 
@@ -19,6 +20,7 @@ PKG="$(mktemp -d)"
 chmod 755 "$PKG"
 install -Dm755 "$MAIN" "$PKG/usr/bin/aurora"
 install -Dm755 "$HELPER" "$PKG/usr/lib/aurora-term/aurora-rdp"
+install -Dm755 "$WEB" "$PKG/usr/lib/aurora-term/aurora-web"
 install -Dm644 "$ROOT/packaging/linux/aurora.desktop" "$PKG/usr/share/applications/aurora.desktop"
 install -Dm644 "$ROOT/assets/icon.png" "$PKG/usr/share/icons/hicolor/256x256/apps/aurora.png"
 install -Dm644 "$ROOT/README.md" "$PKG/usr/share/doc/aurora/README.md"
@@ -32,12 +34,13 @@ Section: net
 Priority: optional
 Architecture: $ARCH
 Installed-Size: $SIZE
-Depends: libc6 (>= 2.35), libxkbcommon-x11-0, libgl1 | libegl1
+Depends: libc6 (>= 2.35), libxkbcommon-x11-0, libgl1 | libegl1, libgtk-3-0, libwebkit2gtk-4.1-0
 Suggests: freerdp3-x11 | freerdp2-x11
 Maintainer: Aurora <noreply@users.noreply.github.com>
-Description: Modern SSH, SFTP, RDP and serial client
+Description: Modern SSH, SFTP, RDP, web interface and serial client
  Aurora combines an SSH terminal, SFTP file browser, embedded RDP and serial
- consoles with an encrypted keychain, snippets, tunnels and host groups.
+ consoles and the web interfaces of firewalls, switches and NAS boxes with an
+ encrypted keychain, snippets, tunnels and host groups.
 CONTROL
 dpkg-deb --root-owner-group --build "$PKG" "$OUT/aurora_${VERSION}_${ARCH}.deb" >/dev/null
 rm -rf "$PKG"
@@ -48,6 +51,7 @@ TAR="$(mktemp -d)/$NAME"
 mkdir -p "$TAR"
 install -m755 "$MAIN" "$TAR/aurora"
 install -m755 "$HELPER" "$TAR/aurora-rdp"
+install -m755 "$WEB" "$TAR/aurora-web"
 install -m644 "$ROOT/packaging/linux/aurora.desktop" "$ROOT/assets/icon.png" "$ROOT/README.md" "$TAR/"
 cat > "$TAR/install.sh" <<'INSTALL'
 #!/usr/bin/env bash
@@ -56,6 +60,8 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 install -Dm755 "$DIR/aurora" "$HOME/.local/bin/aurora"
 install -Dm755 "$DIR/aurora-rdp" "$HOME/.local/bin/aurora-rdp"
+install -Dm755 "$DIR/aurora-web" "$HOME/.local/bin/aurora-web"
+echo "Web interfaces need WebKitGTK: sudo apt install libwebkit2gtk-4.1-0 (Debian/Ubuntu)"
 install -Dm644 "$DIR/icon.png" "$HOME/.local/share/icons/hicolor/256x256/apps/aurora.png"
 mkdir -p "$HOME/.local/share/applications"
 sed "s|^Exec=.*|Exec=$HOME/.local/bin/aurora|" "$DIR/aurora.desktop" > "$HOME/.local/share/applications/aurora.desktop"

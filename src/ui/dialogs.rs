@@ -206,6 +206,7 @@ fn tour(app: &mut App, ctx: &egui::Context) {
 
 fn hostkey(app: &mut App, ctx: &egui::Context) {
     crate::ui::hostkey::show(app, ctx);
+    crate::ui::web::cert_dialog(app, ctx);
 }
 
 fn password(app: &mut App, ctx: &egui::Context) {

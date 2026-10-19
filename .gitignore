@@ -1,3 +1,4 @@
 /target
 *.tmp
 /crates/aurora-rdp/target
+/crates/aurora-web/target

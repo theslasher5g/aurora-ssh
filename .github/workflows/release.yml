@@ -46,6 +46,7 @@ jobs:
           workspaces: |
             . -> target
             crates/aurora-rdp -> target
+            crates/aurora-web -> target
 
       # aws-lc-sys (TLS/crypto) needs NASM on MSVC.
       - uses: ilammy/setup-nasm@v1
@@ -57,6 +58,7 @@ jobs:
         run: |
           cargo build --release --locked
           cargo build --release --locked --manifest-path crates/aurora-rdp/Cargo.toml
+          cargo build --release --locked --manifest-path crates/aurora-web/Cargo.toml
 
       # Code signing (optional): set the repository secrets WINDOWS_CERT_PFX (base64 of a
       # .pfx code-signing certificate) and WINDOWS_CERT_PASSWORD. Without them the build
@@ -84,8 +86,10 @@ jobs:
           New-Item -ItemType Directory -Force dist/Aurora | Out-Null
           Copy-Item target/release/aurora-term.exe dist/Aurora/Aurora.exe
           Copy-Item crates/aurora-rdp/target/release/aurora-rdp.exe dist/Aurora/
+          Copy-Item crates/aurora-web/target/release/aurora-web.exe dist/Aurora/
           Sign dist/Aurora/Aurora.exe
           Sign dist/Aurora/aurora-rdp.exe
+          Sign dist/Aurora/aurora-web.exe
           Copy-Item README.md, SECURITY.md dist/Aurora/
           Compress-Archive -Path dist/Aurora/* -DestinationPath "dist/Aurora-$version-windows-x64-portable.zip"
           if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
@@ -119,14 +123,25 @@ jobs:
           workspaces: |
             . -> target
             crates/aurora-rdp -> target
+            crates/aurora-web -> target
+
+      # The web helper (wry) needs the WebKitGTK and GTK headers; the .deb depends on
+      # libwebkit2gtk-4.1-0 (available on Ubuntu 22.04+ and Debian 12+).
+      - name: Web helper dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev pkg-config
 
       - name: Test
-        run: cargo test --release --locked
+        run: |
+          cargo test --release --locked
+          cargo test --release --locked --manifest-path crates/aurora-web/Cargo.toml
 
       - name: Build
         run: |
           cargo build --release --locked
           cargo build --release --locked --manifest-path crates/aurora-rdp/Cargo.toml
+          cargo build --release --locked --manifest-path crates/aurora-web/Cargo.toml
 
       - name: Package
         run: packaging/linux/build.sh "$VERSION" dist
@@ -155,6 +170,7 @@ jobs:
           workspaces: |
             . -> target
             crates/aurora-rdp -> target
+            crates/aurora-web -> target
 
       - name: Test
         run: cargo test --release --locked
@@ -164,6 +180,7 @@ jobs:
           for t in aarch64-apple-darwin x86_64-apple-darwin; do
             cargo build --release --locked --target $t
             cargo build --release --locked --target $t --manifest-path crates/aurora-rdp/Cargo.toml
+            cargo build --release --locked --target $t --manifest-path crates/aurora-web/Cargo.toml
           done
 
       - name: Package
@@ -218,7 +235,8 @@ jobs:
 
             **Windows:** without a code-signing certificate SmartScreen may ask on first start ("More info" → "Run anyway").
             **macOS:** the app is not notarized – on first start right-click Aurora → Open, or run `xattr -cr /Applications/Aurora.app`.
-            **Linux:** needs glibc ≥ 2.35 and X11 or Wayland with OpenGL.
+            **Linux:** needs glibc ≥ 2.35 and X11 or Wayland with OpenGL; web interface entries need WebKitGTK (`libwebkit2gtk-4.1-0`, installed with the .deb).
+            **Windows:** web interface entries use the Microsoft Edge WebView2 runtime (part of Windows 11 and current Windows 10).
 
             The UI is available in English and German (Settings → Language).
           files: |

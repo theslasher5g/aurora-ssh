@@ -561,6 +561,11 @@ fn ports(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 matches!(t.state(), ConnState::Connected),
                 state_text(t.state()),
             ),
+            TabKind::Web(t) => (
+                crate::app::state_color(&t.state),
+                t.is_live(),
+                state_text(&t.state),
+            ),
         };
         let kind = match &tab.kind {
             TabKind::Term(_) => "Terminal",
@@ -568,11 +573,13 @@ fn ports(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             TabKind::Rdp(_) | TabKind::Vnc(_) => "Desktop",
             TabKind::Log(_) => "Log",
             TabKind::Edit(_) => t!("Editor"),
+            TabKind::Web(_) => "Web",
         };
         let dead = match &tab.kind {
             TabKind::Term(t) => matches!(t.state, ConnState::Closed(_)),
             TabKind::Vnc(t) => matches!(t.view.state, ConnState::Closed(_)),
             TabKind::Log(t) => matches!(t.state, ConnState::Closed(_)),
+            TabKind::Web(t) => t.is_closed(),
             _ => false,
         };
         let resp = port_tile(

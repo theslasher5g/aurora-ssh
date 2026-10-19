@@ -206,6 +206,12 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         .map(|h| (h.id, h.display_name().to_string()))
         .collect();
     let has_ca = app.keychain.ca.is_some();
+    let web_open = app.host_editor.as_ref().is_some_and(|e| {
+        app.tabs.iter().any(|t| {
+            t.host_id == Some(e.host.id)
+                && matches!(&t.kind, crate::app::TabKind::Web(w) if !w.is_closed())
+        })
+    });
     let Some(ed) = app.host_editor.as_mut() else {
         return;
     };
@@ -254,18 +260,22 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                     field_text(ui, &mut h.label, t!("z.B. web-01"));
                 });
                 if h.protocol.is_network() {
-                    f.field(ui, t!("Adresse"), |ui| {
-                        let w = ui.available_width() - 86.0;
-                        ui.add(
-                            egui::TextEdit::singleline(&mut h.hostname)
-                                .hint_text(
-                                    RichText::new(t!("host oder IP")).color(theme::text_dim()),
-                                )
-                                .desired_width(w),
-                        );
-                        ui.label(RichText::new(":").color(theme::text_dim()));
-                        ui.add(egui::DragValue::new(&mut h.port).range(1..=65535));
-                    });
+                    if h.protocol == Protocol::Web {
+                        crate::ui::web::address_rows(ui, f, h, &mut ed.tags_text);
+                    } else {
+                        f.field(ui, t!("Adresse"), |ui| {
+                            let w = ui.available_width() - 86.0;
+                            ui.add(
+                                egui::TextEdit::singleline(&mut h.hostname)
+                                    .hint_text(
+                                        RichText::new(t!("host oder IP")).color(theme::text_dim()),
+                                    )
+                                    .desired_width(w),
+                            );
+                            ui.label(RichText::new(":").color(theme::text_dim()));
+                            ui.add(egui::DragValue::new(&mut h.port).range(1..=65535));
+                        });
+                    }
                     if h.protocol != Protocol::Vnc {
                         f.field(ui, t!("Benutzer"), |ui| {
                             field_text(ui, &mut h.username, t!("leer = Identität/Gruppe"));
@@ -440,6 +450,7 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                         });
                     });
                 }
+                Protocol::Web => crate::ui::web::section(ui, h, web_open),
                 Protocol::Telnet => {
                     ui.add_space(10.0);
                     hint(
@@ -663,6 +674,7 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             match h.protocol {
                 Protocol::Serial => !h.serial.port_name.trim().is_empty(),
                 Protocol::Docker | Protocol::Kubernetes => !h.container.name.trim().is_empty(),
+                Protocol::Web => crate::backend::web::proto::parse_url(&h.web.url).is_ok(),
                 _ => !h.hostname.trim().is_empty(),
             }
         },
@@ -701,6 +713,10 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         app.host_editor = None;
     } else if save && let Some(mut ed) = app.host_editor.take() {
         ed.host.hostname = ed.host.hostname.trim().to_string();
+        if ed.host.protocol == Protocol::Web {
+            // Address, port and pin follow the URL (the form only saves valid ones).
+            let _ = crate::backend::web::sync_host(&mut ed.host);
+        }
         ed.host.tags = ed
             .tags_text
             .split(',')

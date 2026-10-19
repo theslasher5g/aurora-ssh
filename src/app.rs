@@ -339,6 +339,8 @@ pub enum TabKind {
     Vnc(Box<VncTab>),
     Log(Box<LogTab>),
     Edit(Box<crate::ui::edit::EditTab>),
+    /// Web interface in the `aurora-web` helper window.
+    Web(Box<crate::ui::web::WebTab>),
 }
 
 pub struct Tab {
@@ -961,6 +963,12 @@ impl App {
             }
             return;
         }
+        if host.protocol == Protocol::Web && purpose == Purpose::Terminal {
+            // One window per entry: its profile directory cannot be shared.
+            if self.focus_web_tab(host.id) {
+                return;
+            }
+        }
         if self.pwm_intercept(&host, purpose, ctx) {
             return;
         }
@@ -975,6 +983,8 @@ impl App {
             // VNC asks once; an empty answer is fine for servers without a password.
             Protocol::Vnc => ident.is_none(),
             Protocol::Serial | Protocol::Telnet | Protocol::Docker | Protocol::Kubernetes => false,
+            // Only needed to fill the login form.
+            Protocol::Web => host.web.auto_login,
         };
         if needs_secret && !has_secret {
             if self.password_prompt.is_some() {
@@ -1117,6 +1127,10 @@ impl App {
         }
         let kind = match (host.protocol, purpose) {
             (Protocol::Docker | Protocol::Kubernetes, _) => unreachable!(),
+            (Protocol::Web, _) => {
+                let tab = crate::ui::web::WebTab::open(host, &user, password.as_deref(), ctx);
+                TabKind::Web(Box::new(tab))
+            }
             (Protocol::Telnet, _) => {
                 let spec = ConnectSpec::Telnet(backend::telnet::TelnetParams {
                     host: host.hostname.trim().to_string(),
@@ -1212,7 +1226,7 @@ impl App {
             }
         };
         let subtitle = match host.protocol {
-            Protocol::Serial => host.subtitle(),
+            Protocol::Serial | Protocol::Web => host.subtitle(),
             _ => {
                 let user = if user.is_empty() {
                     String::new()
@@ -1989,7 +2003,8 @@ impl App {
                     }
                     TabKind::Rdp(_) => (t.host_id?, "rdp"),
                     TabKind::Vnc(_) => (t.host_id?, "vnc"),
-                    TabKind::Edit(_) => return None,
+                    // A window pops up on start: not restored automatically.
+                    TabKind::Edit(_) | TabKind::Web(_) => return None,
                     TabKind::Log(l) => {
                         source = l.source.text().to_string();
                         (l.target_host.unwrap_or(Uuid::nil()), "log")
@@ -2351,6 +2366,33 @@ impl App {
         ctx.request_repaint();
     }
 
+    /// Raises the window of the open web tab of `host` and returns true; a closed tab of
+    /// the host is removed (the caller opens a fresh one).
+    fn focus_web_tab(&mut self, host: Uuid) -> bool {
+        let found = self.tabs.iter().find_map(|t| match &t.kind {
+            TabKind::Web(w) if t.host_id == Some(host) => Some((t.id, !w.is_closed())),
+            _ => None,
+        });
+        match found {
+            Some((id, true)) => {
+                if let Some(Tab {
+                    kind: TabKind::Web(w),
+                    ..
+                }) = self.tabs.iter().find(|t| t.id == id)
+                {
+                    w.send(crate::backend::web::WebCmd::Focus);
+                }
+                self.active = Some(id);
+                true
+            }
+            Some((id, false)) => {
+                self.close_tab(id);
+                false
+            }
+            None => false,
+        }
+    }
+
     pub fn close_tab(&mut self, id: u64) {
         if let Some(Tab {
             kind: TabKind::Edit(e),
@@ -2384,6 +2426,7 @@ impl App {
                     }
                 }
                 TabKind::Vnc(mut t) => t.view.close(),
+                TabKind::Web(mut t) => t.close(),
                 TabKind::Log(_) | TabKind::Rdp(_) | TabKind::Edit(_) => {}
             }
             if self.active == Some(id) {
@@ -2834,6 +2877,7 @@ impl App {
                     }
                 }
                 TabKind::Log(t) => t.pump(&tab.title, &mut toasts),
+                TabKind::Web(t) => t.pump(&tab.title, &mut toasts),
                 TabKind::Edit(_) => {
                     let r = crate::ui::edit::pump(tab, &self.rt, &self.prompts_sink, ctx);
                     toasts.extend(r.toasts);
@@ -3137,6 +3181,7 @@ impl App {
                 }
             }
             Action::DeleteHost(id) => {
+                crate::backend::web::forget_host_data(&self.lib.hosts, &[id]);
                 self.lib.hosts.retain(|h| h.id != id);
                 self.save_library();
             }
@@ -3471,6 +3516,7 @@ impl App {
                 self.save_library();
             }
             Action::DeleteHosts(ids) => {
+                crate::backend::web::forget_host_data(&self.lib.hosts, &ids);
                 self.lib.hosts.retain(|h| !ids.contains(&h.id));
                 for id in &ids {
                     self.lib.facts.remove(id);
@@ -4730,6 +4776,7 @@ impl App {
             TabKind::Vnc(_) => 3,
             TabKind::Log(_) => 4,
             TabKind::Edit(_) => 5,
+            TabKind::Web(_) => 6,
         });
         match kind {
             Some(0) => self.terminal_tab(ui, id, actions),
@@ -4738,6 +4785,7 @@ impl App {
             Some(3) => self.vnc_tab(ui, id),
             Some(4) => crate::ui::logview::show(self, ui, id),
             Some(5) => crate::ui::edit::show(self, ui, id),
+            Some(6) => crate::ui::web::show(self, ui, id, actions),
             _ => {}
         }
     }
@@ -5068,6 +5116,7 @@ impl eframe::App for App {
                     }
                 }
                 TabKind::Vnc(t) => t.view.close(),
+                TabKind::Web(t) => t.close(),
                 TabKind::Log(_) | TabKind::Rdp(_) | TabKind::Edit(_) => {}
             }
         }
@@ -5087,6 +5136,7 @@ fn tab_live(t: &Tab) -> bool {
         TabKind::Vnc(t) => matches!(t.view.state, ConnState::Connected),
         TabKind::Log(t) => matches!(t.state, ConnState::Connected),
         TabKind::Edit(t) => matches!(t.state(), ConnState::Connected),
+        TabKind::Web(t) => t.is_live(),
     }
 }
 

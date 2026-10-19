@@ -70,6 +70,8 @@ pub enum Icon {
     Transfer,
     /// Pencil: edit a file.
     Edit,
+    /// Web interface entries.
+    Globe,
 }
 
 enum Prim {
@@ -161,6 +163,10 @@ fn prims(icon: Icon) -> &'static [Prim] {
         ],
         Icon::Transfer => &[Path("M8 20V4M4 8l4-4 4 4M16 4v16M12 16l4 4 4-4")],
         Icon::Edit => &[Path("M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4")],
+        Icon::Globe => &[
+            Circle(12.0, 12.0, 9.0),
+            Path("M3 12h18M12 3c3.2 3 3.2 15 0 18M12 3c-3.2 3-3.2 15 0 18"),
+        ],
         Icon::Upload => &[Path("M12 16V4M7 9l5-5 5 5M5 20h14")],
         Icon::Trash => &[Path("M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6")],
         Icon::Copy => &[

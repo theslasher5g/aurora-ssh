@@ -24,6 +24,7 @@
 | Log viewer | Read-only: `tail -F <quoted path>` or the command you entered, on its own channel; escape sequences are stripped from the output, at most 20,000 lines are kept |
 | Telnet | Unencrypted by design (only for devices that can't do SSH). Auto-login types the stored password only once and only after a password prompt |
 | VNC | VNC auth (DES challenge) or none; RFB traffic itself is unencrypted – over the internet use a tunnel (SSH host → tunnel to port 5900). All server data is bounds-checked (rectangles clipped, cut text capped at 1 MiB) |
+| Web interfaces | Only `http`/`https` addresses without embedded credentials (the same check runs in Aurora and in the `aurora-web` helper). Each entry has a private profile directory (0700). Certificate errors: strict, **pinned SHA-256 fingerprint** (confirmed by the user, enforced in the helper, loud warning on change) or ignored by explicit opt-in. Credentials only travel over the helper's stdin pipe and are only filled on the entry's own origin, at most one automatic submit per open. Navigation is limited to the entry's origin (plus listed hosts); other links open in the system browser after re-validation; no second windows, no dev tools in release builds; downloads get a sanitized name in `Downloads/Aurora`. Protocol lines are bounded to 64 KiB |
 | Fonts | Font files are parsed and checked before they are handed to the renderer; broken files fall back to IBM Plex Mono |
 
 ## Security review 0.1 (fixed)

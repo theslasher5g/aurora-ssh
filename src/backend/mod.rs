@@ -40,6 +40,7 @@ pub mod sshca;
 pub mod telnet;
 pub mod tunnel;
 pub mod vnc;
+pub mod web;
 pub mod wol;
 pub mod xfer;
 

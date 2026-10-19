@@ -1,6 +1,6 @@
 # Aurora
 
-A modern client for **SSH, SFTP, RDP, VNC, Telnet, serial consoles and Docker/Kubernetes
+A modern client for **SSH, SFTP, RDP, VNC, Telnet, serial consoles, web interfaces and Docker/Kubernetes
 containers**, written in Rust: clean, fast, with an encrypted keychain, snippets, host groups,
 tunnels, a live log viewer and 26 switchable themes. UI in English and German.
 
@@ -37,6 +37,7 @@ What's new in each version: [CHANGELOG.md](CHANGELOG.md) · planned: [ROADMAP.md
 | **Tunnels & jump host** | Port forwardings per host as switches in the list (status LED, optionally open the browser); "connect via" another SSH host (ProxyJump) – used for terminal, files and tunnels |
 | **RDP** | Inside the tab (IronRDP): follows the window size, **clipboard in both directions** (automatic + "copy from host"/"send to host" buttons), **Ctrl+Alt+Del**, Windows key, type the clipboard as keystrokes (for login screens/consoles). **Drop files onto the session** to copy them to Windows (clipboard channel, no SFTP needed) and **save files copied on the host**. **PowerShell snippets** run on the Windows host from the session header. Optionally in the system client (mstsc, FreeRDP, Remmina) |
 | **VNC** | Inside the tab (own RFB client: ZRLE, CopyRect, Raw, resize, VNC password): fit or 1:1, Ctrl+Alt+Del, clipboard in both directions, type the clipboard as keystrokes, view-only mode |
+| **Web interfaces** | Host type *Web interface*: firewall, switch, NAS, Proxmox, iDRAC/iLO web UIs next to your SSH/RDP hosts, in their own window (WebView2 / WKWebView / WebKitGTK) with an **own cookie profile per entry**. **Vendor templates** (pfSense, OPNsense, FortiGate, Sophos, UniFi, MikroTik, Synology, TrueNAS, Proxmox VE/PBS, iDRAC, iLO …), **self-signed certificates pinned by SHA-256 fingerprint** (asks on first use, warns when it changes), optional **auto-login** from the keychain or password manager, links to other sites open in your browser |
 | **Telnet** | For switches, routers and old devices: option negotiation (echo, window size, terminal type) and optional auto-login with the stored user and password |
 | **Serial** | Port detection, baud rate, format, flow control, line ending, local echo |
 | **Proxmox VE** | Own page with all VMs and containers of your Proxmox servers by node: status, IP, CPU/RAM, tags; start/stop/shutdown/reboot, **snapshots and backups** (create, roll back, restore to a new VMID), console (`pct enter`, `qm terminal`, SSH, noVNC or SPICE), save as host with the right IP. API token or password (in the vault), pinned certificate. **Live graphs**, clone / new from template with cloud-init, **migration by drag & drop**, hardware edits, batch actions, cluster overview (storage, ZFS, Ceph, HA), task log, **alerts**, node shell via the API, node updates and **Proxmox Backup Server** browsing |
@@ -105,6 +106,7 @@ Rust ≥ 1.88:
 ```bash
 cargo build --release                                              # app
 cargo build --release --manifest-path crates/aurora-rdp/Cargo.toml # RDP component
+cargo build --release --manifest-path crates/aurora-web/Cargo.toml # web interface window (Linux: libwebkit2gtk-4.1-dev, libgtk-3-dev)
 cargo test
 ```
 
@@ -147,5 +149,6 @@ src/
                        files, RDP, VNC, log viewer, containers, settings, help, editors, dialogs, palette
 assets/fonts/          Inter (UI) and IBM Plex Mono (terminal), both SIL OFL
 crates/aurora-rdp/     IronRDP helper process (stdio protocol)
+crates/aurora-web/     web interface helper (wry/tao, JSON lines over stdio)
 packaging/             .deb/.tar.gz script, Inno Setup installer, macOS .app/.dmg script
 ```

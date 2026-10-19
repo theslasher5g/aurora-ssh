@@ -18,10 +18,12 @@ pub enum Protocol {
     Docker,
     /// Shell in a Kubernetes pod (kubectl on this PC or an SSH host).
     Kubernetes,
+    /// Web interface of a firewall, switch, NAS … (opened by the `aurora-web` helper).
+    Web,
 }
 
 impl Protocol {
-    pub const ALL: [Protocol; 7] = [
+    pub const ALL: [Protocol; 8] = [
         Protocol::Ssh,
         Protocol::Rdp,
         Protocol::Vnc,
@@ -29,6 +31,7 @@ impl Protocol {
         Protocol::Serial,
         Protocol::Docker,
         Protocol::Kubernetes,
+        Protocol::Web,
     ];
 
     pub fn label(self) -> &'static str {
@@ -40,6 +43,7 @@ impl Protocol {
             Protocol::Vnc => "VNC",
             Protocol::Docker => "Docker",
             Protocol::Kubernetes => "Kubernetes",
+            Protocol::Web => "Web",
         }
     }
 
@@ -52,6 +56,7 @@ impl Protocol {
             Protocol::Vnc => "🖵",
             Protocol::Docker => "📦",
             Protocol::Kubernetes => "☸",
+            Protocol::Web => "🌐",
         }
     }
 
@@ -62,6 +67,7 @@ impl Protocol {
             Protocol::Serial => 0,
             Protocol::Telnet => 23,
             Protocol::Vnc => 5900,
+            Protocol::Web => 443,
             Protocol::Docker | Protocol::Kubernetes => 0,
         }
     }
@@ -70,7 +76,7 @@ impl Protocol {
     pub fn is_network(self) -> bool {
         matches!(
             self,
-            Protocol::Ssh | Protocol::Rdp | Protocol::Telnet | Protocol::Vnc
+            Protocol::Ssh | Protocol::Rdp | Protocol::Telnet | Protocol::Vnc | Protocol::Web
         )
     }
 
@@ -80,7 +86,7 @@ impl Protocol {
 
     /// Opens a text terminal (and can use a terminal profile).
     pub fn is_terminal(self) -> bool {
-        !matches!(self, Protocol::Rdp | Protocol::Vnc)
+        !matches!(self, Protocol::Rdp | Protocol::Vnc | Protocol::Web)
     }
 }
 
@@ -207,6 +213,51 @@ pub struct TermProfile {
     /// Font name from the font list, or a path to a .ttf/.otf file.
     pub font: String,
     pub font_size: f32,
+}
+
+/// Web interface entry (protocol `Web`). `Host::hostname`/`port` mirror the URL so the
+/// reachability LED, certificate radar and search work like for any network host.
+/// Passwords are never stored here: they come from the keychain/password manager.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[serde(default)]
+pub struct WebSettings {
+    /// `https://host[:port]/path`; only http and https are accepted.
+    pub url: String,
+    pub tls: crate::backend::web::TlsMode,
+    /// SHA-256 fingerprint of the pinned (self-signed) certificate, `AA:BB:…`.
+    pub pinned_fp: String,
+    /// `host:port` the pin was taken for.
+    pub pinned_for: String,
+    pub pinned_at: Option<DateTime<Utc>>,
+    /// Fill the login form with the entry's credentials.
+    pub auto_login: bool,
+    /// Press the login button after filling.
+    pub submit: bool,
+    /// CSS selectors of the login fields; empty = detect automatically.
+    pub user_selector: String,
+    pub pass_selector: String,
+    /// Further hosts the page may show inside the window (SSO …), comma separated.
+    pub extra_hosts: String,
+    /// Vendor template the entry was created from.
+    pub template: String,
+}
+
+impl Default for WebSettings {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            tls: Default::default(),
+            pinned_fp: String::new(),
+            pinned_for: String::new(),
+            pinned_at: None,
+            auto_login: false,
+            submit: true,
+            user_selector: String::new(),
+            pass_selector: String::new(),
+            extra_hosts: String::new(),
+            template: String::new(),
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
@@ -344,6 +395,9 @@ pub struct Host {
     /// SSH: set up shell integration (OSC 133/7 marks) in the login shell after login.
     #[serde(default)]
     pub shell_integration: bool,
+    /// Web interface entries (`Protocol::Web`).
+    #[serde(default)]
+    pub web: WebSettings,
 }
 
 /// Per-host override of the global "reconnect automatically" switch.
@@ -399,6 +453,7 @@ impl Default for Host {
             auto_reconnect: ReconnectMode::Default,
             credential_source: None,
             shell_integration: false,
+            web: WebSettings::default(),
         }
     }
 }
@@ -420,6 +475,12 @@ impl Host {
         match self.protocol {
             Protocol::Serial => {
                 format!("{} · {} baud", self.serial.port_name, self.serial.baud_rate)
+            }
+            Protocol::Web => {
+                let url = self.web.url.trim();
+                url.split_once("://")
+                    .map_or(url, |(_, rest)| rest)
+                    .to_string()
             }
             Protocol::Docker | Protocol::Kubernetes => {
                 let c = &self.container;

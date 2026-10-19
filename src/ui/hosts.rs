@@ -40,6 +40,7 @@ pub fn protocol_color(p: Protocol) -> Color32 {
         Protocol::Rdp | Protocol::Vnc => theme::accent2(),
         Protocol::Serial | Protocol::Telnet => theme::green(),
         Protocol::Docker | Protocol::Kubernetes => theme::amber(),
+        Protocol::Web => theme::accent2(),
     }
 }
 
@@ -52,6 +53,7 @@ pub fn protocol_tag(p: Protocol) -> &'static str {
         Protocol::Vnc => "VNC",
         Protocol::Docker => "DOCKER",
         Protocol::Kubernetes => "K8S",
+        Protocol::Web => "WEB",
     }
 }
 
@@ -85,6 +87,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     ("Serielles Gerät", Protocol::Serial),
                     ("Docker-Container", Protocol::Docker),
                     ("Kubernetes-Pod", Protocol::Kubernetes),
+                    ("Web-Oberfläche", Protocol::Web),
                 ] {
                     if ui
                         .button(format!("{}  {}", proto.icon(), crate::i18n::tr(label)))
@@ -169,6 +172,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     "Konsole",
                     "Container",
                     "Favoriten",
+                    "Web",
                 ]
                 .map(crate::i18n::tr),
                 filter,
@@ -355,6 +359,7 @@ fn live_hosts(app: &App) -> Vec<String> {
             TabKind::Sftp(t) => matches!(t.state(), ConnState::Connected),
             TabKind::Rdp(t) => t.is_live(),
             TabKind::Vnc(t) => matches!(t.view.state, ConnState::Connected),
+            TabKind::Web(t) => t.is_live(),
             TabKind::Log(_) => false,
             TabKind::Edit(t) => matches!(t.state(), ConnState::Connected),
         })
@@ -374,6 +379,7 @@ fn passes_filter(filter: usize, h: &Host) -> bool {
         3 => matches!(h.protocol, Protocol::Serial | Protocol::Telnet),
         4 => h.protocol.is_container(),
         5 => h.favorite,
+        6 => h.protocol == Protocol::Web,
         _ => true,
     }
 }

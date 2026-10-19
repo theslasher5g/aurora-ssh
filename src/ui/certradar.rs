@@ -83,7 +83,17 @@ fn targets(lib: &Library) -> Vec<Target> {
         if !h.protocol.is_network() || address.is_empty() || h.jump_host.is_some() {
             continue;
         }
-        for port in certradar::ports_for(lib.net.open_ports.get(&h.id)) {
+        // A web entry names its own port (https only).
+        let ports = if h.protocol == crate::model::Protocol::Web {
+            if h.web.url.starts_with("https://") {
+                vec![h.port]
+            } else {
+                Vec::new()
+            }
+        } else {
+            certradar::ports_for(lib.net.open_ports.get(&h.id))
+        };
+        for port in ports {
             push(Target {
                 host_id: Some(h.id),
                 name: h.display_name().to_string(),

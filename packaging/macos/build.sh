@@ -2,7 +2,7 @@
 # Builds Aurora.app (universal: Apple Silicon + Intel) and a .dmg.
 # Usage: packaging/macos/build.sh <version> <out-dir>
 # Expects release builds for aarch64-apple-darwin and x86_64-apple-darwin of both
-# aurora-term and crates/aurora-rdp.
+# aurora-term, crates/aurora-rdp and crates/aurora-web.
 set -euo pipefail
 VERSION="$1"
 OUT="$2"
@@ -20,6 +20,10 @@ lipo -create \
   "$ROOT/crates/aurora-rdp/target/aarch64-apple-darwin/release/aurora-rdp" \
   "$ROOT/crates/aurora-rdp/target/x86_64-apple-darwin/release/aurora-rdp" \
   -output "$APP/Contents/MacOS/aurora-rdp"
+lipo -create \
+  "$ROOT/crates/aurora-web/target/aarch64-apple-darwin/release/aurora-web" \
+  "$ROOT/crates/aurora-web/target/x86_64-apple-darwin/release/aurora-web" \
+  -output "$APP/Contents/MacOS/aurora-web"
 
 # Icon: 1024px PNG -> .icns
 ICONSET="$STAGE/aurora.iconset"

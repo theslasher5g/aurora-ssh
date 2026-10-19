@@ -41,6 +41,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "{#SourceDir}\Aurora.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\aurora-rdp.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\aurora-web.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\SECURITY.md"; DestDir: "{app}"; Flags: ignoreversion
 
@@ -52,3 +53,23 @@ Name: "{autodesktop}\Aurora"; Filename: "{app}\Aurora.exe"; Tasks: desktopicon
 Filename: "{app}\Aurora.exe"; Description: "{cm:LaunchProgram,Aurora}"; Flags: nowait postinstall skipifsilent
 ; Silent (in-app) update: start the new version again.
 Filename: "{app}\Aurora.exe"; Flags: nowait skipifnotsilent
+
+[Code]
+{ Web interface entries need the Microsoft Edge WebView2 runtime. It is part of Windows 11
+  and of current Windows 10, so this is only a hint, never a blocker. }
+function WebView2Installed(): Boolean;
+var
+  Version: String;
+begin
+  Result :=
+    (RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) and (Version <> '') and (Version <> '0.0.0.0')) or
+    (RegQueryStringValue(HKCU, 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) and (Version <> '') and (Version <> '0.0.0.0'));
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if (CurStep = ssPostInstall) and (not WizardSilent) and (not WebView2Installed()) then
+    MsgBox('Aurora opens web interfaces (firewalls, NAS, Proxmox ...) with the Microsoft Edge WebView2 runtime, which was not found on this PC.' + #13#10 + #13#10 +
+           'Everything else works without it. To use web entries, install the "Evergreen Runtime" from:' + #13#10 +
+           'https://developer.microsoft.com/microsoft-edge/webview2/', mbInformation, MB_OK);
+end;

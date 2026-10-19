@@ -294,6 +294,7 @@ pub fn no_facts_reason(protocol: Protocol) -> String {
             t!("Noch keine Fakten gesammelt – „Fakten aktualisieren“ klicken").to_string()
         }
         Protocol::Rdp => t!("Nur RDP – keine Fakten (SSH/OpenSSH nötig)").to_string(),
+        Protocol::Web => t!("Nur Web – keine Fakten").to_string(),
         other => t!("{} liefert keine Fakten (nur SSH)", other.label()),
     }
 }
