@@ -36,6 +36,7 @@ mod ui_v072_inv;
 mod ui_v072_logvars;
 mod ui_v072_pwm;
 mod ui_v081_inventory;
+mod ui_v082_import;
 mod ui_v082_web;
 mod ui_vnc;
 
@@ -74,6 +75,7 @@ const TABLES: &[&[(&str, &str)]] = &[
     ui_v072_blocks::T,
     ui_v081_inventory::T,
     ui_v082_web::T,
+    ui_v082_import::T,
 ];
 
 /// "de", "en" or "" (follow the system: German for German locales, English otherwise).

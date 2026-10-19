@@ -466,6 +466,18 @@ fn general(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>, changed:
                 }
             },
         );
+        rows.setting(
+            ui,
+            t!("Anderer Verbindungsmanager"),
+            Some(t!(
+                "mRemoteNG, Royal TS, Remote Desktop Manager oder CSV importieren"
+            )),
+            |ui| {
+                if theme::btn(ui, theme::Btn::Small, None, t!("Importieren")).clicked() {
+                    app.import.open();
+                }
+            },
+        );
     });
     ui.add_space(22.0);
     crate::ui::inventory_page::settings_card(app, ui, changed);

@@ -16,6 +16,7 @@ pub mod history;
 pub mod hostkey;
 pub mod hosts;
 pub mod icons;
+pub mod import_ui;
 pub mod inventory_detail;
 pub mod inventory_page;
 pub mod inventory_table;
