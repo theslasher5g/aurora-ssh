@@ -1,0 +1,21 @@
+#!/bin/sh
+# Fake `pass-cli` (shapes taken from third-party sources, see src/backend/pwmanager_proton.rs).
+D=$(cd "$(dirname "$0")" && pwd)
+echo "pass-cli $*" >> "$D/argv.log"
+cmd="$1"; shift
+if [ -f "$D/proton_loggedout" ]; then echo "Error: not logged in" >&2; exit 1; fi
+case "$cmd" in
+info) echo "user: me" ;;
+vault) echo '{"vaults":[{"name":"Personal","vault_id":"v1","share_id":"SHARE1"}]}' ;;
+item)
+  sub="$1"; shift
+  if [ "$sub" = "list" ]; then
+    echo '{"items":[{"id":"ITEM1","share_id":"SHARE1","vault_id":"v1","state":"Active","title":"aurora-lab","item_type":"Login"},{"id":"ITEM2","share_id":"SHARE1","state":"Trashed","title":"gone"}]}'
+  else
+    case "$1" in
+      pass://SHARE1/ITEM1) echo '{"item":{"state":"Active","content":{"title":"aurora-lab","note":"","content":{"Login":{"username":"aurora","email":"","password":"testpass123","urls":[]}}}}}';;
+      *) echo "Error: item not found" >&2; exit 1;;
+    esac
+  fi ;;
+*) echo "unknown" >&2; exit 2 ;;
+esac

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### New
+- **Password managers:** take passwords (and SSH keys for identities) from Bitwarden (`bw`),
+  1Password (`op`), KeePassXC (`keepassxc-cli`) or Proton Pass (`pass-cli`) instead of the
+  Aurora vault. Settings -> Security -> Password managers; hosts and identities pick an item
+  (only a reference is stored, never the secret). Secrets are fetched right before connecting
+  (SSH, RDP, VNC, Telnet, SFTP, tunnels, jump hosts), live in memory only and are wiped.
+- **Password prompt:** *Choose from keychain* - pick a stored identity or a password-manager
+  item (search, arrow keys, Enter / double-click), optionally remember it for the host.
+
 ## 0.7.1
 
 ### New

@@ -473,6 +473,8 @@ fn security(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>, changed
         );
     });
     ui.add_space(22.0);
+    crate::ui::pwmanager_ui::settings_card(app, ui, changed);
+    ui.add_space(22.0);
     caption(ui, t!("Master-Passwort"));
     theme::settings_card(ui, |ui, rows| {
         rows.full(ui, |ui| {

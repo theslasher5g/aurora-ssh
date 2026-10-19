@@ -215,6 +215,13 @@ fn password(app: &mut App, ctx: &egui::Context) {
     let (user, _) = app.credentials(&host);
     let in_library = app.lib.host(host.id).is_some();
     let (mut submit, mut cancel) = (false, false);
+    let entries = crate::ui::pwmanager_pick::identity_entries(&app.keychain);
+    let pwm_settings = app.lib.settings.pwm.clone();
+    let providers = pwm_settings.enabled_providers();
+    let sessions = app.pwm.sessions.clone();
+    let epoch = app.pwm.epoch;
+    let covered = app.pwm.unlock_open();
+    let mut pick_out = crate::ui::pwmanager_pick::PickOut::default();
     let Some(pp) = app.password_prompt.as_mut() else {
         return;
     };
@@ -242,12 +249,24 @@ fn password(app: &mut App, ctx: &egui::Context) {
             );
             if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 submit = true;
-            } else {
+            } else if !pp.pick.open && !covered {
                 r.request_focus();
             }
             if in_library {
                 ui.checkbox(&mut pp.save, t!("Im Keychain speichern"));
             }
+            pick_out = crate::ui::pwmanager_pick::show(
+                ui,
+                &mut pp.pick,
+                &crate::ui::pwmanager_pick::PickCtx {
+                    entries: &entries,
+                    providers: &providers,
+                    settings: &pwm_settings,
+                    sessions: &sessions,
+                    epoch,
+                    can_remember: in_library,
+                },
+            );
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -263,11 +282,48 @@ fn password(app: &mut App, ctx: &egui::Context) {
                 cancel = true;
             }
         });
+    if let Some(p) = pick_out.unlock {
+        app.pwm.open_unlock(p, None);
+    }
+    // Enter / "Verbinden" with an empty password uses the highlighted list row.
+    if submit
+        && !cancel
+        && pick_out.choice.is_none()
+        && let Some(pp) = app.password_prompt.as_ref()
+        && pp.password.is_empty()
+        && pp.pick.open
+    {
+        pick_out.choice = pp.pick.current.clone();
+    }
     if cancel {
         if let Some(Purpose::Tunnel(tid)) = app.password_prompt.as_ref().map(|p| p.purpose) {
             app.tunnels.remove(&tid);
         }
         app.password_prompt = None;
+    } else if let Some(choice) = pick_out.choice
+        && let Some(pp) = app.password_prompt.take()
+    {
+        use crate::ui::pwmanager_pick::Choice;
+        let mut h = pp.host.clone();
+        match choice {
+            Choice::Identity(id) => h.identity_id = Some(id),
+            Choice::Manager(provider, item) => {
+                h.credential_source = Some(crate::backend::pwmanager_types::CredentialSource {
+                    provider,
+                    item: item.id,
+                    label: item.name,
+                    ..Default::default()
+                })
+            }
+        }
+        if pp.pick.remember
+            && let Some(lh) = app.lib.hosts.iter_mut().find(|x| x.id == h.id)
+        {
+            lh.identity_id = h.identity_id;
+            lh.credential_source = h.credential_source.clone();
+            app.save_library();
+        }
+        app.connect_host(h, pp.purpose, ctx);
     } else if submit && let Some(pp) = app.password_prompt.take() {
         let (user, ident) = app.credentials(&pp.host);
         if pp.save {

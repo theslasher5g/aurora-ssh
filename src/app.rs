@@ -419,6 +419,8 @@ pub struct PasswordPrompt {
     pub purpose: Purpose,
     pub password: String,
     pub save: bool,
+    /// "Aus Keychain wählen" list in the dialog.
+    pub pick: crate::ui::pwmanager_pick::PromptPick,
 }
 
 pub struct SnippetRun {
@@ -609,6 +611,8 @@ pub struct App {
     pub prompts_rx: UnboundedReceiver<HostKeyPrompt>,
     pub hostkey_queue: VecDeque<HostKeyPrompt>,
     pub password_prompt: Option<PasswordPrompt>,
+    /// Password-manager integration (sessions, lookups, dialogs).
+    pub pwm: crate::ui::pwmanager_ui::PwmState,
     pub snippet_run: Option<SnippetRun>,
     pub toasts: Vec<Toast>,
     pub serial_ports: Vec<String>,
@@ -828,6 +832,7 @@ impl App {
             prompts_rx,
             hostkey_queue: VecDeque::new(),
             password_prompt: None,
+            pwm: Default::default(),
             snippet_run: None,
             toasts: Vec::new(),
             serial_ports: backend::serial::available_ports(),
@@ -888,8 +893,12 @@ impl App {
             .or(group_ident)
             .and_then(|id| self.identity(id))
             .cloned();
+        // Secrets fetched from a password manager for this connection.
+        let (ident, item_user) = self.pwm.apply(host.id, ident);
         let user = if !host.username.is_empty() {
             host.username.clone()
+        } else if let Some(u) = item_user.filter(|u| !u.is_empty()) {
+            u
         } else if let Some(i) = ident.as_ref().filter(|i| !i.username.is_empty()) {
             i.username.clone()
         } else if !group_user.is_empty() {
@@ -936,6 +945,9 @@ impl App {
             }
             return;
         }
+        if self.pwm_intercept(&host, purpose, ctx) {
+            return;
+        }
         let (user, ident) = self.credentials(&host);
         let has_secret = ident.as_ref().is_some_and(|i| {
             !i.password.is_empty() || (host.protocol == Protocol::Ssh && !i.private_key.is_empty())
@@ -958,6 +970,7 @@ impl App {
                 purpose,
                 password: String::new(),
                 save: false,
+                pick: Default::default(),
             });
             return;
         }
@@ -3399,6 +3412,7 @@ impl App {
                 self.host_editor = None;
                 self.identity_editor = None;
                 self.password_prompt = None;
+                self.pwm.lock();
                 self.pve.lock();
             }
         }
@@ -4737,6 +4751,7 @@ impl eframe::App for App {
         crate::ui::palette::show(self, &ctx, &mut actions);
         crate::ui::dialogs::show(self, &ctx);
         crate::ui::logvars::show(self, &ctx, &mut actions);
+        crate::ui::pwmanager_ui::show(self, &ctx);
         crate::ui::history::frame(self, &ctx);
         crate::ui::containers::show(self, &ctx, &mut actions);
         crate::ui::portscan::show(self, &ctx, &mut actions);

@@ -337,6 +337,10 @@ pub struct Host {
     /// Reconnect this host's session automatically after an unexpected drop.
     #[serde(default)]
     pub auto_reconnect: ReconnectMode,
+    /// Password (and optionally user name) from an external password manager; only the
+    /// reference is stored here.
+    #[serde(default)]
+    pub credential_source: Option<crate::backend::pwmanager_types::CredentialSource>,
 }
 
 /// Per-host override of the global "reconnect automatically" switch.
@@ -390,6 +394,7 @@ impl Default for Host {
             cert: CertSettings::default(),
             wol: WolSettings::default(),
             auto_reconnect: ReconnectMode::Default,
+            credential_source: None,
         }
     }
 }
@@ -559,6 +564,9 @@ pub struct Identity {
     pub passphrase: String,
     /// Keychain group (`Keychain::groups`); `None` = "Ohne Gruppe".
     pub group_id: Option<Uuid>,
+    /// Password or private key taken from a password manager at connect time (only the
+    /// reference is stored; the vault does not hold the secret).
+    pub secret_source: Option<crate::backend::pwmanager_types::CredentialSource>,
 }
 
 impl Identity {
@@ -786,6 +794,8 @@ pub struct Settings {
     pub custom_themes: Vec<crate::themeimport_parse::Scheme>,
     /// Warning thresholds of the server inventory page.
     pub inventory: crate::backend::inventory_rules::InventorySettings,
+    /// Password-manager integration (Bitwarden, 1Password, KeePassXC, Proton Pass).
+    pub pwm: crate::backend::pwmanager_types::PwmSettings,
 }
 
 impl Default for Settings {
@@ -819,6 +829,7 @@ impl Default for Settings {
             last_seen_version: String::new(),
             custom_themes: Vec::new(),
             inventory: Default::default(),
+            pwm: Default::default(),
         }
     }
 }

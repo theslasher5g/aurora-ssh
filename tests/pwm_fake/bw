@@ -1,0 +1,45 @@
+#!/bin/sh
+# Fake `bw` for Aurora's tests. State: files next to this script (bw_loggedout).
+D=$(cd "$(dirname "$0")" && pwd)
+echo "bw $*" >> "$D/argv.log"
+KEY=fake-session-key
+cmd="$1"; shift
+case "$cmd" in
+status)
+  if [ -f "$D/bw_loggedout" ]; then s=unauthenticated
+  elif [ "$BW_SESSION" = "$KEY" ]; then s=unlocked
+  else s=locked; fi
+  echo "{\"serverUrl\":null,\"lastSync\":null,\"status\":\"$s\"}" ;;
+unlock)
+  if [ -f "$D/bw_loggedout" ]; then echo "You are not logged in." >&2; exit 1; fi
+  var=""
+  while [ $# -gt 0 ]; do
+    if [ "$1" = "--passwordenv" ]; then var="$2"; shift; fi
+    shift
+  done
+  [ "$var" = "BW_PASSWORD" ] || exit 2
+  if [ "$BW_PASSWORD" = "master" ]; then printf %s "$KEY"
+  else echo "Invalid master password." >&2; exit 1; fi ;;
+list)
+  [ "$BW_SESSION" = "$KEY" ] || { echo "Vault is locked." >&2; exit 1; }
+  what="$1"; shift
+  if [ "$what" = "folders" ]; then
+    echo '[{"id":"f1","name":"Lab"},{"id":null,"name":"No folder"}]'; exit 0
+  fi
+  search=""
+  for a in "$@"; do case "$a" in --search=*) search=${a#--search=};; esac; done
+  s=$(printf %s "$search" | tr 'A-Z' 'a-z')
+  out=""
+  case "aurora-lab" in *"$s"*) out='{"id":"11111111-aaaa-bbbb-cccc-000000000001","type":1,"name":"aurora-lab","folderId":"f1","login":{"username":"aurora","password":"testpass123","uris":[{"uri":"ssh://127.0.0.1"}]}}';; esac
+  case "web-prod" in *"$s"*) [ -n "$out" ] && out="$out,"; out="$out"'{"id":"11111111-aaaa-bbbb-cccc-000000000002","type":1,"name":"web-prod","folderId":null,"login":{"username":"deploy","password":"other-pw","uris":[]}}';; esac
+  echo "[$out]" ;;
+get)
+  [ "$BW_SESSION" = "$KEY" ] || { echo "Vault is locked." >&2; exit 1; }
+  [ "$1" = "item" ] || exit 2
+  case "$2" in
+    11111111-aaaa-bbbb-cccc-000000000001) echo '{"id":"11111111-aaaa-bbbb-cccc-000000000001","type":1,"name":"aurora-lab","notes":null,"login":{"username":"aurora","password":"testpass123"}}';;
+    11111111-aaaa-bbbb-cccc-000000000002) echo '{"id":"11111111-aaaa-bbbb-cccc-000000000002","type":1,"name":"web-prod","notes":null,"login":{"username":"deploy","password":"other-pw"}}';;
+    *) echo "Not found." >&2; exit 1;;
+  esac ;;
+*) echo "unknown command" >&2; exit 2 ;;
+esac

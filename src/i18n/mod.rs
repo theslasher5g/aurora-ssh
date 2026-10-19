@@ -32,6 +32,7 @@ mod ui_v071_layout;
 mod ui_v072_comfort;
 mod ui_v072_inv;
 mod ui_v072_logvars;
+mod ui_v072_pwm;
 mod ui_vnc;
 
 static ENGLISH: AtomicBool = AtomicBool::new(false);
@@ -63,6 +64,7 @@ const TABLES: &[&[(&str, &str)]] = &[
     ui_v072_logvars::T,
     ui_v072_comfort::T,
     ui_v072_inv::T,
+    ui_v072_pwm::T,
     ui_vnc::T,
 ];
 

@@ -1,0 +1,38 @@
+#!/bin/sh
+# Fake `keepassxc-cli`: database password "kppass" on stdin. Never logs the password.
+D=$(cd "$(dirname "$0")" && pwd)
+echo "keepassxc-cli $*" >> "$D/argv.log"
+cmd="$1"; shift
+read pw
+attr=""; db=""; entry=""; rest=0; n=0
+while [ $# -gt 0 ]; do
+  if [ $rest = 1 ]; then
+    n=$((n+1)); if [ $n = 1 ]; then db="$1"; else entry="$1"; fi
+  else
+    case "$1" in
+      --) rest=1;;
+      -a) attr="$2"; shift;;
+      -k) shift;;
+      -q|-s|-R|-f) ;;
+    esac
+  fi
+  shift
+done
+[ -f "$db" ] || { echo "Failed to open database file $db: not found" >&2; exit 1; }
+if [ "$pw" != "kppass" ]; then
+  echo "Error while reading the database: Invalid credentials were provided, please try again." >&2; exit 1
+fi
+case "$cmd" in
+ls) echo "Servers/" ;;
+search)
+  s=$(printf %s "$entry" | tr 'A-Z' 'a-z')
+  case "aurora-lab" in *"$s"*) echo "/Servers/aurora-lab";; esac ;;
+show)
+  if [ "$entry" != "/Servers/aurora-lab" ]; then echo "Could not find entry with path $entry." >&2; exit 1; fi
+  case "$attr" in
+    UserName) echo aurora;;
+    Password) echo testpass123;;
+    Notes) echo "";;
+  esac ;;
+*) echo "unknown" >&2; exit 2 ;;
+esac

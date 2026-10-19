@@ -24,6 +24,8 @@ pub mod palette;
 pub mod paste_guard;
 pub mod portscan;
 pub mod proxmox;
+pub mod pwmanager_pick;
+pub mod pwmanager_ui;
 pub mod rdp;
 pub mod reconnect_auto;
 pub mod route;
