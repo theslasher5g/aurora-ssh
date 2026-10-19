@@ -225,17 +225,28 @@ async fn list(
         Target::Local => {
             let line = format!("{cli} {args}");
             let argv = split_args(&line);
-            let exe = super::local::find_program(&argv[0]).ok_or_else(|| {
-                anyhow!(
-                    "{}",
-                    t!(
-                        "{} wurde nicht gefunden. Ist es installiert und im PATH?",
-                        cli
-                    )
-                )
-            })?;
+            let mut args: Vec<String> = argv[1..].to_vec();
+            let exe = match super::local::find_program(&argv[0]) {
+                Some(e) => e,
+                // Windows: Docker that runs inside WSL.
+                None => match super::containers_run::wsl_exe() {
+                    Some(wsl) if super::containers_run::wsl_has(&argv[0]).await => {
+                        args.splice(0..0, ["-e".to_string(), argv[0].clone()]);
+                        wsl
+                    }
+                    _ => {
+                        return Err(anyhow!(
+                            "{}",
+                            t!(
+                                "{} wurde nicht gefunden. Ist es installiert und im PATH?",
+                                cli
+                            )
+                        ));
+                    }
+                },
+            };
             let mut cmd = tokio::process::Command::new(exe);
-            cmd.args(&argv[1..]).kill_on_drop(true);
+            cmd.args(&args).kill_on_drop(true);
             #[cfg(windows)]
             cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
             let o = tokio::time::timeout(Duration::from_secs(25), cmd.output())

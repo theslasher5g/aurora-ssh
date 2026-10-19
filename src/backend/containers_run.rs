@@ -144,7 +144,7 @@ async fn exec_capped(handle: &SshHandle, cmd: &str) -> anyhow::Result<String> {
 
 /// On Windows a tool that is not installed natively may live in WSL (Docker started inside
 /// the default distribution): `wsl.exe -e <tool> …` runs it there.
-fn wsl_exe() -> Option<std::path::PathBuf> {
+pub(crate) fn wsl_exe() -> Option<std::path::PathBuf> {
     if cfg!(windows) {
         super::local::find_program("wsl.exe")
     } else {
@@ -153,7 +153,7 @@ fn wsl_exe() -> Option<std::path::PathBuf> {
 }
 
 /// Tools missing on this PC but found in WSL.
-async fn wsl_has(tool: &str) -> bool {
+pub(crate) async fn wsl_has(tool: &str) -> bool {
     let Some(wsl) = wsl_exe() else { return false };
     let mut cmd = tokio::process::Command::new(wsl);
     cmd.args(["-e", "sh", "-c", "command -v \"$1\"", "sh", tool])

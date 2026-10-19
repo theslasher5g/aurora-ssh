@@ -30,6 +30,12 @@
   section. Choose what is included, drop IP addresses (replaced by a placeholder), notes are
   off by default. All text is escaped.
 
+### Fixes
+- The Container dialog also finds Docker, Podman and kubectl inside WSL on Windows.
+- Hardening: recordings are only deleted/opened by a plain `*.cast` file name from the history, and the
+  title/host in a Markdown session export are escaped.
+- The Snippets button in the session bar shows its active state like Logs.
+
 ## 0.8.0
 
 ### Files

@@ -65,8 +65,9 @@ pub fn render(doc: &Doc, kind: Kind) -> String {
     let mut out = String::new();
     match kind {
         Kind::Markdown => {
-            out.push_str(&format!("# {}\n\n", doc.title));
-            out.push_str(&format!("- {}: {}\n", t!("Host"), doc.host));
+            use crate::backend::inventory_export::md_escape;
+            out.push_str(&format!("# {}\n\n", md_escape(doc.title)));
+            out.push_str(&format!("- {}: {}\n", t!("Host"), md_escape(doc.host)));
             out.push_str(&format!("- {}: {}\n", t!("Datum"), doc.date));
             out.push_str(&format!("- {}: {}\n\n", t!("Dauer"), clock(doc.duration)));
         }

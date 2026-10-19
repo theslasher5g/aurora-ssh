@@ -43,6 +43,16 @@ impl Session {
     }
 }
 
+/// Path of a recording inside `dir`. The name comes from the history file, so it must be a
+/// plain `*.cast` file name: no directories, no `..`, no absolute paths.
+pub fn rec_path(dir: &std::path::Path, name: &str) -> Option<PathBuf> {
+    let p = std::path::Path::new(name);
+    let plain = p
+        .file_name()
+        .is_some_and(|f| f == std::ffi::OsStr::new(name));
+    (plain && name.ends_with(".cast") && !name.contains(['/', '\\', '\0'])).then(|| dir.join(name))
+}
+
 pub fn path() -> PathBuf {
     crate::store::data_dir().join("sessions.jsonl")
 }
@@ -219,6 +229,23 @@ mod tests {
 #[cfg(test)]
 mod prune_tests {
     use super::*;
+
+    #[test]
+    fn recording_names_cannot_leave_the_folder() {
+        let d = std::path::Path::new("/rec");
+        assert!(rec_path(d, "a.cast").is_some());
+        for bad in [
+            "../x.cast",
+            "/etc/passwd",
+            "a/b.cast",
+            "a\\b.cast",
+            "x.txt",
+            "",
+            "..",
+        ] {
+            assert!(rec_path(d, bad).is_none(), "{bad}");
+        }
+    }
 
     #[test]
     fn keeps_recordings_and_newest_unrecorded() {

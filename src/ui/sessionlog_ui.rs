@@ -789,11 +789,16 @@ pub fn settings_cards(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action
                 if theme::btn(ui, Btn::Small, Some(Icon::Trash), "").clicked() {
                     actions.push(Action::SessionLog(Act::Delete(
                         vec![r.id.clone()],
-                        r.rec.iter().map(|f| dir.join(f)).collect(),
+                        r.rec
+                            .iter()
+                            .filter_map(|f| sessionlog_history::rec_path(&dir, f))
+                            .collect(),
                     )));
                 }
                 if let Some(file) = &r.rec {
-                    let path = dir.join(file);
+                    let Some(path) = sessionlog_history::rec_path(&dir, file) else {
+                        return;
+                    };
                     if !path.exists() {
                         return;
                     }
