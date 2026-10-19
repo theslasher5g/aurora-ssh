@@ -632,6 +632,8 @@ pub struct App {
     pub net: crate::ui::net::NetState,
     /// Runbooks, maintenance windows, diagnostics bundles.
     pub ops: crate::ui::ops::OpsState,
+    /// Importer for other connection managers (mRemoteNG, Royal TS, RDM, CSV).
+    pub import: crate::ui::import_ui::State,
     /// Docker/Kubernetes overview page.
     pub ctr: crate::ui::containers_page::CtrState,
     /// Server inventory page.
@@ -703,6 +705,8 @@ pub enum Action {
     /// New host with this hostname (from a search without results).
     NewHostNamed(String),
     ImportSshConfig,
+    /// Opens the importer for other connection managers.
+    OpenImport,
     RenameHost(Uuid, String),
     /// Put all loose hosts of `a.b.c.x` into a new group.
     GroupSubnet(String),
@@ -858,6 +862,7 @@ impl App {
             termx: Default::default(),
             net: Default::default(),
             ops: Default::default(),
+            import: Default::default(),
             ctr: Default::default(),
             inv: Default::default(),
             xfer: crate::ui::xfer::XferUi::new(&cc.egui_ctx),
@@ -3327,6 +3332,7 @@ impl App {
                 });
                 self.host_editor = Some(HostEditor::new(host, true));
             }
+            Action::OpenImport => self.import.open(),
             Action::ImportSshConfig => {
                 let found = ssh_config_hosts();
                 let mut added = 0;
@@ -5037,6 +5043,7 @@ impl eframe::App for App {
         crate::ui::portscan::show(self, &ctx, &mut actions);
         crate::ui::net::show(self, &ctx, &mut actions);
         crate::ui::ops::show(self, &ctx, &mut actions);
+        crate::ui::import_ui::show(self, &ctx);
         crate::ui::containers_page::sheets(self, &ctx);
         crate::ui::xfer::windows(self, &ctx);
         crate::ui::edit::windows(self, &ctx);

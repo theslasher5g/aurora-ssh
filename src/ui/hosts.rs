@@ -428,6 +428,15 @@ fn empty_state(ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         }
                     });
                 }
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(t!("Du kommst von mRemoteNG, Royal TS oder RDM?"))
+                            .color(theme::text_dim()),
+                    );
+                    if theme::btn(ui, theme::Btn::Small, None, t!("Importieren")).clicked() {
+                        actions.push(Action::OpenImport);
+                    }
+                });
             });
     });
 }

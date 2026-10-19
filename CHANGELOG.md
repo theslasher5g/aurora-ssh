@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.0
+
+### Import
+- **Migration importer** (Settings -> General -> *Other connection manager*, or the empty host
+  list): open or drop an export of **mRemoteNG** (`confCons.xml`), **Royal TS / TSX** (Royal
+  JSON), **Remote Desktop Manager** (JSON, `.rdm` XML) or a **CSV** table. The preview shows the
+  folder tree (collapsed), counts per protocol, conflicts with existing hosts (skip / overwrite
+  / keep both), warnings, a checkbox per folder and entry, a search box, a target group (new
+  group named after source and date, an existing group, or top level) and an adjustable protocol
+  mapping. Folders become nested groups (at most 12 levels). A report lists what was imported
+  and why entries were skipped.
+- Passwords: encrypted ones (mRemoteNG, Royal, RDM) are never decrypted or imported and are
+  reported. Clear-text CSV passwords are stored in the vault (keychain) only after an explicit
+  switch, never in the host list.
+- Limits: 50 MB per file, 200,000 entries, XML without DTD/entity expansion, `.rtsz` archives
+  are not read (export "Royal JSON" instead).
+
 ## 0.8.1
 
 ### Servers
