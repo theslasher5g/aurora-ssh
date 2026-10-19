@@ -3613,6 +3613,7 @@ impl App {
         let state = crate::ui::chrome::state_pair(&t.state);
         let closed = matches!(t.state, ConnState::Closed(_));
         let mut toggle_snippets = false;
+        let snippets_open = t.show_snippets;
         crate::ui::chrome::session_header(
             ui,
             egui::Id::new(("term-bar", tab_id)),
@@ -3621,7 +3622,14 @@ impl App {
             &subtitle,
             state,
             |ui| {
-                if theme::icon_button(ui, "⚡", t!("Snippets ein-/ausblenden")).clicked() {
+                if theme::icon_toggle(
+                    ui,
+                    crate::ui::icons::Icon::Bolt,
+                    t!("Snippets ein-/ausblenden"),
+                    snippets_open,
+                )
+                .clicked()
+                {
                     toggle_snippets = true;
                 }
                 crate::ui::runbooks::header_button(ui, &mut self.ops, &runbooks, tab_id, actions);
