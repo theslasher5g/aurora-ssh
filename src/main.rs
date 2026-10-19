@@ -12,8 +12,11 @@ mod model;
 mod store;
 mod terminal;
 mod theme;
+mod themeimport_convert;
+mod themeimport_parse;
 mod ui;
 mod update;
+mod whatsnew_data;
 
 fn main() -> eframe::Result {
     env_logger::init();

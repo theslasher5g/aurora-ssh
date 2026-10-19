@@ -111,8 +111,9 @@ pub fn connect(
     Box::pin(async move {
         let config = Arc::new(client::Config {
             inactivity_timeout: None,
-            keepalive_interval: Some(Duration::from_secs(30)),
-            keepalive_max: 4,
+            // A dead link is noticed after about a minute (then Aurora can reconnect).
+            keepalive_interval: Some(Duration::from_secs(20)),
+            keepalive_max: 3,
             ..Default::default()
         });
         let mut session = match &p.jump {
@@ -132,12 +133,17 @@ pub fn connect(
                     client::connect(config, addr, handler),
                 )
                 .await
-                .map_err(|_| anyhow!(t!("Zeitüberschreitung – Host nicht erreichbar")))?
+                .map_err(|_| transient(t!("Zeitüberschreitung – Host nicht erreichbar")))?
                 .map_err(friendly_error)?
             }
             Some(jump) => {
                 let via = Arc::new(connect(jump, prompts.clone()).await.map_err(|e| {
-                    anyhow!("{}", t!("Jump-Host {}: {}", jump.host, format!("{e:#}")))
+                    let msg = t!("Jump-Host {}: {}", jump.host, format!("{e:#}"));
+                    if is_transient(&e) {
+                        transient(msg)
+                    } else {
+                        anyhow!("{}", msg)
+                    }
                 })?);
                 let channel = via
                     .channel_open_direct_tcpip(p.host.clone(), p.port as u32, "127.0.0.1", 0)
@@ -168,7 +174,7 @@ pub fn connect(
                     client::connect_stream(config, channel.into_stream(), handler),
                 )
                 .await
-                .map_err(|_| anyhow!(t!("Zeitüberschreitung über den Jump-Host")))?
+                .map_err(|_| transient(t!("Zeitüberschreitung über den Jump-Host")))?
                 .map_err(friendly_error)?
             }
         };
@@ -326,7 +332,54 @@ fn auth_hint(
 /// Turns low-level connection errors into short, actionable messages.
 pub fn friendly_error(e: anyhow::Error) -> anyhow::Error {
     let raw = format!("{e:#}");
-    anyhow!(friendly_text(&raw).unwrap_or(raw))
+    let retryable = is_transient(&e);
+    let msg = friendly_text(&raw).unwrap_or(raw);
+    if retryable {
+        transient(msg)
+    } else {
+        anyhow!(msg)
+    }
+}
+
+/// An error that a retry can fix (network, timeout, dropped link) – as opposed to a wrong
+/// password, a rejected host key or a protocol mismatch. Automatic reconnect keys on it.
+#[derive(Debug)]
+pub struct Transient(pub String);
+
+impl std::fmt::Display for Transient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Transient {}
+
+pub fn transient(msg: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(Transient(msg.into()))
+}
+
+/// True if a retry may succeed (see [`Transient`]).
+pub fn is_transient(e: &anyhow::Error) -> bool {
+    use russh::Error as E;
+    e.chain().any(|c| {
+        c.is::<Transient>()
+            || c.is::<std::io::Error>()
+            || c.is::<tokio::time::error::Elapsed>()
+            || c.downcast_ref::<E>().is_some_and(|r| {
+                matches!(
+                    r,
+                    E::Disconnect
+                        | E::HUP
+                        | E::ConnectionTimeout
+                        | E::KeepaliveTimeout
+                        | E::InactivityTimeout
+                        | E::SendError
+                        | E::RecvError
+                        | E::IO(_)
+                        | E::Elapsed(_)
+                )
+            })
+    })
 }
 
 pub fn friendly_text(raw: &str) -> Option<String> {
@@ -387,6 +440,11 @@ pub fn spawn_shell(
     let (tx, rx) = mpsc::unbounded_channel();
     rt.spawn(async move {
         let result = run_shell(&params, start, cols, rows, rx, &events, prompts).await;
+        if let Err(e) = &result
+            && is_transient(e)
+        {
+            events.send(TermEvent::Dropped);
+        }
         events.send(TermEvent::Closed(result.err().map(|e| format!("{e:#}"))));
     });
     tx
@@ -446,6 +504,8 @@ async fn run_shell(
     }
 
     let mut status = None;
+    // The channel ended without the server saying so: the connection broke.
+    let mut lost = false;
     'session: loop {
         let (mut reader, writer) = channel.split();
         let mut failed_fast = false;
@@ -480,12 +540,16 @@ async fn run_shell(
                             status = Some(exit_status);
                         }
                     }
-                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => break,
+                    None => {
+                        lost = true;
+                        break;
+                    }
                     _ => {}
                 },
             }
         }
-        if !failed_fast {
+        if !failed_fast || lost {
             break;
         }
         // tmux/screen could not start (or the login shell is not POSIX): plain shell.
@@ -502,6 +566,9 @@ async fn run_shell(
     let _ = handle
         .disconnect(Disconnect::ByApplication, "bye", "en")
         .await;
+    if lost {
+        return Err(transient(t!("Verbindung zum Server verloren")));
+    }
     match status {
         Some(code) => bail!("{}", t!("Beendet mit Code {}", code)),
         None => Ok(()),

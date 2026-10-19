@@ -75,6 +75,10 @@ pub struct TermTab {
     pub side_log: Option<SideLog>,
     /// Running recording of this session.
     pub recorder: Option<backend::record::Recorder>,
+    /// Automatic reconnect in progress (after an unexpected drop).
+    pub auto: Option<Box<crate::ui::reconnect_auto::Auto>>,
+    /// The backend reported a lost connection for the session that just ended.
+    pub dropped: bool,
 }
 
 /// State of the log panel at the right of a terminal.
@@ -529,6 +533,10 @@ pub struct App {
     /// Filter on the help page.
     pub help_filter: String,
     pub tour_step: usize,
+    /// "What's new" sheet after an update.
+    pub whatsnew: crate::ui::whatsnew_sheet::State,
+    /// Theme import card in the settings.
+    pub themes_ui: crate::ui::themeimport_ui::State,
     /// Terminal that gets the keyboard focus on the next frame.
     pub focus_term: Option<u64>,
     /// Split pane clicked; its terminal gets the focus unless the click focused a widget.
@@ -654,6 +662,8 @@ pub enum Action {
     Lock,
     SetTheme(String),
     Reconnect(u64),
+    /// Open the "What's new" sheet.
+    WhatsNew,
     /// Terminal with the user's shell on this PC.
     LocalTerminal,
     /// Open every host of a group, side by side.
@@ -719,6 +729,7 @@ impl App {
         };
         crate::i18n::set_language(&lib.settings.language);
         theme::install_fonts(&cc.egui_ctx);
+        crate::themeimport_convert::register(&lib.settings.custom_themes);
         theme::apply(&cc.egui_ctx, &lib.settings.theme);
         let (prompts_sink, prompts_rx) = Sink::new(cc.egui_ctx.clone());
         let (update_sink, update_rx) = Sink::new(cc.egui_ctx.clone());
@@ -754,6 +765,8 @@ impl App {
             last_activity: Instant::now(),
             help_filter: String::new(),
             tour_step: 0,
+            whatsnew: Default::default(),
+            themes_ui: Default::default(),
             focus_term: None,
             pane_press: None,
             failed: Default::default(),
@@ -1446,24 +1459,47 @@ impl App {
             persist,
             side_log: None,
             recorder: None,
+            auto: None,
+            dropped: false,
         }
     }
 
     pub fn reconnect(&mut self, tab_id: u64, ctx: &egui::Context) {
+        self.reconnect_inner(tab_id, ctx, false);
+    }
+
+    /// `auto`: an attempt of the automatic reconnect (keeps its state, no startup snippet on
+    /// PROD hosts or in persistent sessions, no separator line per attempt).
+    pub(crate) fn reconnect_inner(&mut self, tab_id: u64, ctx: &egui::Context, auto: bool) {
         let Some(idx) = self.tabs.iter().position(|t| t.id == tab_id) else {
             return;
         };
+        let env = self.tabs[idx].env;
         if let TabKind::Term(t) = &self.tabs[idx].kind {
-            let mut fresh =
-                self.spawn_term_with(t.spec.clone(), t.startup.clone(), t.persist.clone(), ctx);
+            let mut spec = t.spec.clone();
+            if let ConnectSpec::Ssh(p) = &mut spec {
+                // A key accepted in this run is in the library, not in the old params.
+                crate::ui::reconnect_auto::refresh_known(p, &self.lib.known_hosts);
+            }
+            let quiet = auto && (env == Env::Prod || t.persist.is_some());
+            let startup = if quiet { None } else { t.startup.clone() };
+            let mut fresh = self.spawn_term_with(spec, startup, t.persist.clone(), ctx);
             fresh.show_snippets = t.show_snippets;
             fresh.profile = t.profile.clone();
-            if !matches!(t.spec, ConnectSpec::Replay(_)) {
-                fresh.term.feed(b"\r\n\x1b[2m--- reconnect ---\x1b[0m\r\n");
-            }
             if let TabKind::Term(old) = &mut self.tabs[idx].kind {
                 fresh.side_log = old.side_log.take();
                 fresh.recorder = old.recorder.take();
+                if !matches!(old.spec, ConnectSpec::Replay(_)) {
+                    // Keep the scrollback; leave full-screen programs of the dead session.
+                    fresh.term = std::mem::replace(&mut old.term, Terminal::new(0));
+                    if !auto {
+                        fresh.term.reset_modes();
+                        fresh.term.feed(b"\r\n\x1b[2m--- reconnect ---\x1b[0m\r\n");
+                    }
+                }
+                if auto {
+                    fresh.auto = old.auto.take();
+                }
             }
             self.tabs[idx].kind = TabKind::Term(Box::new(fresh));
         } else if let TabKind::Vnc(t) = &mut self.tabs[idx].kind {
@@ -2455,6 +2491,10 @@ impl App {
         let mut notify = false;
         let mut learned: Vec<(Uuid, crate::model::HostFacts)> = Vec::new();
         let mut outcome: Vec<(Uuid, bool)> = Vec::new();
+        let (auto_global, auto_minutes) = (
+            self.lib.settings.auto_reconnect,
+            self.lib.settings.auto_reconnect_minutes,
+        );
         let record_all = self.lib.settings.record_sessions;
         let time_travel = self.lib.settings.time_travel;
         // Hosts in a maintenance window: no toasts, attention or "failed" LED.
@@ -2472,17 +2512,21 @@ impl App {
                         match ev {
                             TermEvent::Status(s) => {
                                 let a = theme::accent();
-                                t.term.feed(
-                                    format!(
-                                        "\x1b[38;2;{};{};{}m›\x1b[0m {s}\r\n",
-                                        a.r(),
-                                        a.g(),
-                                        a.b()
-                                    )
-                                    .as_bytes(),
-                                );
+                                // Automatic attempts keep the scrollback free of status lines.
+                                if t.auto.is_none() {
+                                    t.term.feed(
+                                        format!(
+                                            "\x1b[38;2;{};{};{}m›\x1b[0m {s}\r\n",
+                                            a.r(),
+                                            a.g(),
+                                            a.b()
+                                        )
+                                        .as_bytes(),
+                                    );
+                                }
                                 t.state = ConnState::Connecting(s);
                             }
+                            TermEvent::Dropped => t.dropped = true,
                             TermEvent::Facts(f) => {
                                 if let Some(h) = tab.host_id {
                                     learned.push((h, f));
@@ -2490,6 +2534,7 @@ impl App {
                             }
                             TermEvent::Connected => {
                                 t.state = ConnState::Connected;
+                                crate::ui::reconnect_auto::on_connected(t);
                                 if record_all
                                     && t.recorder.is_none()
                                     && matches!(t.spec, ConnectSpec::Ssh(_))
@@ -2546,6 +2591,29 @@ impl App {
                                 });
                             }
                             TermEvent::Closed(err) => {
+                                let mode = tab
+                                    .host_id
+                                    .and_then(|h| self.lib.host(h))
+                                    .map(|h| h.auto_reconnect)
+                                    .unwrap_or_default();
+                                let on = backend::reconnect_policy::enabled(auto_global, mode);
+                                if crate::ui::reconnect_auto::handle_closed(
+                                    t,
+                                    &err,
+                                    on,
+                                    auto_minutes,
+                                ) {
+                                    if !seen {
+                                        toasts.push((
+                                            t!(
+                                                "{}: Verbindung verloren – verbinde automatisch neu",
+                                                tab.title
+                                            ),
+                                            theme::amber(),
+                                        ));
+                                    }
+                                    continue;
+                                }
                                 let replay = matches!(t.spec, ConnectSpec::Replay(_));
                                 let msg = match &err {
                                     Some(e) => format!("\r\n\x1b[31m✖ {e}\x1b[0m\r\n"),
@@ -3052,6 +3120,7 @@ impl App {
                 self.palette.selected = 0;
             }
             Action::Reconnect(id) => self.reconnect(id, ctx),
+            Action::WhatsNew => crate::ui::whatsnew_sheet::open(self),
             Action::LocalTerminal => self.open_local_terminal(ctx),
             Action::SetTheme(id) => {
                 theme::apply(ctx, &id);
@@ -3554,6 +3623,9 @@ impl App {
         }
         if save_host {
             actions.push(Action::SaveQuickHost(tab_id));
+        }
+        if let Some(a) = t.auto.as_mut() {
+            crate::ui::reconnect_auto::banner(ui, tab_id, a);
         }
 
         if t.show_snippets {
@@ -4443,6 +4515,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.pump_events(&ctx);
+        self.tick_auto_reconnect(&ctx);
 
         if self.vault.is_none() {
             crate::ui::lock::show(self, ui);

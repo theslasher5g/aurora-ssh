@@ -29,6 +29,7 @@ mod ui_v063_sec;
 mod ui_v063_term;
 mod ui_v071;
 mod ui_v071_layout;
+mod ui_v072_comfort;
 mod ui_v072_logvars;
 mod ui_vnc;
 
@@ -59,6 +60,7 @@ const TABLES: &[&[(&str, &str)]] = &[
     ui_v071::T,
     ui_v071_layout::T,
     ui_v072_logvars::T,
+    ui_v072_comfort::T,
     ui_vnc::T,
 ];
 

@@ -111,8 +111,9 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         ("CMD", "Proxmox anzeigen", Action::Navigate(View::Proxmox)),
         ("CMD", "Einstellungen", Action::Navigate(View::Settings)),
         ("CMD", "Tresor sperren", Action::Lock),
+        ("CMD", "Was ist neu", Action::WhatsNew),
     ];
-    for t in crate::theme::THEMES {
+    for t in crate::theme::all_themes() {
         let title = format!("Theme: {}", t.name);
         if let Some(score) = fuzzy(&q, &title) {
             items.push(Item {

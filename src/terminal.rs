@@ -332,6 +332,17 @@ impl Terminal {
         (self.cols, self.rows)
     }
 
+    /// After the connection died: leave the alternate screen, show the cursor and switch the
+    /// mouse, bracketed paste and application cursor modes off.
+    pub fn reset_modes(&mut self) {
+        if self.parser.screen().alternate_screen() {
+            self.feed(b"\x1b[?1049l");
+        }
+        self.feed(
+            b"\x1b[?1l\x1b>\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[0m",
+        );
+    }
+
     pub fn feed(&mut self, bytes: &[u8]) {
         self.parser.process(bytes);
         if let Some(s) = self.search.as_mut() {
@@ -538,6 +549,7 @@ impl Terminal {
     pub fn show(&mut self, ui: &mut egui::Ui, id: egui::Id, view: TermView<'_>) -> TermOutput {
         let mut out = TermOutput::default();
         let pal = view.palette.unwrap_or_else(theme::palette);
+        let extras = theme::term_extras(&pal);
         let (term_bg, term_fg) = (pal.term_bg, pal.term_fg);
         let font = FontId::new(view.font_size * self.font_scale, view.family.clone());
         let (cw, ch) = ui.fonts_mut(|f| (f.glyph_width(&font, 'M'), f.row_height(&font)));
@@ -820,7 +832,16 @@ impl Terminal {
                     fg = fg.linear_multiply(0.6);
                 }
                 if sel {
-                    bg = view.accent.linear_multiply(0.35);
+                    match extras.1 {
+                        // The theme's own selection color; keep the text readable on it.
+                        Some(c) => {
+                            bg = c;
+                            if crate::themeimport_convert::contrast(fg, c) < 3.0 {
+                                fg = crate::themeimport_convert::ensure(fg, &[c], 4.5);
+                            }
+                        }
+                        None => bg = view.accent.linear_multiply(0.35),
+                    }
                 }
                 if bg != term_bg {
                     painter.rect_filled(run_rect, CornerRadius::ZERO, bg);
@@ -857,7 +878,13 @@ impl Terminal {
                 Vec2::new(cw, ch),
             );
             if focused {
-                painter.rect_filled(r, CornerRadius::same(2), view.accent.linear_multiply(0.75));
+                painter.rect_filled(
+                    r,
+                    CornerRadius::same(2),
+                    extras
+                        .0
+                        .unwrap_or_else(|| view.accent.linear_multiply(0.75)),
+                );
                 if let Some(c) = screen.cell(cur_row, cur_col).filter(|c| c.has_contents()) {
                     painter.text(
                         r.min,
@@ -871,7 +898,7 @@ impl Terminal {
                 painter.rect_stroke(
                     r,
                     CornerRadius::same(2),
-                    Stroke::new(1.0, view.accent),
+                    Stroke::new(1.0, extras.0.unwrap_or(view.accent)),
                     egui::StrokeKind::Inside,
                 );
             }

@@ -12,6 +12,7 @@ pub mod proxmox;
 pub mod rdp;
 pub mod rdp_embed;
 pub mod reach;
+pub mod reconnect_policy;
 pub mod record;
 pub mod route;
 pub mod runbook;
@@ -60,6 +61,8 @@ pub enum TermEvent {
     /// OS, uptime, disk and updates of the server, collected after login.
     Facts(crate::model::HostFacts),
     Closed(Option<String>),
+    /// The link broke (read error, keepalive timeout, reset) – sent right before `Closed`.
+    Dropped,
 }
 
 /// Server key verification request; answered by the user in a dialog.

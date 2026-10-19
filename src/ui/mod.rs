@@ -21,14 +21,17 @@ pub mod paste_guard;
 pub mod portscan;
 pub mod proxmox;
 pub mod rdp;
+pub mod reconnect_auto;
 pub mod route;
 pub mod runbooks;
 pub mod settings;
 pub mod sftp;
 pub mod snippets;
 pub mod sshca;
+pub mod themeimport_ui;
 pub mod timetravel;
 pub mod vnc;
+pub mod whatsnew_sheet;
 pub mod wol;
 
 /// Case-insensitive subsequence match; returns a score (higher is better).
