@@ -939,6 +939,9 @@ pub struct Library {
     /// Container page: marked/hidden container hosts and remembered namespaces.
     #[serde(default)]
     pub ctr: crate::backend::containers_parse::CtrPrefs,
+    /// Inventory detail data (services, ports, firewall, disks …) of each host.
+    #[serde(default)]
+    pub detail: HashMap<Uuid, crate::backend::inventory_detail::HostDetail>,
 }
 
 /// Network data Aurora remembers between runs.

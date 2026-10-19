@@ -27,6 +27,12 @@ pub struct InventorySettings {
     pub sort_col: String,
     pub sort_desc: bool,
     pub group_by_group: bool,
+    /// Columns that are off unless switched on (older settings files don't know them).
+    pub extra_cols: Vec<String>,
+    /// Last choices in the export dialog.
+    pub export: super::inventory_doc::ExportPrefs,
+    /// Commands that run on the hosts when the facts are refreshed.
+    pub info_snippets: Vec<super::inventory_info::InfoSnippet>,
 }
 
 impl Default for InventorySettings {
@@ -45,6 +51,9 @@ impl Default for InventorySettings {
             sort_col: "name".into(),
             sort_desc: false,
             group_by_group: false,
+            extra_cols: Vec::new(),
+            export: Default::default(),
+            info_snippets: Vec::new(),
         }
     }
 }
@@ -158,6 +167,9 @@ pub struct Row {
     pub tags: Vec<String>,
     pub warnings: Vec<Warning>,
     pub has_facts: bool,
+    /// Services in state failed (Windows: started automatically but stopped); `None` if
+    /// no service list was collected.
+    pub failed_services: Option<u32>,
 }
 
 impl Row {
@@ -326,6 +338,11 @@ pub fn rows(lib: &Library, now: DateTime<Utc>) -> Vec<Row> {
                 tags: h.tags.clone(),
                 warnings: warnings(f, s, now, collectable(h)),
                 has_facts: f.is_some(),
+                failed_services: lib
+                    .detail
+                    .get(&h.id)
+                    .filter(|d| d.services_avail == super::inventory_detail::Avail::Ok)
+                    .map(|d| d.failed_count()),
             }
         })
         .collect()
@@ -352,10 +369,11 @@ pub enum Col {
     FactsAge,
     Env,
     Tags,
+    Failed,
 }
 
 impl Col {
-    pub const ALL: [Col; 16] = [
+    pub const ALL: [Col; 17] = [
         Col::Name,
         Col::Group,
         Col::Address,
@@ -372,6 +390,7 @@ impl Col {
         Col::FactsAge,
         Col::Env,
         Col::Tags,
+        Col::Failed,
     ];
 
     /// Stable key (settings file, JSON export).
@@ -393,6 +412,7 @@ impl Col {
             Col::FactsAge => "facts_age",
             Col::Env => "environment",
             Col::Tags => "tags",
+            Col::Failed => "failed_services",
         }
     }
 
@@ -418,6 +438,7 @@ impl Col {
             Col::FactsAge => t!("Fakten-Alter"),
             Col::Env => t!("Umgebung"),
             Col::Tags => t!("Tags"),
+            Col::Failed => t!("Dienste mit Fehler"),
         }
     }
 
@@ -433,6 +454,7 @@ impl Col {
                 | Col::Ram
                 | Col::Load
                 | Col::FactsAge
+                | Col::Failed
         )
     }
 
@@ -455,6 +477,39 @@ impl Col {
             Col::FactsAge => 100.0,
             Col::Env => 90.0,
             Col::Tags => 140.0,
+            Col::Failed => 120.0,
+        }
+    }
+}
+
+/// Columns that are only visible when the user switched them on.
+pub fn opt_in(c: Col) -> bool {
+    c == Col::Failed
+}
+
+/// Whether the column is shown with these settings.
+pub fn col_visible(s: &InventorySettings, c: Col) -> bool {
+    if c == Col::Name {
+        true
+    } else if opt_in(c) {
+        s.extra_cols.iter().any(|k| k == c.key())
+    } else {
+        !s.hidden_cols.iter().any(|h| h == c.key())
+    }
+}
+
+/// Switches a column on or off.
+pub fn set_col(s: &mut InventorySettings, c: Col, on: bool) {
+    let key = c.key().to_string();
+    if opt_in(c) {
+        s.extra_cols.retain(|k| *k != key);
+        if on {
+            s.extra_cols.push(key);
+        }
+    } else {
+        s.hidden_cols.retain(|h| *h != key);
+        if !on {
+            s.hidden_cols.push(key);
         }
     }
 }
@@ -520,6 +575,7 @@ pub fn cell(r: &Row, c: Col, now: DateTime<Utc>) -> String {
             }
         }
         Col::Tags => r.tags.join(", "),
+        Col::Failed => r.failed_services.map(|n| n.to_string()).unwrap_or_default(),
     }
 }
 
@@ -586,6 +642,7 @@ pub fn sort_rows(rows: &mut [Row], col: Col, desc: bool, now: DateTime<Utc>) {
                 if desc { o.reverse() } else { o }
             }
             Col::Tags => text(&a.tags.join(","), &b.tags.join(","), desc),
+            Col::Failed => opt(a.failed_services, b.failed_services, desc),
         };
         o.then_with(|| natural_cmp(&a.name.to_lowercase(), &b.name.to_lowercase()))
     });
@@ -851,7 +908,31 @@ mod tests {
             tags: vec![],
             warnings: vec![],
             has_facts: false,
+            failed_services: None,
         }
+    }
+
+    #[test]
+    fn opt_in_column_and_old_settings() {
+        // A settings file from 0.8.0 knows neither the new column nor the export choices.
+        let s: InventorySettings =
+            serde_json::from_str(r#"{"disk_warn":80,"hidden_cols":["kernel"]}"#).unwrap();
+        assert!(col_visible(&s, Col::Os));
+        assert!(!col_visible(&s, Col::Kernel));
+        assert!(
+            !col_visible(&s, Col::Failed),
+            "new column is off by default"
+        );
+        assert_eq!(s.export.format, "md");
+        assert!(s.export.services && !s.export.notes);
+        let mut s = s;
+        set_col(&mut s, Col::Failed, true);
+        assert!(col_visible(&s, Col::Failed));
+        set_col(&mut s, Col::Failed, false);
+        assert!(!col_visible(&s, Col::Failed));
+        set_col(&mut s, Col::Os, false);
+        assert!(!col_visible(&s, Col::Os));
+        assert!(col_visible(&s, Col::Name));
     }
 
     #[test]

@@ -7,9 +7,11 @@ use egui::{Color32, CornerRadius, FontId, Pos2, Rect, RichText, Sense, Stroke, V
 use uuid::Uuid;
 
 use crate::app::Action;
+use crate::backend::inventory_doc::no_facts_reason;
 use crate::backend::inventory_rules::{Col, InventorySettings, Level, Row, cell};
 use crate::model::{Env, Protocol};
 use crate::theme;
+use crate::ui::inventory_page::InvAction;
 
 const ROW_H: f32 = 48.0;
 const HEAD_H: f32 = 34.0;
@@ -97,12 +99,42 @@ fn cell_color(r: &Row, c: Col, s: &InventorySettings, now: DateTime<Utc>) -> Col
         Col::Uptime => has(K::Uptime).map_or(theme::text(), |_| theme::amber()),
         Col::FactsAge => has(K::FactsStale).map_or(theme::text_dim(), |_| theme::amber()),
         Col::Os => has(K::Eol).map_or(theme::text(), |_| theme::red()),
+        Col::Failed => {
+            if r.failed_services.unwrap_or(0) > 0 {
+                theme::red()
+            } else {
+                theme::text_dim()
+            }
+        }
         Col::Name | Col::Env => theme::text(),
         _ => {
             let _ = (s, now);
             theme::text_dim()
         }
     }
+}
+
+/// Columns that only an SSH refresh can fill.
+fn is_fact_col(c: Col) -> bool {
+    matches!(
+        c,
+        Col::Os
+            | Col::Kernel
+            | Col::Uptime
+            | Col::Disk
+            | Col::Updates
+            | Col::SecUpdates
+            | Col::Cpu
+            | Col::Ram
+            | Col::Load
+            | Col::FactsAge
+            | Col::Failed
+    )
+}
+
+/// Hosts that can never have facts (RDP, VNC …) say so once instead of showing dashes.
+fn no_facts_row(r: &Row) -> bool {
+    !r.has_facts && r.protocol != Protocol::Ssh
 }
 
 fn can_files(r: &Row) -> bool {
@@ -273,10 +305,48 @@ fn table_row(
         );
     }
     let mut x = rect.left() + 34.0;
-    for (c, w) in cols.iter().zip(widths) {
-        let cell_rect = Rect::from_min_size(Pos2::new(x, rect.top()), Vec2::new(*w, ROW_H));
-        paint_cell(ui, &p, r, *c, cell_rect, s, now);
-        x += *w;
+    let merge = no_facts_row(r);
+    let mut i = 0;
+    while i < cols.len() {
+        if merge && is_fact_col(cols[i]) {
+            // One note over the whole run of fact columns.
+            let mut j = i;
+            let mut total = 0.0;
+            while j < cols.len() && is_fact_col(cols[j]) {
+                total += widths[j];
+                j += 1;
+            }
+            let note_rect = Rect::from_min_size(Pos2::new(x, rect.top()), Vec2::new(total, ROW_H));
+            let note = no_facts_reason(r.protocol);
+            let g = theme::truncated(
+                &p,
+                note.clone(),
+                theme::medium(12.0),
+                theme::text_dim(),
+                total - 10.0,
+            );
+            p.galley(
+                Pos2::new(
+                    note_rect.left() + 4.0,
+                    note_rect.center().y - g.size().y / 2.0,
+                ),
+                g,
+                theme::text_dim(),
+            );
+            ui.interact(
+                note_rect,
+                ui.id().with(("inv-nofacts", r.id)),
+                Sense::hover(),
+            )
+            .on_hover_text(note);
+            x += total;
+            i = j;
+            continue;
+        }
+        let cell_rect = Rect::from_min_size(Pos2::new(x, rect.top()), Vec2::new(widths[i], ROW_H));
+        paint_cell(ui, &p, r, cols[i], cell_rect, s, now);
+        x += widths[i];
+        i += 1;
     }
     // Checkbox
     {
@@ -347,9 +417,13 @@ fn table_row(
         .on_hover_text(warning_tip(r));
     }
     if resp.clicked() {
-        actions.push(Action::EditHost(r.id));
+        actions.push(Action::Inv(InvAction::Detail(r.id)));
     }
     resp.context_menu(|ui| {
+        if ui.button(t!("Details")).clicked() {
+            actions.push(Action::Inv(InvAction::Detail(r.id)));
+            ui.close();
+        }
         if ui.button(t!("Verbinden")).clicked() {
             actions.push(Action::Connect(r.id));
             ui.close();
@@ -532,8 +606,18 @@ fn cards(
                         .on_hover_text(warning_tip(r));
                     }
                 });
+                if no_facts_row(r) {
+                    ui.label(
+                        RichText::new(no_facts_reason(r.protocol))
+                            .size(12.5)
+                            .color(theme::text_dim()),
+                    );
+                }
                 let mut facts = Vec::new();
                 for c in cols {
+                    if no_facts_row(r) && is_fact_col(*c) {
+                        continue;
+                    }
                     if *c == Col::Name || *c == Col::Env {
                         continue;
                     }
@@ -566,6 +650,9 @@ fn cards(
                 ui.horizontal_wrapped(|ui| {
                     if theme::btn(ui, theme::Btn::SmallPrimary, None, t!("Verbinden")).clicked() {
                         actions.push(Action::Connect(r.id));
+                    }
+                    if theme::btn(ui, theme::Btn::Small, None, t!("Details")).clicked() {
+                        actions.push(Action::Inv(InvAction::Detail(r.id)));
                     }
                     if can_files(r)
                         && theme::btn(ui, theme::Btn::Small, None, t!("Dateien")).clicked()

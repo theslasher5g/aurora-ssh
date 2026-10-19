@@ -3474,6 +3474,7 @@ impl App {
                 self.lib.hosts.retain(|h| !ids.contains(&h.id));
                 for id in &ids {
                     self.lib.facts.remove(id);
+                    self.lib.detail.remove(id);
                 }
                 self.selected_hosts.clear();
                 self.save_library();

@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.8.1
+
+### Servers
+- **Inventory detail view:** click a host in the inventory table for a sheet with the tabs
+  *System* (OS, hardware, disks with usage bars, addresses, users, warnings), *Services*
+  (search, filter running/stopped/failed, failed ones highlighted), *Firewall* (ufw,
+  firewalld, nft or iptables; `sudo -n` is tried, "needs root" is shown if it is denied -
+  Aurora never asks for a password), *Ports* (`ss -tulpn`, fallback `netstat`) and *Info*.
+  Collected on *Refresh facts* and stored in the library (at most 500 services, 200 rules,
+  500 ports per host). Optional column *Services with errors* (off by default).
+- **Info snippets** (Settings -> General -> Inventory): your own commands (name, command,
+  optional host/group/tag filter, templates for installed packages, cron jobs, Docker
+  containers, open ports) that run over SSH on the matching hosts when facts are refreshed.
+  Text output only (64 KB, 30 s per command), shown in the *Info* tab and exported as one
+  chapter per snippet. This is also the way to collect data from Windows hosts with the
+  OpenSSH server: enter your own PowerShell commands.
+- Hosts without a command channel (RDP, VNC, Telnet, Serial) now say "RDP only - no facts
+  (needs SSH/OpenSSH)" instead of a row of dashes.
+- **System documentation export** (new export dialog): Markdown with one chapter per host
+  (overview, hardware, OS, network, disks, services, ports, firewall, info snippets, notes),
+  self-contained printable HTML with table of contents (light theme, page break per host),
+  JSON with all data, and the existing CSV. Header with date, host count and filter scope,
+  summary (warnings, pending updates, failed services) and a "Notes / not collected"
+  section. Choose what is included, drop IP addresses (replaced by a placeholder), notes are
+  off by default. All text is escaped.
+
 ## 0.8.0
 
 ### Files

@@ -14,6 +14,7 @@ pub enum Format {
     Csv,
     Markdown,
     Json,
+    Html,
 }
 
 impl Format {
@@ -22,6 +23,7 @@ impl Format {
             Format::Csv => "csv",
             Format::Markdown => "md",
             Format::Json => "json",
+            Format::Html => "html",
         }
     }
 }
@@ -138,6 +140,7 @@ pub fn json(rows: &[Row], cols: &[Col], now: DateTime<Utc>) -> String {
                     Col::Last => json!(r.last_connected.map(|t| t.to_rfc3339())),
                     Col::FactsAge => json!(r.facts_at.map(|t| t.to_rfc3339())),
                     Col::Tags => json!(r.tags),
+                    Col::Failed => json!(r.failed_services),
                     other => json!(cell(r, *other, now)),
                 };
                 let key = match c {
@@ -173,6 +176,8 @@ pub fn render(f: Format, rows: &[Row], cols: &[Col], now: DateTime<Utc>) -> Stri
         Format::Csv => csv(rows, cols, now),
         Format::Markdown => markdown(rows, cols, now),
         Format::Json => json(rows, cols, now),
+        // The HTML documentation is built by `inventory_doc`.
+        Format::Html => String::new(),
     }
 }
 
@@ -231,6 +236,7 @@ mod tests {
                 text: "disk".into(),
             }],
             has_facts: true,
+            failed_services: None,
         }
     }
 

@@ -10,7 +10,9 @@ use uuid::Uuid;
 
 use crate::app::{Action, App};
 use crate::backend::Sink;
+use crate::backend::inventory_doc as doc;
 use crate::backend::inventory_export::{self as export, Format};
+use crate::backend::inventory_info::InfoSnippet;
 use crate::backend::inventory_refresh::{self as refresh, Done};
 use crate::backend::inventory_rules::{self as rules, Col, Filter, InventorySettings, Row};
 use crate::backend::ssh::SshParams;
@@ -21,7 +23,7 @@ use crate::ui::icons::Icon;
 
 /// Refresh run in progress or finished.
 pub struct Run {
-    queue: VecDeque<(Uuid, SshParams)>,
+    queue: VecDeque<(Uuid, SshParams, Vec<InfoSnippet>)>,
     running: HashSet<Uuid>,
     total: usize,
     pub done: Vec<(Uuid, Result<(), String>)>,
@@ -32,6 +34,11 @@ pub struct Run {
 impl Run {
     pub fn active(&self) -> bool {
         !self.finished
+    }
+
+    /// The host is being refreshed or waits for it.
+    pub fn busy(&self, id: Uuid) -> bool {
+        self.running.contains(&id) || self.queue.iter().any(|(i, _, _)| *i == id)
     }
 }
 
@@ -46,6 +53,10 @@ pub struct InvState {
     pub run: Option<Run>,
     /// The result panel was dismissed.
     pub hide_result: bool,
+    /// Detail sheet of one host.
+    pub detail: crate::ui::inventory_detail::DetailState,
+    /// Export dialog is open.
+    pub export_open: bool,
 }
 
 impl InvState {
@@ -61,7 +72,11 @@ impl InvState {
 pub enum InvAction {
     /// Refresh the facts of these hosts (empty = all SSH hosts).
     Refresh(Vec<Uuid>),
-    Export(Format, bool),
+    /// Export with the saved choices; `true` = to the clipboard.
+    Export(bool),
+    ExportDialog,
+    /// Open the detail sheet of this host.
+    Detail(Uuid),
     OpenFolder,
 }
 
@@ -80,8 +95,9 @@ pub fn pump(app: &mut App, ctx: &egui::Context) {
     }
     for d in events {
         let result = match d.result {
-            Ok(f) => {
-                app.lib.facts.insert(d.host, f);
+            Ok(c) => {
+                app.lib.facts.insert(d.host, c.facts);
+                app.lib.detail.insert(d.host, c.detail);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -133,11 +149,18 @@ fn fill(app: &mut App, ctx: &egui::Context) {
         if run.running.len() >= refresh::PARALLEL {
             return;
         }
-        let Some((id, params)) = run.queue.pop_front() else {
+        let Some((id, params, snippets)) = run.queue.pop_front() else {
             return;
         };
         run.running.insert(id);
-        refresh::spawn(&app.rt, id, params, sink, app.prompts_sink.clone());
+        refresh::spawn(
+            &app.rt,
+            id,
+            params,
+            snippets,
+            sink,
+            app.prompts_sink.clone(),
+        );
     }
 }
 
@@ -170,7 +193,19 @@ fn start_refresh(app: &mut App, ctx: &egui::Context, ids: Vec<Uuid>) {
     };
     for h in hosts {
         match background_params(app, &h) {
-            Ok(p) => run.queue.push_back((h.id, p)),
+            Ok(p) => {
+                let chain = rules::group_path(&app.lib, &h).1;
+                let snippets = app
+                    .lib
+                    .settings
+                    .inventory
+                    .info_snippets
+                    .iter()
+                    .filter(|s| s.applies(&h, &chain))
+                    .cloned()
+                    .collect();
+                run.queue.push_back((h.id, p, snippets));
+            }
             Err(s) => run.skipped.push((h.id, s)),
         }
     }
@@ -192,10 +227,29 @@ fn start_refresh(app: &mut App, ctx: &egui::Context, ids: Vec<Uuid>) {
 pub fn apply(app: &mut App, a: InvAction, ctx: &egui::Context) {
     match a {
         InvAction::Refresh(ids) => start_refresh(app, ctx, ids),
-        InvAction::Export(f, to_clipboard) => {
+        InvAction::ExportDialog => app.inv.export_open = true,
+        InvAction::Detail(id) => app.inv.detail.open(id),
+        InvAction::Export(to_clipboard) => {
             let now = Utc::now();
             let (rows, cols) = visible(app, now);
-            let text = export::render(f, &rows, &cols, now);
+            let prefs = app.lib.settings.inventory.export.clone();
+            let f = match prefs.format.as_str() {
+                "csv" => Format::Csv,
+                "html" => Format::Html,
+                "json" => Format::Json,
+                _ => Format::Markdown,
+            };
+            let text = if f == Format::Csv || (prefs.table_only && f != Format::Html) {
+                export::render(f, &rows, &cols, now)
+            } else {
+                let hosts = doc::hosts_from(&app.lib, &rows);
+                let meta = doc::DocMeta {
+                    title: t!("Serverdokumentation").to_string(),
+                    created: now,
+                    scope: scope_text(app, rows.len()),
+                };
+                doc::render(f, &hosts, &(&prefs).into(), &meta)
+            };
             if to_clipboard {
                 ctx.copy_text(text);
                 app.toast(t!("In die Zwischenablage kopiert"), theme::green());
@@ -216,6 +270,28 @@ pub fn apply(app: &mut App, a: InvAction, ctx: &egui::Context) {
             #[cfg(all(unix, not(target_os = "macos")))]
             let _ = std::process::Command::new("xdg-open").arg(&d).spawn();
         }
+    }
+}
+
+/// The current filter in words, for the document header.
+fn scope_text(app: &App, hosts: usize) -> String {
+    let mut parts = Vec::new();
+    if !app.inv.text.trim().is_empty() {
+        parts.push(t!("Suche „{}“", app.inv.text.trim()));
+    }
+    if app.inv.only_problems {
+        parts.push(t!("nur Hosts mit Problemen").to_string());
+    }
+    if app.inv.only_prod {
+        parts.push(t!("nur PROD").to_string());
+    }
+    if let Some(g) = app.inv.group.and_then(|g| app.lib.group(g)) {
+        parts.push(t!("Gruppe „{}“", g.name));
+    }
+    if parts.is_empty() {
+        t!("Alle Hosts ({})", hosts)
+    } else {
+        t!("Gefiltert: {} ({} Hosts)", parts.join(", "), hosts)
     }
 }
 
@@ -241,7 +317,7 @@ pub fn columns(s: &InventorySettings) -> Vec<Col> {
     Col::ALL
         .iter()
         .copied()
-        .filter(|c| *c == Col::Name || !s.hidden_cols.iter().any(|h| h == c.key()))
+        .filter(|c| rules::col_visible(s, *c))
         .collect()
 }
 
@@ -289,7 +365,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         |ui| theme::page_title(ui, t!("Inventar"), Some(rows.len())),
         |_| {},
         |ui, bar| {
-            export_menu(ui, bar.compact, actions);
+            export_button(ui, bar.compact, actions);
             let label = if bar.compact {
                 String::new()
             } else if sel.is_empty() {
@@ -362,44 +438,136 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         app.lib.settings.inventory = settings;
         app.save_library();
     }
+    export_dialog(app, ui.ctx(), actions);
+    crate::ui::inventory_detail::show(app, ui.ctx(), actions);
 }
 
-fn export_menu(ui: &mut egui::Ui, compact: bool, actions: &mut Vec<Action>) {
+fn export_button(ui: &mut egui::Ui, compact: bool, actions: &mut Vec<Action>) {
     let label = if compact { "" } else { t!("Export") };
-    let r = theme::btn(ui, theme::Btn::Normal, Some(Icon::Download), label)
-        .on_hover_text(t!("Die gefilterte Tabelle exportieren (ohne Zugangsdaten)"));
-    egui::Popup::menu(&r).show(|ui| {
-        ui.set_min_width(240.0);
-        for (f, name) in [
-            (Format::Csv, "CSV"),
-            (Format::Markdown, "Markdown"),
-            (Format::Json, "JSON"),
-        ] {
-            if ui
-                .button(t!("{} in Dokumente/Aurora speichern", name))
-                .clicked()
+    if theme::btn(ui, theme::Btn::Normal, Some(Icon::Download), label)
+        .on_hover_text(t!(
+            "Inventar als CSV, Markdown, HTML oder JSON exportieren (ohne Zugangsdaten)"
+        ))
+        .clicked()
+    {
+        actions.push(Action::Inv(InvAction::ExportDialog));
+    }
+}
+
+/// Export dialog: format and what goes into the file.
+fn export_dialog(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
+    if !app.inv.export_open {
+        return;
+    }
+    let mut prefs = app.lib.settings.inventory.export.clone();
+    let before = prefs.clone();
+    let hosts = visible(app, Utc::now()).0.len();
+    let scope = scope_text(app, hosts);
+    let formats = [
+        ("csv", "CSV"),
+        ("md", "Markdown"),
+        ("html", "HTML"),
+        ("json", "JSON"),
+    ];
+    let (act, dismissed) = theme::sheet(
+        ctx,
+        egui::Id::new("inv-export"),
+        540.0,
+        t!("Inventar exportieren"),
+        |ui| {
+            let labels: Vec<&str> = formats.iter().map(|(_, n)| *n).collect();
+            let cur = formats
+                .iter()
+                .position(|(k, _)| *k == prefs.format)
+                .unwrap_or(1);
+            if let Some(i) = theme::segmented(ui, &labels, cur) {
+                prefs.format = formats[i].0.to_string();
+            }
+            let blurb = match prefs.format.as_str() {
+                "csv" => t!("Tabelle mit den Spalten der Ansicht, für Excel und Co."),
+                "html" => t!(
+                    "Eine Datei zum Drucken oder als PDF speichern: Inhaltsverzeichnis, Kapitel je Host, helles Layout."
+                ),
+                "json" => t!("Alle gesammelten Daten maschinenlesbar."),
+                _ => t!(
+                    "Systemdokumentation: ein Kapitel je Host mit Hardware, Betriebssystem, Netzwerk, Festplatten, Diensten, Ports und Firewall."
+                ),
+            };
+            ui.add(
+                egui::Label::new(RichText::new(blurb).size(12.5).color(theme::text_dim())).wrap(),
+            );
+            ui.add(
+                egui::Label::new(
+                    RichText::new(t!("Umfang: {}", scope))
+                        .size(12.5)
+                        .color(theme::text_dim()),
+                )
+                .wrap(),
+            );
+            if matches!(prefs.format.as_str(), "md" | "json") {
+                ui.checkbox(
+                    &mut prefs.table_only,
+                    t!("Nur Tabelle (Spalten der Ansicht, ohne Details)"),
+                );
+            }
+            let detailed = prefs.format != "csv"
+                && !(prefs.table_only && matches!(prefs.format.as_str(), "md" | "json"));
+            ui.add_enabled_ui(detailed, |ui| {
+                ui.add_space(4.0);
+                theme::section_title(ui, t!("Enthalten"));
+                ui.checkbox(&mut prefs.services, t!("Dienste"));
+                ui.checkbox(&mut prefs.ports, t!("Offene Ports"));
+                ui.checkbox(&mut prefs.firewall, t!("Firewall-Regeln"));
+                ui.checkbox(&mut prefs.info, t!("Info-Snippets (eigene Befehle)"));
+                ui.checkbox(
+                    &mut prefs.ips,
+                    t!("IP-Adressen (Host, Schnittstellen, Ports, Regeln)"),
+                )
+                .on_hover_text(t!(
+                    "Aus: Adressen fehlen oder werden durch ‹IP› ersetzt – gut zum Weitergeben"
+                ));
+                ui.checkbox(&mut prefs.notes, t!("Notizen der Hosts"))
+                    .on_hover_text(t!(
+                        "Notizen können sensible Hinweise enthalten – deshalb standardmäßig aus"
+                    ));
+            });
+        },
+        |ui, _| {
+            let mut act = None;
+            if theme::btn(ui, theme::Btn::Normal, None, t!("Abbrechen")).clicked() {
+                act = Some(0);
+            }
+            if theme::btn(
+                ui,
+                theme::Btn::Primary,
+                Some(Icon::Download),
+                t!("Speichern"),
+            )
+            .clicked()
             {
-                actions.push(Action::Inv(InvAction::Export(f, false)));
-                ui.close();
+                act = Some(1);
             }
-        }
-        ui.separator();
-        for (f, name) in [
-            (Format::Csv, "CSV"),
-            (Format::Markdown, "Markdown"),
-            (Format::Json, "JSON"),
-        ] {
-            if ui.button(t!("{} kopieren", name)).clicked() {
-                actions.push(Action::Inv(InvAction::Export(f, true)));
-                ui.close();
+            if theme::btn(ui, theme::Btn::Normal, None, t!("Kopieren")).clicked() {
+                act = Some(2);
             }
-        }
-        ui.separator();
-        if ui.button(t!("Export-Ordner öffnen")).clicked() {
-            actions.push(Action::Inv(InvAction::OpenFolder));
-            ui.close();
-        }
-    });
+            if theme::btn(ui, theme::Btn::Link, None, t!("Ordner öffnen")).clicked() {
+                actions.push(Action::Inv(InvAction::OpenFolder));
+            }
+            act
+        },
+    );
+    if prefs != before {
+        app.lib.settings.inventory.export = prefs;
+        app.save_library();
+    }
+    match act {
+        Some(1) => actions.push(Action::Inv(InvAction::Export(false))),
+        Some(2) => actions.push(Action::Inv(InvAction::Export(true))),
+        _ => {}
+    }
+    if dismissed || act.is_some() {
+        app.inv.export_open = false;
+    }
 }
 
 /// One summary tile; returns the click.
@@ -596,20 +764,18 @@ fn filter_bar(
         let cols = theme::btn(ui, theme::Btn::Small, Some(Icon::Table), t!("Spalten"));
         egui::Popup::menu(&cols).show(|ui| {
             for c in Col::ALL {
-                let mut on = c == Col::Name || !s.hidden_cols.iter().any(|h| h == c.key());
+                let mut on = rules::col_visible(s, c);
                 if ui
                     .add_enabled(c != Col::Name, egui::Checkbox::new(&mut on, c.label()))
                     .changed()
                 {
-                    s.hidden_cols.retain(|h| h != c.key());
-                    if !on {
-                        s.hidden_cols.push(c.key().to_string());
-                    }
+                    rules::set_col(s, c, on);
                 }
             }
             ui.separator();
             if ui.button(t!("Standard")).clicked() {
                 s.hidden_cols = InventorySettings::default().hidden_cols;
+                s.extra_cols.clear();
             }
         });
     });
@@ -792,6 +958,148 @@ pub fn settings_card(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
                 *changed |= theme::toggle(ui, &mut s.eol_check).changed();
             },
         );
+    });
+    ui.add_space(22.0);
+    snippets_card(app, ui, changed);
+}
+
+/// Info snippets: own commands that run on the hosts when the facts are refreshed.
+fn snippets_card(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
+    ui.horizontal(|ui| {
+        ui.add_space(18.0);
+        theme::section_title(ui, t!("Info-Snippets"));
+    });
+    ui.add_space(2.0);
+    let groups: Vec<(Uuid, String)> = app
+        .lib
+        .groups
+        .iter()
+        .map(|g| {
+            let h = crate::model::Host {
+                group_id: Some(g.id),
+                ..Default::default()
+            };
+            (g.id, rules::group_path(&app.lib, &h).0)
+        })
+        .collect();
+    let hosts: Vec<(Uuid, String)> = app
+        .lib
+        .hosts
+        .iter()
+        .filter(|h| h.protocol == Protocol::Ssh)
+        .map(|h| (h.id, h.display_name().to_string()))
+        .collect();
+    let list = &mut app.lib.settings.inventory.info_snippets;
+    theme::card_frame().show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.add(
+            egui::Label::new(
+                RichText::new(t!(
+                    "Eigene Befehle, die bei „Fakten aktualisieren“ per SSH auf den passenden Hosts laufen. Die Textausgabe (höchstens 64 KB, 30 s) wird beim Host gespeichert, im Detail-Tab „Info“ gezeigt und in Markdown/HTML/JSON exportiert – für alles, was die eingebauten Fakten nicht abdecken (auch Windows mit OpenSSH: eigene PowerShell-Befehle). Keine Passwörter in Befehle schreiben: sie stehen im Klartext in der Bibliothek."
+                ))
+                .size(12.5)
+                .color(theme::text_dim()),
+            )
+            .wrap(),
+        );
+        let mut remove = None;
+        for (i, s) in list.iter_mut().enumerate() {
+            ui.add_space(8.0);
+            theme::card_frame().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    *changed |= ui.checkbox(&mut s.enabled, "").changed();
+                    *changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut s.name)
+                                .hint_text(t!("Name"))
+                                .desired_width((ui.available_width() - 44.0).clamp(80.0, 280.0)),
+                        )
+                        .changed();
+                    if theme::icon_btn(ui, Icon::Trash, t!("Löschen")).clicked() {
+                        remove = Some(i);
+                    }
+                });
+                *changed |= ui
+                    .add(
+                        egui::TextEdit::multiline(&mut s.command)
+                            .hint_text(t!("Befehl, z. B. docker ps -a"))
+                            .font(egui::TextStyle::Monospace)
+                            .desired_rows(2)
+                            .desired_width(f32::INFINITY),
+                    )
+                    .changed();
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new(t!("Nur auf:"))
+                            .size(12.5)
+                            .color(theme::text_dim()),
+                    );
+                    let cur = s
+                        .group
+                        .and_then(|g| groups.iter().find(|(id, _)| *id == g))
+                        .map(|(_, n)| n.clone())
+                        .unwrap_or_else(|| t!("Alle Gruppen").to_string());
+                    egui::ComboBox::from_id_salt(("inv-info-group", i))
+                        .selected_text(cur)
+                        .width(150.0)
+                        .show_ui(ui, |ui| {
+                            *changed |= ui.selectable_value(&mut s.group, None, t!("Alle Gruppen")).changed();
+                            for (id, n) in &groups {
+                                *changed |= ui.selectable_value(&mut s.group, Some(*id), n).changed();
+                            }
+                        });
+                    let cur = s
+                        .host
+                        .and_then(|g| hosts.iter().find(|(id, _)| *id == g))
+                        .map(|(_, n)| n.clone())
+                        .unwrap_or_else(|| t!("Alle Hosts").to_string());
+                    egui::ComboBox::from_id_salt(("inv-info-host", i))
+                        .selected_text(cur)
+                        .width(150.0)
+                        .show_ui(ui, |ui| {
+                            *changed |= ui.selectable_value(&mut s.host, None, t!("Alle Hosts")).changed();
+                            for (id, n) in &hosts {
+                                *changed |= ui.selectable_value(&mut s.host, Some(*id), n).changed();
+                            }
+                        });
+                    *changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut s.tag)
+                                .hint_text(t!("Tag"))
+                                .desired_width(90.0),
+                        )
+                        .changed();
+                });
+            });
+        }
+        if let Some(i) = remove {
+            list.remove(i);
+            *changed = true;
+        }
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            if theme::btn(ui, theme::Btn::Small, Some(Icon::Plus), t!("Info-Snippet")).clicked()
+                && list.len() < crate::backend::inventory_info::MAX_SNIPPETS
+            {
+                list.push(InfoSnippet::default());
+                *changed = true;
+            }
+            let r = theme::btn(ui, theme::Btn::Small, None, t!("Vorlage hinzufügen"));
+            egui::Popup::menu(&r).show(|ui| {
+                for (name, cmd) in crate::backend::inventory_info::presets() {
+                    if ui.button(name).clicked() {
+                        list.push(InfoSnippet {
+                            name: name.to_string(),
+                            command: cmd.to_string(),
+                            ..Default::default()
+                        });
+                        *changed = true;
+                        ui.close();
+                    }
+                }
+            });
+        });
     });
     ui.add_space(22.0);
 }
