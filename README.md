@@ -51,6 +51,11 @@ What's new in each version: [CHANGELOG.md](CHANGELOG.md) · planned: [ROADMAP.md
 | **Maintenance & diagnostics** | Maintenance windows per host or group mute alerts and mark the sessions; one-click diagnostics bundle (`.tar.gz`, optional masking of personal data) |
 | **SSH certificates** | Aurora as a small SSH CA: log in with a fresh certificate valid for 1–24 h instead of stored keys. Changed server keys are double-checked against SSHFP (DNS) and the jump host |
 | **Routes & wake-up** | Chains of up to 4 jump hosts; if a host can't be reached directly Aurora finds a working route through your hosts · **Wake-on-LAN** with "wake up and connect" · **certificate radar** warns before TLS certificates of your hosts expire |
+| **Container page & inventory** | Sidebar pages: **Docker / Podman / Kubernetes** on this PC and over SSH (state, CPU/RAM, compose groups, pod warnings, actions, shell, logs) and a **server inventory** table (OS, kernel, uptime, disk, updates, security updates, warnings with thresholds, CSV/Markdown/JSON export) |
+| **Command blocks & markers** | Every command and its output as a block (exit-code mark, copy, rerun, collapse, `Ctrl+↑/↓` to jump) via OSC 133 shell integration; **session markers** with notes, full-text search over all recordings, session history, Markdown export |
+| **Reconnect** | After a connection loss or standby Aurora reconnects by itself (backoff, banner, tmux re-attach), switchable per host |
+| **Password managers** | Bitwarden, 1Password, KeePassXC and Proton Pass as credential source (only a reference is stored; fetched right before connecting, memory only) · *Choose from keychain* in the password prompt |
+| **Custom themes** | Import colour schemes (iTerm2, Windows Terminal, base16, Alacritty, Kitty/Ghostty) – the whole app follows them · a *What is new* sheet after every update |
 | **Port scan** | Per host: TCP scan from this PC (well-known, 1–1024, all or a custom list) or the ports listening on the server (also localhost-only services); open a web port in the browser or tunnel to it with one click |
 | **Network scan** | Finds SSH/RDP devices in the local network (with an OS hint from the SSH banner) and adds them |
 | **SSH key setup** | Generates a key, installs it on the server, verifies the login – no more passwords |

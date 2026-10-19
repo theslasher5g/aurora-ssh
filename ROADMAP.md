@@ -23,7 +23,7 @@ clipboard channel (see CHANGELOG). Still open:
 | Idea | What it gives you | Effort |
 |---|---|---|
 | **Run on many hosts** | Run a command or snippet on a whole group in the background and see a result table (exit code, output per host) | medium |
-| **Live host stats** | Small CPU/RAM/disk graph per host in the list and a detail panel, from the facts Aurora already collects | medium |
+| **Live host stats** | Small CPU/RAM/disk graph per host in the list and a detail panel (the inventory page shows the latest values only) | medium |
 | **Hardware keys & agent** | Use the system SSH agent and FIDO2 keys (YubiKey) | medium |
 | **Encrypted sync** | Keep hosts, snippets and keys in sync between PCs via WebDAV, S3 or a Git repository (end-to-end encrypted, like the export) | large |
 | **Log alerts** | Notify when a followed log prints an error pattern while the session is in the background | small |

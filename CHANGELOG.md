@@ -1,8 +1,40 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 
-### New
+### Files
+- **Built-in editor:** double-click a server (or local) file to edit it in an Aurora tab –
+  line numbers, syntax highlighting (shell, Python, JSON, YAML, TOML/INI, nginx/Apache,
+  Markdown, Rust, JavaScript, HTML, Dockerfile, SQL, systemd, logs), find/replace, go to line,
+  LF/CRLF/BOM/final newline preserved, conflict check on save, unsaved marker, read-only
+  preview for large or binary files. *Open file…* from any SSH terminal. The external editor
+  stays available (Settings → *Standard editor*).
+- **Transfer queue:** all copies go through one queue with a panel (speed, ETA, pause, resume,
+  cancel, retry), parallel limit, bandwidth limit, optional SHA-256 check, overwrite policy,
+  resume of interrupted transfers (`.aurora-part`, also after a restart).
+
+### Terminal & sessions
+- **Command blocks**, **session markers and history** (see below), **automatic reconnect**
+  after connection loss or standby (backoff, banner, tmux re-attach, per-host override),
+  **log commands with `{{variables}}`** (asked at start, recent values remembered).
+- The terminal now answers device queries (device attributes, cursor position, version), so
+  fish no longer waits ten seconds at start.
+
+### Servers
+- **Container page** (sidebar): Docker, Podman and Kubernetes on this PC and over SSH – state,
+  CPU/RAM, ports, compose groups, pod warnings, start/stop/restart/remove, shell, logs,
+  inspect, rollout restart.
+- **Server inventory** (sidebar): table of all hosts with OS, kernel, uptime, disk, updates,
+  security updates, CPUs, RAM; warning rules with thresholds, end-of-life table, background
+  refresh of facts, export as CSV/Markdown/JSON.
+
+### Quality of life
+- **Password managers** and the *Choose from keychain* picker in the password prompt (below).
+- **What is new** sheet after an update (also in Help and the palette).
+- **Custom themes:** import iTerm2, Windows Terminal, base16, Alacritty and Kitty/Ghostty
+  colour schemes; the whole app follows the scheme.
+
+### Details
 - **Password managers:** take passwords (and SSH keys for identities) from Bitwarden (`bw`),
   1Password (`op`), KeePassXC (`keepassxc-cli`) or Proton Pass (`pass-cli`) instead of the
   Aurora vault. Settings -> Security -> Password managers; hosts and identities pick an item
