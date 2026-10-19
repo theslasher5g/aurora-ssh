@@ -29,6 +29,7 @@ mod ui_v063_sec;
 mod ui_v063_term;
 mod ui_v071;
 mod ui_v071_layout;
+mod ui_v072_files;
 mod ui_vnc;
 
 static ENGLISH: AtomicBool = AtomicBool::new(false);
@@ -57,6 +58,7 @@ const TABLES: &[&[(&str, &str)]] = &[
     ui_v063_ops::T,
     ui_v071::T,
     ui_v071_layout::T,
+    ui_v072_files::T,
     ui_vnc::T,
 ];
 

@@ -10,7 +10,8 @@ use egui::{Color32, CornerRadius, Margin, RichText, Sense, Vec2};
 use uuid::Uuid;
 
 use crate::app::{
-    Action, App, ConnState, EditFile, FilePane, FsDialog, RemoteConn, SftpTab, TabKind, Transfer,
+    Action, App, ConnState, EditFile, FilePane, FsDialog, RemoteConn, SftpTab, Tab, TabKind,
+    Transfer,
 };
 use crate::backend::sftp::{Entry, SftpCmd, SftpEvent, join, normalize_remote, parent};
 use crate::backend::ssh::SshParams;
@@ -56,14 +57,13 @@ pub fn spawn_conn(
     prompts: Sink<HostKeyPrompt>,
 ) -> RemoteConn {
     let (sink, rx) = Sink::new(ctx.clone());
-    let tx = crate::backend::sftp::spawn(rt, params.clone(), sink.clone(), prompts);
+    let tx = crate::backend::sftp::spawn(rt, params.clone(), sink, prompts);
     RemoteConn {
         host_id,
         label,
         params,
         tx,
         rx,
-        sink,
         state: ConnState::Connecting(t!("Verbinde…").into()),
         session: None,
     }
@@ -161,7 +161,7 @@ impl FilePane {
             .unwrap_or(t!("Lokal"))
     }
 
-    fn join(&self, name: &str) -> String {
+    pub(crate) fn join(&self, name: &str) -> String {
         if self.remote.is_some() {
             join(&self.path, name)
         } else {
@@ -169,13 +169,13 @@ impl FilePane {
         }
     }
 
-    fn connected(&self) -> bool {
+    pub(crate) fn connected(&self) -> bool {
         self.remote
             .as_ref()
             .is_none_or(|r| matches!(r.state, ConnState::Connected))
     }
 
-    fn refresh(&mut self) {
+    pub(crate) fn refresh(&mut self) {
         match &self.remote {
             Some(r) => {
                 let _ = r.tx.send(SftpCmd::List(self.path.clone()));
@@ -184,7 +184,7 @@ impl FilePane {
         }
     }
 
-    fn navigate(&mut self, target: String) {
+    pub(crate) fn navigate(&mut self, target: String) {
         match &self.remote {
             Some(r) => {
                 let _ = r.tx.send(SftpCmd::List(target));
@@ -288,6 +288,7 @@ pub fn handle_event(
         SftpEvent::Error(e) => {
             pane.error = Some(crate::backend::ssh::friendly_text(&e).unwrap_or(e));
         }
+        SftpEvent::Edit(_) => {}
         SftpEvent::Closed(err) => {
             if let Some(e) = &err {
                 toasts.push((format!("{}: {e}", r.label), theme::red()));
@@ -298,69 +299,152 @@ pub fn handle_event(
     }
 }
 
-/// Starts copying `name` from pane `from` into the current folder of the other pane.
-fn start_transfer(
-    t: &mut SftpTab,
-    rt: &tokio::runtime::Handle,
-    from: usize,
-    name: &str,
-    id: u64,
-) -> Result<(), String> {
+/// The queue request for copying `name` from pane `from` into the other pane's folder.
+fn make_req(t: &SftpTab, from: usize, name: &str) -> Result<crate::ui::xfer::Req, String> {
+    use crate::backend::xfer::Loc;
     let to = 1 - from;
-    let src = t.panes[from].join(name);
-    let dst_dir = t.panes[to].path.clone();
-    let (a, b) = (&t.panes[from].remote, &t.panes[to].remote);
-    match (a, b) {
-        (None, None) => {
-            return Err(
-                t!("Beide Seiten sind lokal – wähle links oder rechts einen Server.").into(),
-            );
-        }
-        (None, Some(r)) => {
-            let _ = r.tx.send(SftpCmd::Upload {
-                local: PathBuf::from(&src),
-                remote_dir: dst_dir,
-                id,
-            });
-        }
-        (Some(r), None) => {
-            if dst_dir.is_empty() {
-                return Err(t!("Bitte zuerst ein Laufwerk öffnen.").into());
+    let (a, b) = (&t.panes[from], &t.panes[to]);
+    if a.remote.is_none() && b.remote.is_none() {
+        return Err(t!("Beide Seiten sind lokal – wähle links oder rechts einen Server.").into());
+    }
+    if b.remote.is_none() && b.path.is_empty() {
+        return Err(t!("Bitte zuerst ein Laufwerk öffnen.").into());
+    }
+    let loc = |p: &FilePane| match p.remote.as_ref().and_then(|r| r.host_id) {
+        Some(h) => Loc::Host(h),
+        None => Loc::Local,
+    };
+    let entry = a.entries.iter().find(|e| e.name == name);
+    Ok(crate::ui::xfer::Req {
+        from: loc(a),
+        to: loc(b),
+        from_label: a.label().to_string(),
+        to_label: b.label().to_string(),
+        src_root: a.join(name),
+        dst_dir: b.path.clone(),
+        name: name.to_string(),
+        is_dir: entry.is_some_and(|e| e.is_dir),
+        size: entry.map(|e| e.size).unwrap_or(0),
+        mtime: entry.and_then(|e| e.modified).and_then(|m| {
+            m.duration_since(SystemTime::UNIX_EPOCH)
+                .ok()
+                .map(|d| d.as_secs() as i64)
+        }),
+        exists: b.entries.iter().any(|e| e.name == name),
+    })
+}
+
+/// Refreshes the panes that show `loc` (after a transfer into it).
+pub fn refresh_panes_for(app: &mut App, loc: crate::backend::xfer::Loc) {
+    use crate::backend::xfer::Loc;
+    for tab in &mut app.tabs {
+        if let TabKind::Sftp(t) = &mut tab.kind {
+            for p in t.panes.iter_mut() {
+                let hit = match (&p.remote, loc) {
+                    (None, Loc::Local) => true,
+                    (Some(r), Loc::Host(h)) => r.host_id == Some(h) && p.connected(),
+                    _ => false,
+                };
+                if hit {
+                    p.refresh();
+                }
             }
-            let _ = r.tx.send(SftpCmd::Download {
-                remote: src,
-                local_dir: PathBuf::from(dst_dir),
-                id,
-            });
-        }
-        (Some(ra), Some(rb)) => {
-            let (Some(sa), Some(sb)) = (&ra.session, &rb.session) else {
-                return Err(t!("Beide Server müssen verbunden sein.").into());
-            };
-            let (sa, sb, sink) = (sa.0.clone(), sb.0.clone(), rb.sink.clone());
-            rt.spawn(async move {
-                let r = crate::backend::sftp::relay(sa, src, sb, dst_dir, id, &sink).await;
-                sink.send(SftpEvent::TransferDone {
-                    id,
-                    error: r.err().map(|e| format!("{e:#}")),
-                });
-                sink.send(SftpEvent::Changed);
-            });
         }
     }
-    t.transfers.push(Transfer {
-        id,
-        name: name.to_string(),
-        current: String::new(),
-        route: format!("{} → {}", t.panes[from].label(), t.panes[to].label()),
-        dst: to,
-        upload: to == 1,
-        done: 0,
-        total: 0,
-        finished: false,
-        error: None,
+}
+
+/// Shows a folder of a server in a file tab (opens one if needed).
+pub fn show_remote_folder(app: &mut App, host: Uuid, dir: String, ctx: &egui::Context) {
+    let mut found = None;
+    for tab in &mut app.tabs {
+        if let TabKind::Sftp(t) = &mut tab.kind {
+            for p in t.panes.iter_mut() {
+                if p.remote.as_ref().is_some_and(|r| {
+                    r.host_id == Some(host) && matches!(r.state, ConnState::Connected)
+                }) {
+                    p.navigate(dir.clone());
+                    found = Some(tab.id);
+                    break;
+                }
+            }
+        }
+        if found.is_some() {
+            break;
+        }
+    }
+    if let Some(id) = found {
+        app.active = Some(id);
+        return;
+    }
+    app.open_files(None, Some(host), ctx);
+    if let Some(t) = app.tabs.last_mut()
+        && let TabKind::Sftp(t) = &mut t.kind
+    {
+        t.start_dir[1] = Some(dir);
+    }
+}
+
+/// Opens a server file in the external editor from an editor tab: downloads it into a
+/// private temp folder in a new file tab; saved changes are uploaded back.
+pub fn external_edit_remote(
+    app: &mut App,
+    params: SshParams,
+    label: String,
+    host: Option<Uuid>,
+    path: String,
+    ctx: &egui::Context,
+) {
+    let name = path.rsplit('/').next().unwrap_or_default().to_string();
+    let Some(safe) = crate::backend::sftp::safe_local_name(&name).map(str::to_string) else {
+        app.toast(t!("Unsicherer Dateiname"), theme::red());
+        return;
+    };
+    if app.lib.settings.editor.trim().is_empty() && runs_when_opened(&name) {
+        app.toast(
+            t!("„{}“ ist ausführbar – zum Bearbeiten erst einen Editor in den Einstellungen festlegen", name),
+            theme::amber(),
+        );
+        return;
+    }
+    let dir = match crate::store::private_temp_dir("aurora-edit") {
+        Ok(d) => d,
+        Err(e) => {
+            app.toast(t!("Temp-Ordner: {}", e), theme::red());
+            return;
+        }
+    };
+    app.open_files(None, None, ctx);
+    let Some(tab) = app.tabs.last_mut() else {
+        return;
+    };
+    let tab_id = tab.id;
+    app.next_id += 1;
+    let tid = app.next_id;
+    let conn = spawn_conn(&app.rt, params, label, host, ctx, app.prompts_sink.clone());
+    let _ = conn.tx.send(SftpCmd::Download {
+        remote: path.clone(),
+        local_dir: dir.clone(),
+        id: tid,
     });
-    Ok(())
+    app.set_pane(tab_id, 1, Some(conn), theme::accent());
+    if let Some(Tab {
+        kind: TabKind::Sftp(t),
+        ..
+    }) = app.tabs.iter_mut().find(|t| t.id == tab_id)
+    {
+        t.start_dir[1] = Some(crate::backend::sftp::parent(&path));
+        t.edits.push(EditFile {
+            pane: 1,
+            remote_path: path,
+            local: dir.join(safe),
+            transfer: tid,
+            ready: false,
+            opened: false,
+            mtime: None,
+            last_check: Instant::now(),
+            uploads: 0,
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------- file tab
@@ -379,6 +463,8 @@ enum PaneAction {
     Reconnect,
     /// Open a remote file in the local editor.
     Edit(String),
+    /// Open a file in Aurora's built-in editor.
+    EditAurora(String),
     /// Follow a remote file in a log tab.
     FollowLog(String),
 }
@@ -387,19 +473,22 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
     let accent = app.accent();
     let editor = app.lib.settings.editor.clone();
     let hosts = sftp_hosts(app);
-    let rt = app.rt.handle().clone();
     let mut next_id = app.next_id;
     let index = app.tabs.iter().position(|t| t.id == tab_id).unwrap_or(0) + 1;
     let mut toasts: Vec<(String, Color32)> = Vec::new();
     let mut source_change: Option<(usize, Option<Uuid>)> = None;
     let mut follow_log: Option<(Option<Uuid>, String)> = None;
     let mut reconnect = false;
+    let mut submits: Vec<crate::ui::xfer::Req> = Vec::new();
+    let mut open_edits: Vec<crate::ui::edit::NewEdit> = Vec::new();
+    let aurora_default = app.lib.settings.files_editor_aurora;
     // In a split only the active pane takes files dropped from the OS.
     let takes_drops = app.active == Some(tab_id);
     let Some(tab) = app.tabs.iter_mut().find(|t| t.id == tab_id) else {
         return;
     };
     let title = tab.title.clone();
+    let tab_color = tab.color;
     let TabKind::Sftp(t) = &mut tab.kind else {
         return;
     };
@@ -416,6 +505,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
             if closed && theme::icon_button(ui, "⟳", t!("Neu verbinden")).clicked() {
                 reconnect = true;
             }
+            crate::ui::xfer::header_button(ui, &mut app.xfer);
         },
     );
 
@@ -462,7 +552,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
                                 bottom: 0,
                             })
                             .show(ui, |ui| {
-                                acts[i] = pane_ui(ui, tab_id, i, &mut t.panes[i], &hosts, accent);
+                                acts[i] = pane_ui(
+                                    ui,
+                                    tab_id,
+                                    i,
+                                    &mut t.panes[i],
+                                    &hosts,
+                                    accent,
+                                    aurora_default,
+                                );
                             });
                     });
                 }
@@ -475,31 +573,33 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
             .filter(|i| t.panes[*i].remote.is_some())
             .or_else(|| t.panes.iter().position(|p| p.remote.is_some()));
         match target {
-            Some(to) if t.panes[to].connected() => {
+            Some(to) => {
                 for path in dropped {
-                    next_id += 1;
                     let name = path
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_default();
-                    if let Some(r) = &t.panes[to].remote {
-                        let _ = r.tx.send(SftpCmd::Upload {
-                            local: path.clone(),
-                            remote_dir: t.panes[to].path.clone(),
-                            id: next_id,
-                        });
-                    }
-                    t.transfers.push(Transfer {
-                        id: next_id,
+                    let meta = std::fs::metadata(&path).ok();
+                    let loc = match t.panes[to].remote.as_ref().and_then(|r| r.host_id) {
+                        Some(h) => crate::backend::xfer::Loc::Host(h),
+                        None => continue,
+                    };
+                    submits.push(crate::ui::xfer::Req {
+                        from: crate::backend::xfer::Loc::Local,
+                        to: loc,
+                        from_label: t!("Lokal").to_string(),
+                        to_label: t.panes[to].label().to_string(),
+                        src_root: path.display().to_string(),
+                        dst_dir: t.panes[to].path.clone(),
+                        exists: t.panes[to].entries.iter().any(|e| e.name == name),
+                        is_dir: meta.as_ref().is_some_and(|m| m.is_dir()),
+                        size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+                        mtime: meta
+                            .as_ref()
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|m| m.duration_since(SystemTime::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs() as i64),
                         name,
-                        current: String::new(),
-                        route: t!("Lokal → {}", t.panes[to].label()),
-                        dst: to,
-                        upload: true,
-                        done: 0,
-                        total: 0,
-                        finished: false,
-                        error: None,
                     });
                 }
             }
@@ -539,11 +639,24 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
                 let target = pane.join(&name);
                 pane.navigate(target);
             }
-            PaneAction::Transfer(name) => {
-                next_id += 1;
-                if let Err(e) = start_transfer(t, &rt, i, &name, next_id) {
-                    toasts.push((e, theme::amber()));
-                }
+            PaneAction::Transfer(name) => match make_req(t, i, &name) {
+                Ok(r) => submits.push(r),
+                Err(e) => toasts.push((e, theme::amber())),
+            },
+            PaneAction::EditAurora(name) => {
+                let pane = &t.panes[i];
+                let path = pane.join(&name);
+                open_edits.push(match &pane.remote {
+                    Some(r) => crate::ui::edit::NewEdit::Remote {
+                        host: r.host_id,
+                        label: r.label.clone(),
+                        params: r.params.clone(),
+                        path,
+                        color: tab_color,
+                        env: crate::model::Env::None,
+                    },
+                    None => crate::ui::edit::NewEdit::Local(PathBuf::from(path)),
+                });
             }
             PaneAction::Mkdir => {
                 t.dialog = Some((
@@ -676,6 +789,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
 
     fs_dialog(ui.ctx(), t);
     app.next_id = next_id;
+    app.xfer.submit(submits);
+    for f in open_edits {
+        let ctx = ui.ctx().clone();
+        crate::ui::edit::open(app, f, &ctx);
+    }
     for (text, c) in toasts {
         app.toast(text, c);
     }
@@ -704,6 +822,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64) {
 }
 
 fn transfers_panel(ui: &mut egui::Ui, tab_id: u64, t: &mut SftpTab, accent: Color32) {
+    if t.edits.is_empty() && t.transfers.is_empty() {
+        return;
+    }
     egui::Panel::bottom(egui::Id::new(("sftp-transfers", tab_id)))
         .resizable(true)
         .default_size(110.0)
@@ -716,130 +837,147 @@ fn transfers_panel(ui: &mut egui::Ui, tab_id: u64, t: &mut SftpTab, accent: Colo
         .show(ui, |ui| {
             let h = ui.available_height();
             theme::card(ui, theme::bg_deep(), |ui| {
-            ui.set_min_height(h - 2.0);
-            egui::Frame::NONE.inner_margin(Margin::symmetric(18, 14)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 6.0;
-            ui.horizontal(|ui| {
-                theme::section_title(ui, t!("Übertragungen"));
-                if t.transfers.iter().any(|x| x.finished) && text_button(ui, t!("aufräumen")).clicked()
-                {
-                    t.transfers.retain(|x| !x.finished);
-                }
-            });
-            ui.add_space(6.0);
-            let mut close_edit = None;
-            for (i, ed) in t.edits.iter().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 10.0;
-                    ui.label(
-                        RichText::new("EDIT")
-                            .font(egui::FontId::monospace(10.5))
-                            .color(theme::accent()),
-                    );
-                    let name = ed.remote_path.rsplit('/').next().unwrap_or_default();
-                    ui.label(theme::mono(name, 12.5));
-                    ui.label(
-                        RichText::new(if !ed.opened {
-                            t!("wird geladen…").to_string()
-                        } else if ed.uploads == 0 {
-                            t!("im Editor offen – Speichern lädt automatisch hoch").to_string()
-                        } else {
-                            t!("{}× gespeichert und hochgeladen", ed.uploads)
-                        })
-                        .size(12.0)
-                        .color(theme::text_dim()),
-                    );
-                    if text_button(ui, t!("fertig")).clicked() {
-                        close_edit = Some(i);
-                    }
-                });
-            }
-            if let Some(i) = close_edit {
-                let ed = t.edits.remove(i);
-                if let Some(dir) = ed.local.parent() {
-                    let _ = std::fs::remove_dir_all(dir);
-                }
-            }
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                if t.transfers.is_empty() && t.edits.is_empty() {
-                    ui.label(
-                        RichText::new(t!(
-                            "Doppelklick auf eine Server-Datei öffnet sie im Editor (Speichern lädt hoch). \
-                             Kopieren-Button überträgt auf die andere Seite, auch Server ⇄ Server."
-                        ))
-                        .size(12.5)
-                        .color(theme::text_dim()),
-                    );
-                }
-                for tr in t.transfers.iter().rev() {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 10.0;
-                        ui.label(
-                            RichText::new(if tr.upload { "→" } else { "←" })
-                                .font(theme::mono_medium(13.0))
-                                .color(theme::accent()),
-                        );
-                        ui.allocate_ui_with_layout(
-                            Vec2::new(220.0, 18.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| ui.add(egui::Label::new(theme::mono(&tr.name, 12.5)).truncate()),
-                        );
-                        ui.allocate_ui_with_layout(
-                            Vec2::new(170.0, 18.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(&tr.route)
-                                            .size(12.0)
-                                            .color(theme::text_dim()),
-                                    )
-                                    .truncate(),
-                                )
-                            },
-                        );
-                        let frac = if tr.total > 0 {
-                            tr.done as f32 / tr.total as f32
-                        } else if tr.finished {
-                            1.0
-                        } else {
-                            0.0
-                        };
-                        let (color, text) = match (&tr.error, tr.finished) {
-                            (Some(e), _) => (theme::red(), e.clone()),
-                            (None, true) => (theme::green(), t!("fertig").into()),
-                            (None, false) if tr.current != tr.name && !tr.current.is_empty() => (
-                                accent,
-                                format!(
-                                    "{} · {} / {}",
-                                    tr.current,
-                                    human_size(tr.done),
-                                    human_size(tr.total)
-                                ),
-                            ),
-                            (None, false) => (
-                                accent,
-                                format!("{} / {}", human_size(tr.done), human_size(tr.total)),
-                            ),
-                        };
-                        let (r, _) = ui.allocate_exact_size(Vec2::new(160.0, 12.0), Sense::hover());
-                        let line =
-                            egui::Rect::from_center_size(r.center(), Vec2::new(r.width(), 4.0));
-                        ui.painter()
-                            .rect_filled(line, CornerRadius::same(2), theme::fill_strong());
-                        let mut done = line;
-                        done.set_width(line.width() * frac.clamp(0.0, 1.0));
-                        ui.painter().rect_filled(done, CornerRadius::same(2), color);
-                        ui.label(theme::mono(&text, 11.5).color(if tr.error.is_some() {
-                            theme::red()
-                        } else {
-                            theme::text_dim()
-                        }));
+                ui.set_min_height(h - 2.0);
+                egui::Frame::NONE
+                    .inner_margin(Margin::symmetric(18, 14))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.spacing_mut().item_spacing.y = 6.0;
+                        ui.horizontal(|ui| {
+                            theme::section_title(ui, t!("Übertragungen"));
+                            if t.transfers.iter().any(|x| x.finished)
+                                && text_button(ui, t!("aufräumen")).clicked()
+                            {
+                                t.transfers.retain(|x| !x.finished);
+                            }
+                        });
+                        ui.add_space(6.0);
+                        let mut close_edit = None;
+                        for (i, ed) in t.edits.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 10.0;
+                                ui.label(
+                                    RichText::new("EDIT")
+                                        .font(egui::FontId::monospace(10.5))
+                                        .color(theme::accent()),
+                                );
+                                let name = ed.remote_path.rsplit('/').next().unwrap_or_default();
+                                ui.label(theme::mono(name, 12.5));
+                                ui.label(
+                                    RichText::new(if !ed.opened {
+                                        t!("wird geladen…").to_string()
+                                    } else if ed.uploads == 0 {
+                                        t!("im Editor offen – Speichern lädt automatisch hoch")
+                                            .to_string()
+                                    } else {
+                                        t!("{}× gespeichert und hochgeladen", ed.uploads)
+                                    })
+                                    .size(12.0)
+                                    .color(theme::text_dim()),
+                                );
+                                if text_button(ui, t!("fertig")).clicked() {
+                                    close_edit = Some(i);
+                                }
+                            });
+                        }
+                        if let Some(i) = close_edit {
+                            let ed = t.edits.remove(i);
+                            if let Some(dir) = ed.local.parent() {
+                                let _ = std::fs::remove_dir_all(dir);
+                            }
+                        }
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            for tr in t.transfers.iter().rev() {
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 10.0;
+                                    ui.label(
+                                        RichText::new(if tr.upload { "→" } else { "←" })
+                                            .font(theme::mono_medium(13.0))
+                                            .color(theme::accent()),
+                                    );
+                                    ui.allocate_ui_with_layout(
+                                        Vec2::new(220.0, 18.0),
+                                        egui::Layout::left_to_right(egui::Align::Center),
+                                        |ui| {
+                                            ui.add(
+                                                egui::Label::new(theme::mono(&tr.name, 12.5))
+                                                    .truncate(),
+                                            )
+                                        },
+                                    );
+                                    ui.allocate_ui_with_layout(
+                                        Vec2::new(170.0, 18.0),
+                                        egui::Layout::left_to_right(egui::Align::Center),
+                                        |ui| {
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(&tr.route)
+                                                        .size(12.0)
+                                                        .color(theme::text_dim()),
+                                                )
+                                                .truncate(),
+                                            )
+                                        },
+                                    );
+                                    let frac = if tr.total > 0 {
+                                        tr.done as f32 / tr.total as f32
+                                    } else if tr.finished {
+                                        1.0
+                                    } else {
+                                        0.0
+                                    };
+                                    let (color, text) = match (&tr.error, tr.finished) {
+                                        (Some(e), _) => (theme::red(), e.clone()),
+                                        (None, true) => (theme::green(), t!("fertig").into()),
+                                        (None, false)
+                                            if tr.current != tr.name && !tr.current.is_empty() =>
+                                        {
+                                            (
+                                                accent,
+                                                format!(
+                                                    "{} · {} / {}",
+                                                    tr.current,
+                                                    human_size(tr.done),
+                                                    human_size(tr.total)
+                                                ),
+                                            )
+                                        }
+                                        (None, false) => (
+                                            accent,
+                                            format!(
+                                                "{} / {}",
+                                                human_size(tr.done),
+                                                human_size(tr.total)
+                                            ),
+                                        ),
+                                    };
+                                    let (r, _) = ui.allocate_exact_size(
+                                        Vec2::new(160.0, 12.0),
+                                        Sense::hover(),
+                                    );
+                                    let line = egui::Rect::from_center_size(
+                                        r.center(),
+                                        Vec2::new(r.width(), 4.0),
+                                    );
+                                    ui.painter().rect_filled(
+                                        line,
+                                        CornerRadius::same(2),
+                                        theme::fill_strong(),
+                                    );
+                                    let mut done = line;
+                                    done.set_width(line.width() * frac.clamp(0.0, 1.0));
+                                    ui.painter().rect_filled(done, CornerRadius::same(2), color);
+                                    ui.label(theme::mono(&text, 11.5).color(
+                                        if tr.error.is_some() {
+                                            theme::red()
+                                        } else {
+                                            theme::text_dim()
+                                        },
+                                    ));
+                                });
+                            }
+                        });
                     });
-                }
-            });
-            });
             });
         });
 }
@@ -851,6 +989,7 @@ fn pane_ui(
     pane: &mut FilePane,
     hosts: &[(Uuid, String)],
     accent: Color32,
+    aurora_default: bool,
 ) -> Option<PaneAction> {
     let mut action = None;
     let transfer_label = if idx == 0 {
@@ -1004,6 +1143,7 @@ fn pane_ui(
                     accent,
                     transfer_label,
                     is_remote,
+                    aurora_default,
                 ) {
                     action = Some(a);
                 }
@@ -1019,6 +1159,7 @@ fn entry_row(
     accent: Color32,
     transfer_label: &str,
     remote: bool,
+    aurora_default: bool,
 ) -> Option<PaneAction> {
     use crate::ui::icons::{self, Icon};
     let mut action = None;
@@ -1093,6 +1234,8 @@ fn entry_row(
     if resp.double_clicked() {
         action = Some(if e.is_dir {
             PaneAction::Open(e.name.clone())
+        } else if aurora_default && !binary_name(&e.name) {
+            PaneAction::EditAurora(e.name.clone())
         } else if remote {
             // Remote files open in the local editor; copying is in the menu.
             PaneAction::Edit(e.name.clone())
@@ -1101,6 +1244,10 @@ fn entry_row(
         });
     }
     resp.context_menu(|ui| {
+        if !e.is_dir && ui.button(t!("Im Aurora-Editor öffnen")).clicked() {
+            action = Some(PaneAction::EditAurora(e.name.clone()));
+            ui.close();
+        }
         if remote && !e.is_dir && ui.button(t!("Bearbeiten (eigener Editor)")).clicked() {
             action = Some(PaneAction::Edit(e.name.clone()));
             ui.close();
@@ -1130,6 +1277,18 @@ fn entry_row(
         }
     });
     action
+}
+
+/// File types that are not text: double-click does not open them in the text editor.
+fn binary_name(name: &str) -> bool {
+    const BIN: &[&str] = &[
+        "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "pdf", "zip", "gz", "tgz", "bz2", "xz",
+        "7z", "rar", "tar", "iso", "img", "bin", "exe", "dll", "so", "o", "a", "class", "jar",
+        "mp3", "mp4", "mkv", "avi", "mov", "wav", "flac", "ogg", "doc", "docx", "xls", "xlsx",
+        "ppt", "pptx", "odt", "woff", "woff2", "ttf", "otf", "sqlite", "db", "deb", "rpm", "msi",
+    ];
+    name.rsplit_once('.')
+        .is_some_and(|(_, ext)| BIN.contains(&ext.to_lowercase().as_str()))
 }
 
 /// Opens a local file in the configured editor command, or the system default app.
@@ -1171,7 +1330,7 @@ fn runs_when_opened(name: &str) -> bool {
         .is_some_and(|(_, ext)| RISKY.contains(&ext.trim().to_lowercase().as_str()))
 }
 
-fn open_in_editor(editor: &str, path: &std::path::Path) -> std::io::Result<()> {
+pub fn open_in_editor(editor: &str, path: &std::path::Path) -> std::io::Result<()> {
     let editor = editor.trim();
     if !editor.is_empty() {
         let mut parts = editor.split_whitespace();
@@ -1329,7 +1488,13 @@ fn fs_dialog(ctx: &egui::Context, t: &mut SftpTab) {
 pub fn page(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     use crate::ui::icons::Icon;
     let hosts = sftp_hosts(app);
-    theme::page_title(ui, t!("Dateien"), None);
+    theme::page_header(
+        ui,
+        "files-page-header",
+        |ui| theme::page_title(ui, t!("Dateien"), None),
+        |_| {},
+        |ui, _bar| crate::ui::xfer::header_button(ui, &mut app.xfer),
+    );
     ui.add_space(22.0);
 
     egui::ScrollArea::vertical()

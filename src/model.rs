@@ -762,6 +762,14 @@ pub struct Settings {
     pub paste_guard: bool,
     /// Keep the last 30 minutes of each terminal's output for rewinding.
     pub time_travel: bool,
+    /// Double-click opens files in Aurora's editor (else the external program).
+    pub files_editor_aurora: bool,
+    /// Files copied at the same time by the transfer queue.
+    pub transfer_slots: u32,
+    /// Bandwidth limit of all transfers in KB/s (0 = unlimited).
+    pub transfer_limit_kbps: u32,
+    /// Compare checksums after each transferred file.
+    pub transfer_verify: bool,
 }
 
 impl Default for Settings {
@@ -790,6 +798,10 @@ impl Default for Settings {
             snippet_hints_dismissed: Vec::new(),
             paste_guard: true,
             time_travel: true,
+            files_editor_aurora: true,
+            transfer_slots: 2,
+            transfer_limit_kbps: 0,
+            transfer_verify: false,
         }
     }
 }
