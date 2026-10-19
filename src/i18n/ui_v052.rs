@@ -46,8 +46,8 @@ pub const T: &[(&str, &str)] = &[
     ),
     ("Host nicht mehr vorhanden", "Host no longer exists"),
     (
-        "Keine Berechtigung für Docker – den Benutzer in die Gruppe „docker“ aufnehmen (sudo usermod -aG docker $USER) und neu anmelden.",
-        "No permission for Docker – add the user to the \"docker\" group (sudo usermod -aG docker $USER) and log in again.",
+        "Keine Berechtigung für Docker – den Benutzer in die Gruppe „docker“ aufnehmen (sudo usermod -aG docker $USER) und danach Aurora neu starten (bzw. ab- und wieder anmelden).",
+        "No permission for Docker – add the user to the \"docker\" group (sudo usermod -aG docker $USER) and then restart Aurora (or log out and in again).",
     ),
     ("Keine Container gefunden", "No containers found"),
     ("Keine Pods gefunden", "No pods found"),

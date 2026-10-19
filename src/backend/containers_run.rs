@@ -170,6 +170,37 @@ async fn wsl_has(tool: &str) -> bool {
 }
 
 async fn run_local(argv: &[String]) -> Seg {
+    let first = run_local_once(argv).await;
+    // Added to the "docker" group a moment ago: the running Aurora (and its desktop session)
+    // does not have the group yet. `sg docker` starts the command with it, no new login needed.
+    if cfg!(unix)
+        && argv[0] == "docker"
+        && first.rc != 0
+        && first.out.to_lowercase().contains("permission denied")
+        && let Some(sg) = super::local::find_program("sg")
+    {
+        let line = argv
+            .iter()
+            .map(|a| super::container::sh_quote(a))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut cmd = tokio::process::Command::new(sg);
+        cmd.args(["docker", "-c", &line])
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::null());
+        if let Ok(Ok(o)) = tokio::time::timeout(TIMEOUT, cmd.output()).await
+            && o.status.success()
+        {
+            let mut out = String::from_utf8_lossy(&o.stdout).into_owned();
+            out.push_str(&String::from_utf8_lossy(&o.stderr));
+            out.truncate(floor_boundary(&out, CAP));
+            return Seg { rc: 0, out };
+        }
+    }
+    first
+}
+
+async fn run_local_once(argv: &[String]) -> Seg {
     let mut args: Vec<String> = argv[1..].to_vec();
     let exe = match super::local::find_program(&argv[0]) {
         Some(e) => e,

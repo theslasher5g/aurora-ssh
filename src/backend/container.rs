@@ -271,7 +271,7 @@ pub(crate) fn explain(cli: &str, msg: &str) -> String {
     let hint = if low.contains("not found") || low.contains("nicht gefunden") {
         t!("{} ist dort nicht installiert.", cli)
     } else if low.contains("permission denied") && low.contains("docker.sock") {
-        t!("Keine Berechtigung für Docker – den Benutzer in die Gruppe „docker“ aufnehmen (sudo usermod -aG docker $USER) und neu anmelden.")
+        t!("Keine Berechtigung für Docker – den Benutzer in die Gruppe „docker“ aufnehmen (sudo usermod -aG docker $USER) und danach Aurora neu starten (bzw. ab- und wieder anmelden).")
             .to_string()
     } else if low.contains("cannot connect to the docker daemon")
         || low.contains("failed to connect to the docker api")

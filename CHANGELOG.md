@@ -3,6 +3,8 @@
 ## 0.8.1
 
 ### Servers
+- **Docker right after `usermod -aG docker`:** a "permission denied" on the local Docker
+  socket is retried through `sg docker`, so it works without logging out first.
 - **Containers in WSL:** on a Windows PC the Container page also finds Docker, Podman and
   kubectl that live inside WSL (run through `wsl.exe -e`, default distribution).
 - **Inventory detail view:** click a host in the inventory table for a sheet with the tabs
