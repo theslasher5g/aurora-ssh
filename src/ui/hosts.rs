@@ -356,6 +356,7 @@ fn live_hosts(app: &App) -> Vec<String> {
             TabKind::Rdp(t) => t.is_live(),
             TabKind::Vnc(t) => matches!(t.view.state, ConnState::Connected),
             TabKind::Log(_) => false,
+            TabKind::Edit(t) => matches!(t.state(), ConnState::Connected),
         })
         .flat_map(|t| {
             [

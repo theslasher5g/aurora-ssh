@@ -66,6 +66,10 @@ pub enum Icon {
     Table,
     /// Session marker.
     Flag,
+    /// Two opposite arrows: transfers.
+    Transfer,
+    /// Pencil: edit a file.
+    Edit,
 }
 
 enum Prim {
@@ -155,6 +159,8 @@ fn prims(icon: Icon) -> &'static [Prim] {
             R(4.0, 13.0, 7.0, 7.0, 1.2),
             R(13.0, 13.0, 7.0, 7.0, 1.2),
         ],
+        Icon::Transfer => &[Path("M8 20V4M4 8l4-4 4 4M16 4v16M12 16l4 4 4-4")],
+        Icon::Edit => &[Path("M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4")],
         Icon::Upload => &[Path("M12 16V4M7 9l5-5 5 5M5 20h14")],
         Icon::Trash => &[Path("M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6")],
         Icon::Copy => &[
@@ -595,7 +601,7 @@ mod tests {
             Sparkle, Close, Split, Maximize, Exit, External, Keyboard, Expand, Monitor, Up,
             Refresh, File, Lock, Broadcast, Download, Terminal, Windows, Upload, Trash, Copy, Wrap,
             Pause, Play, Stop, Server, Logs, Record, Clock, Shield, Route, Power, Checklist,
-            Wrench, Down, Pulse, Cube, Table,
+            Wrench, Down, Pulse, Cube, Table, Flag, Transfer, Edit,
         ] {
             for prim in prims(icon) {
                 if let Prim::Path(d) = prim {

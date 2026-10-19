@@ -212,7 +212,6 @@ pub struct RemoteConn {
     pub params: SshParams,
     pub tx: UnboundedSender<SftpCmd>,
     pub rx: UnboundedReceiver<SftpEvent>,
-    pub sink: Sink<SftpEvent>,
     pub state: ConnState,
     pub session: Option<crate::backend::sftp::Session>,
 }
@@ -339,6 +338,7 @@ pub enum TabKind {
     Rdp(Box<RdpTab>),
     Vnc(Box<VncTab>),
     Log(Box<LogTab>),
+    Edit(Box<crate::ui::edit::EditTab>),
 }
 
 pub struct Tab {
@@ -377,6 +377,8 @@ pub enum Purpose {
     ListPorts,
     /// Collect a diagnostics bundle (separate connection).
     Diag,
+    /// Connection of the transfer queue.
+    XferPool,
 }
 
 /// "Container durchsuchen" dialog.
@@ -634,11 +636,19 @@ pub struct App {
     pub ctr: crate::ui::containers_page::CtrState,
     /// Server inventory page.
     pub inv: crate::ui::inventory_page::InvState,
+    /// Transfer queue.
+    pub xfer: crate::ui::xfer::XferUi,
+    /// Built-in editor: dialogs that belong to no single tab.
+    pub editx: crate::ui::edit::EditGlobal,
 }
 
 /// UI intents collected while drawing and applied afterwards.
 #[derive(Clone, Debug)]
 pub enum Action {
+    /// Show where a queued transfer went.
+    XferShow(u64),
+    /// "Datei öffnen…" for the active SSH terminal.
+    EditPrompt,
     Connect(Uuid),
     /// Open the port scan dialog for a host.
     PortScan(Uuid),
@@ -850,6 +860,8 @@ impl App {
             ops: Default::default(),
             ctr: Default::default(),
             inv: Default::default(),
+            xfer: crate::ui::xfer::XferUi::new(&cc.egui_ctx),
+            editx: Default::default(),
         }
     }
 
@@ -920,7 +932,7 @@ impl App {
         self.next_id
     }
 
-    fn host_color(&self, host: &Host) -> Color32 {
+    pub fn host_color(&self, host: &Host) -> Color32 {
         if let Some(c) = host.color {
             return theme::rgb(c);
         }
@@ -1036,6 +1048,10 @@ impl App {
         if let Purpose::Log(tab_id) = purpose {
             let params = ssh_params();
             self.start_log(tab_id, backend::container::Target::Ssh(params), ctx);
+            return;
+        }
+        if purpose == Purpose::XferPool {
+            crate::ui::xfer::pool_attach(self, host, ssh_params(), ctx);
             return;
         }
         if purpose == Purpose::Diag {
@@ -1973,6 +1989,7 @@ impl App {
                     }
                     TabKind::Rdp(_) => (t.host_id?, "rdp"),
                     TabKind::Vnc(_) => (t.host_id?, "vnc"),
+                    TabKind::Edit(_) => return None,
                     TabKind::Log(l) => {
                         source = l.source.text().to_string();
                         (l.target_host.unwrap_or(Uuid::nil()), "log")
@@ -2335,6 +2352,17 @@ impl App {
     }
 
     pub fn close_tab(&mut self, id: u64) {
+        if let Some(Tab {
+            kind: TabKind::Edit(e),
+            ..
+        }) = self.tabs.iter().find(|t| t.id == id)
+            && e.dirty
+            && !e.force_close
+        {
+            self.editx.close_confirm = Some(id);
+            self.active = Some(id);
+            return;
+        }
         self.popped.retain(|p| *p != id);
         let was_split = self.split.contains(&id);
         self.split.retain(|s| *s != id);
@@ -2356,7 +2384,7 @@ impl App {
                     }
                 }
                 TabKind::Vnc(mut t) => t.view.close(),
-                TabKind::Log(_) | TabKind::Rdp(_) => {}
+                TabKind::Log(_) | TabKind::Rdp(_) | TabKind::Edit(_) => {}
             }
             if self.active == Some(id) {
                 self.active = self
@@ -2524,6 +2552,7 @@ impl App {
         let visible = self.visible_tabs();
         let focused = ctx.input(|i| i.focused);
         let mut notify = false;
+        let mut edit_close: Vec<u64> = Vec::new();
         let mut learned: Vec<(Uuid, crate::model::HostFacts)> = Vec::new();
         let mut outcome: Vec<(Uuid, bool)> = Vec::new();
         let (auto_global, auto_minutes) = (
@@ -2805,6 +2834,13 @@ impl App {
                     }
                 }
                 TabKind::Log(t) => t.pump(&tab.title, &mut toasts),
+                TabKind::Edit(_) => {
+                    let r = crate::ui::edit::pump(tab, &self.rt, &self.prompts_sink, ctx);
+                    toasts.extend(r.toasts);
+                    if r.close {
+                        edit_close.push(tab.id);
+                    }
+                }
                 TabKind::Rdp(t) => {
                     if let Some(v) = t.embedded.as_mut() {
                         let host_id = format!("rdp://{}:{}", t.launch.host, t.launch.port);
@@ -2951,6 +2987,17 @@ impl App {
         for (text, color) in toasts {
             self.toast(text, color);
         }
+        for id in edit_close {
+            if let Some(Tab {
+                kind: TabKind::Edit(e),
+                ..
+            }) = self.tabs.iter_mut().find(|t| t.id == id)
+            {
+                e.force_close = true;
+            }
+            self.close_tab(id);
+        }
+        crate::ui::xfer::pump(self, ctx);
     }
 
     // ------------------------------------------------------------------ actions
@@ -3028,6 +3075,8 @@ impl App {
                     self.connect_host(h, Purpose::Terminal, ctx);
                 }
             }
+            Action::XferShow(id) => crate::ui::xfer::show_in_folder(self, id, ctx),
+            Action::EditPrompt => self.edit_prompt(),
             Action::OpenSftp(id) => self.open_files(None, Some(id), ctx),
             Action::OpenFiles(l, r) => self.open_files(l, r, ctx),
             Action::SetPaneSource(tab, idx, host) => {
@@ -3592,6 +3641,15 @@ impl App {
                     .clicked()
                     {
                         toggle_log = true;
+                    }
+                    if theme::icon_btn(
+                        ui,
+                        crate::ui::icons::Icon::Edit,
+                        t!("Datei im Aurora-Editor öffnen…"),
+                    )
+                    .clicked()
+                    {
+                        actions.push(Action::EditPrompt);
                     }
                     if theme::icon_btn(
                         ui,
@@ -4289,6 +4347,35 @@ impl App {
         self.active = Some(id);
     }
 
+    /// Asks for a file path and opens it in the editor, on the host of the active SSH terminal.
+    pub fn edit_prompt(&mut self) {
+        let Some(tab) = self
+            .active
+            .and_then(|a| self.tabs.iter().find(|t| t.id == a))
+        else {
+            return;
+        };
+        let TabKind::Term(t) = &tab.kind else {
+            self.toast(t!("Dafür ein SSH-Terminal auswählen"), theme::amber());
+            return;
+        };
+        let ConnectSpec::Ssh(p) = &t.spec else {
+            self.toast(t!("Dafür ein SSH-Terminal auswählen"), theme::amber());
+            return;
+        };
+        self.editx.open_prompt = Some(crate::ui::edit::OpenPrompt {
+            host: tab.host_id,
+            label: tab.title.clone(),
+            params: p.clone(),
+            cwd: t.term.cwd(),
+            color: tab.color,
+            env: tab.env,
+            input: String::new(),
+            error: None,
+            focus: true,
+        });
+    }
+
     /// Opens the file browser for `host` in `dir` (the terminal's folder, may start with `~`).
     fn open_files_at(
         &mut self,
@@ -4633,6 +4720,7 @@ impl App {
             TabKind::Rdp(_) => 2,
             TabKind::Vnc(_) => 3,
             TabKind::Log(_) => 4,
+            TabKind::Edit(_) => 5,
         });
         match kind {
             Some(0) => self.terminal_tab(ui, id, actions),
@@ -4640,6 +4728,7 @@ impl App {
             Some(2) => self.rdp_tab(ui, id),
             Some(3) => self.vnc_tab(ui, id),
             Some(4) => crate::ui::logview::show(self, ui, id),
+            Some(5) => crate::ui::edit::show(self, ui, id),
             _ => {}
         }
     }
@@ -4940,6 +5029,11 @@ impl eframe::App for App {
         crate::ui::net::show(self, &ctx, &mut actions);
         crate::ui::ops::show(self, &ctx, &mut actions);
         crate::ui::containers_page::sheets(self, &ctx);
+        crate::ui::xfer::windows(self, &ctx);
+        crate::ui::edit::windows(self, &ctx);
+        if let Some(id) = self.xfer.show_request.take() {
+            actions.push(Action::XferShow(id));
+        }
         self.toasts_ui(&ctx);
 
         for a in actions {
@@ -4953,6 +5047,7 @@ impl eframe::App for App {
             self.lib.settings.last_session = self.session_snapshot();
             self.save_library();
         }
+        self.xfer.shutdown();
         for tab in &mut self.tabs {
             match &mut tab.kind {
                 TabKind::Term(t) => {
@@ -4964,7 +5059,7 @@ impl eframe::App for App {
                     }
                 }
                 TabKind::Vnc(t) => t.view.close(),
-                TabKind::Log(_) | TabKind::Rdp(_) => {}
+                TabKind::Log(_) | TabKind::Rdp(_) | TabKind::Edit(_) => {}
             }
         }
     }
@@ -4982,6 +5077,7 @@ fn tab_live(t: &Tab) -> bool {
         TabKind::Rdp(t) => t.is_live(),
         TabKind::Vnc(t) => matches!(t.view.state, ConnState::Connected),
         TabKind::Log(t) => matches!(t.state, ConnState::Connected),
+        TabKind::Edit(t) => matches!(t.state(), ConnState::Connected),
     }
 }
 

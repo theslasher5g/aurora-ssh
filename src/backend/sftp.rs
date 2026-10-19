@@ -43,6 +43,8 @@ pub enum SftpCmd {
         from: String,
         to: String,
     },
+    /// Built-in editor operation (load/save a text file).
+    Edit(super::sftp_edit::EditCmd),
     Close,
 }
 
@@ -71,11 +73,14 @@ pub enum SftpEvent {
     Changed,
     Error(String),
     Closed(Option<String>),
+    /// Answer to a `SftpCmd::Edit`.
+    Edit(super::sftp_edit::EditEvent),
 }
 
-/// Shared handle to an open SFTP session; used for server ⇄ server copies.
+/// Shared handle to an open SFTP session (and its SSH connection, for running a checksum
+/// command); used for server ⇄ server copies and the transfer queue.
 #[derive(Clone)]
-pub struct Session(pub Arc<SftpSession>);
+pub struct Session(pub Arc<SftpSession>, pub Arc<super::ssh::SshHandle>);
 
 impl std::fmt::Debug for Session {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -132,19 +137,23 @@ async fn run(
     prompts: Sink<HostKeyPrompt>,
 ) -> Result<()> {
     events.send(SftpEvent::Status(t!("Verbinde mit {}…", p.host_id())));
-    let handle = connect(p, prompts).await?;
+    let handle = Arc::new(connect(p, prompts).await?);
     let channel = handle.channel_open_session().await?;
     channel.request_subsystem(true, "sftp").await?;
     let sftp = Arc::new(SftpSession::new(channel.into_stream()).await?);
     let home = sftp.canonicalize(".").await.unwrap_or_else(|_| "/".into());
     events.send(SftpEvent::Connected {
         home: home.clone(),
-        session: Session(sftp.clone()),
+        session: Session(sftp.clone(), handle.clone()),
     });
 
     while let Some(cmd) = cmds.recv().await {
         let res: Result<()> = match cmd {
             SftpCmd::Close => break,
+            SftpCmd::Edit(c) => {
+                tokio::spawn(super::sftp_edit::run(sftp.clone(), c, events.clone()));
+                Ok(())
+            }
             SftpCmd::List(path) => list(&sftp, &path, events).await,
             SftpCmd::Mkdir(path) => sftp.create_dir(path).await.map_err(Into::into).map(|_| {
                 events.send(SftpEvent::Changed);
@@ -427,100 +436,6 @@ async fn upload_file(
         }
     }
     dst.shutdown().await?;
-    Ok(())
-}
-
-/// Copies a file or directory from one server to another, streaming through Aurora,
-/// so the two servers never need to reach each other.
-pub async fn relay(
-    src: Arc<SftpSession>,
-    src_path: String,
-    dst: Arc<SftpSession>,
-    dst_dir: String,
-    id: u64,
-    ev: &Sink<SftpEvent>,
-) -> Result<()> {
-    let base = src_path
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .unwrap_or_default()
-        .to_string();
-    let safe = |n: &str| !(n.is_empty() || n == "." || n == ".." || n.contains(['/', '\\', '\0']));
-    if !safe(&base) {
-        return Err(anyhow!(
-            "{}",
-            t!("unsicherer Dateiname: {}", format!("{base:?}"))
-        ));
-    }
-    let meta = src.metadata(src_path.clone()).await?;
-    if !meta.is_dir() {
-        return relay_file(&src, &src_path, &dst, &join(&dst_dir, &base), id, ev).await;
-    }
-    let mut skipped = 0usize;
-    let mut queue = vec![(src_path, join(&dst_dir, &base))];
-    while let Some((sdir, ddir)) = queue.pop() {
-        if !dst.try_exists(ddir.clone()).await.unwrap_or(false) {
-            dst.create_dir(ddir.clone()).await?;
-        }
-        for e in src.read_dir(sdir.clone()).await? {
-            let n = e.file_name();
-            if n == "." || n == ".." {
-                continue;
-            }
-            if !safe(&n) {
-                skipped += 1;
-                continue;
-            }
-            let (sp, dp) = (join(&sdir, &n), join(&ddir, &n));
-            if e.file_type().is_dir() {
-                queue.push((sp, dp));
-            } else if e.file_type().is_file() {
-                relay_file(&src, &sp, &dst, &dp, id, ev).await?;
-            }
-        }
-    }
-    if skipped > 0 {
-        return Err(anyhow!(
-            "{}",
-            t!("{} Einträge mit unsicheren Namen übersprungen", skipped)
-        ));
-    }
-    Ok(())
-}
-
-async fn relay_file(
-    src: &SftpSession,
-    src_path: &str,
-    dst: &SftpSession,
-    dst_path: &str,
-    id: u64,
-    ev: &Sink<SftpEvent>,
-) -> Result<()> {
-    let total = src.metadata(src_path.to_string()).await?.size.unwrap_or(0);
-    let name = src_path.rsplit('/').next().unwrap_or(src_path).to_string();
-    let mut from = src.open(src_path.to_string()).await?;
-    let mut to = dst.create(dst_path.to_string()).await?;
-    let mut buf = vec![0u8; CHUNK];
-    let mut done = 0u64;
-    loop {
-        let n = from.read(&mut buf).await?;
-        if n == 0 {
-            break;
-        }
-        to.write_all(&buf[..n]).await?;
-        done += n as u64;
-        ev.send(SftpEvent::Progress {
-            id,
-            name: name.clone(),
-            done,
-            total,
-        });
-        if ev.is_closed() {
-            return Err(anyhow!(t!("abgebrochen")));
-        }
-    }
-    to.shutdown().await?;
     Ok(())
 }
 

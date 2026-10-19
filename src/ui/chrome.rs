@@ -393,6 +393,7 @@ fn rail_top(app: &mut App, ui: &mut egui::Ui, wide: bool, low: bool, actions: &m
         }
     }
     tunnel_item(app, ui, wide, actions);
+    xfer_item(app, ui, wide);
 
     if !app.tabs.is_empty() {
         ui.add_space(6.0);
@@ -403,6 +404,40 @@ fn rail_top(app: &mut App, ui: &mut egui::Ui, wide: bool, low: bool, actions: &m
     }
 
     ports(app, ui, actions);
+}
+
+/// "Übertragungen" entry with the number of active transfers; opens the queue panel.
+fn xfer_item(app: &mut App, ui: &mut egui::Ui, wide: bool) {
+    if app.xfer.q.batches.is_empty() {
+        return;
+    }
+    let n = app.xfer.active();
+    let dot = (n > 0).then(theme::accent);
+    let resp = nav_item(
+        ui,
+        Icon::Transfer,
+        t!("Übertragungen"),
+        false,
+        wide,
+        None,
+        None,
+    );
+    if n > 0 {
+        let c = if wide {
+            Pos2::new(resp.rect.right() - 16.0, resp.rect.center().y)
+        } else {
+            resp.rect.right_top() + Vec2::new(-8.0, 9.0)
+        };
+        ui.painter().circle_filled(c, 8.0, dot.unwrap_or_default());
+        ui.painter().text(
+            c,
+            egui::Align2::CENTER_CENTER,
+            n.to_string(),
+            theme::semibold(10.5),
+            theme::on_accent(),
+        );
+    }
+    crate::ui::xfer::toggle(&mut app.xfer, &resp);
 }
 
 /// "Tunnel" entry: a menu with every tunnel of every host, open ones first.
@@ -521,12 +556,18 @@ fn ports(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 matches!(t.state, ConnState::Connected),
                 state_text(&t.state),
             ),
+            TabKind::Edit(t) => (
+                crate::app::state_color(t.state()),
+                matches!(t.state(), ConnState::Connected),
+                state_text(t.state()),
+            ),
         };
         let kind = match &tab.kind {
             TabKind::Term(_) => "Terminal",
             TabKind::Sftp(_) => t!("Dateien"),
             TabKind::Rdp(_) | TabKind::Vnc(_) => "Desktop",
             TabKind::Log(_) => "Log",
+            TabKind::Edit(_) => t!("Editor"),
         };
         let dead = match &tab.kind {
             TabKind::Term(t) => matches!(t.state, ConnState::Closed(_)),

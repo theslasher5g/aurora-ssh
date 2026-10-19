@@ -30,12 +30,14 @@ pub mod runbook;
 pub mod scan;
 pub mod serial;
 pub mod sftp;
+pub mod sftp_edit;
 pub mod ssh;
 pub mod sshca;
 pub mod telnet;
 pub mod tunnel;
 pub mod vnc;
 pub mod wol;
+pub mod xfer;
 
 use tokio::sync::{mpsc, oneshot};
 

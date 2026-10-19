@@ -31,6 +31,7 @@ mod ui_v071;
 mod ui_v071_layout;
 mod ui_v072_blocks;
 mod ui_v072_comfort;
+mod ui_v072_files;
 mod ui_v072_inv;
 mod ui_v072_logvars;
 mod ui_v072_pwm;
@@ -66,6 +67,7 @@ const TABLES: &[&[(&str, &str)]] = &[
     ui_v072_comfort::T,
     ui_v072_inv::T,
     ui_v072_pwm::T,
+    ui_v072_files::T,
     ui_vnc::T,
     ui_v072_blocks::T,
 ];

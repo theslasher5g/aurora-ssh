@@ -7,6 +7,9 @@ pub mod containers_page;
 pub mod containers_sheets;
 pub mod diag;
 pub mod dialogs;
+pub mod edit;
+pub mod edit_syntax;
+pub mod edit_text;
 pub mod editors;
 pub mod help;
 pub mod history;
@@ -46,6 +49,7 @@ pub mod timetravel;
 pub mod vnc;
 pub mod whatsnew_sheet;
 pub mod wol;
+pub mod xfer;
 
 /// Case-insensitive subsequence match; returns a score (higher is better).
 pub fn fuzzy(query: &str, text: &str) -> Option<i32> {

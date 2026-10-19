@@ -802,6 +802,14 @@ pub struct Settings {
     pub pwm: crate::backend::pwmanager_types::PwmSettings,
     /// Command blocks in the terminal (gutter marks, toolbar, jump keys).
     pub command_blocks: bool,
+    /// Double-click opens files in Aurora's editor (else the external program).
+    pub files_editor_aurora: bool,
+    /// Files copied at the same time by the transfer queue.
+    pub transfer_slots: u32,
+    /// Bandwidth limit of all transfers in KB/s (0 = unlimited).
+    pub transfer_limit_kbps: u32,
+    /// Compare checksums after each transferred file.
+    pub transfer_verify: bool,
 }
 
 impl Default for Settings {
@@ -837,6 +845,10 @@ impl Default for Settings {
             inventory: Default::default(),
             pwm: Default::default(),
             command_blocks: true,
+            files_editor_aurora: true,
+            transfer_slots: 2,
+            transfer_limit_kbps: 0,
+            transfer_verify: false,
         }
     }
 }
