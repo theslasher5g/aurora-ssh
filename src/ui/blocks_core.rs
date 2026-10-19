@@ -49,15 +49,30 @@ impl Block {
         Some((self.t_end? - self.t_out?).max(0.0))
     }
 
+    /// `clear` / `reset`: the screen is wiped, so the "output" would span the new, empty
+    /// screen. Such a block has no output of its own.
+    fn wipes_screen(&self) -> bool {
+        matches!(
+            self.command.trim(),
+            "clear" | "reset" | "cls" | "tput clear" | "clear && ls"
+        ) || self.command.trim().starts_with("clear ")
+    }
+
     /// Output lines `[start, end)`; `live_end` is used while the command still runs.
     pub fn output_lines(&self, live_end: usize) -> Option<(usize, usize)> {
         let s = self.out_start?;
+        if self.wipes_screen() {
+            return Some((s, s));
+        }
         let e = self.out_end.unwrap_or(live_end).max(s);
         Some((s, e))
     }
 
     /// All lines of the block (prompt up to the end of the output).
     pub fn span(&self, live_end: usize) -> (usize, usize) {
+        if self.wipes_screen() {
+            return (self.prompt, self.prompt + 1);
+        }
         let e = self.out_end.unwrap_or(live_end).max(self.prompt + 1);
         (self.prompt, e)
     }
@@ -449,6 +464,19 @@ mod tests {
         assert!(b.list.iter().all(|x| !x.heuristic));
         b.heur_prompt(9, 4.0);
         assert_eq!(b.list.len(), 1);
+    }
+
+    #[test]
+    fn clear_has_no_output_span() {
+        let b = Block {
+            prompt: 10,
+            out_start: Some(11),
+            out_end: Some(500),
+            command: "clear".into(),
+            ..Default::default()
+        };
+        assert_eq!(b.span(600), (10, 11));
+        assert_eq!(b.output_lines(600), Some((11, 11)));
     }
 
     #[test]

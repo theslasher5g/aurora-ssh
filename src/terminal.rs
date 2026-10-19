@@ -33,7 +33,8 @@ fn resolve(c: vt100::Color, default: Color32, bold: bool, ansi: &[Color32; 16]) 
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct CellPos {
-    row: u16,
+    /// Absolute line (stays put while the view scrolls).
+    line: usize,
     col: u16,
 }
 
@@ -325,7 +326,18 @@ pub struct Terminal {
     /// Block under the pointer in the previous frame (its toolbar stays while the pointer
     /// moves onto it).
     hover_block: Option<u64>,
+    /// Everything fed so far (bounded): a resize replays it at the new width, because the
+    /// grid itself does not reflow and would cut off what no longer fits.
+    raw: Vec<u8>,
+    raw_cut: bool,
+    replaying: bool,
+    scrollback: usize,
+    /// A new size waits until the pane has stopped changing (drag of a divider).
+    pending_size: Option<((u16, u16), Instant)>,
 }
+
+/// Replay buffer limit.
+const RAW_MAX: usize = 8 << 20;
 
 #[derive(Default)]
 pub struct TermOutput {
@@ -378,6 +390,44 @@ impl Terminal {
             search: None,
             last_feed: Instant::now(),
             hover_block: None,
+            raw: Vec::new(),
+            raw_cut: false,
+            replaying: false,
+            scrollback,
+            pending_size: None,
+        }
+    }
+
+    /// Resizes the grid. Plain screens replay the received bytes at the new size so text
+    /// that was cut off by a narrower pane comes back (and wraps again); full-screen
+    /// programs, or a history that was trimmed, just resize.
+    fn reflow(&mut self, cols: u16, rows: u16) {
+        if self.parser.screen().alternate_screen() || self.raw_cut || self.raw.is_empty() {
+            self.parser.screen_mut().set_size(rows, cols);
+        } else {
+            let raw = std::mem::take(&mut self.raw);
+            let epoch = self.parser.callbacks().epoch;
+            let hooks = Hooks {
+                epoch,
+                ..Hooks::default()
+            };
+            self.parser = vt100::Parser::new_with_callbacks(rows, cols, self.scrollback, hooks);
+            self.replaying = true;
+            for chunk in raw.chunks(4096) {
+                self.feed(chunk);
+            }
+            self.replaying = false;
+            self.raw = raw;
+            // Questions asked long ago must not be answered again.
+            self.parser.callbacks_mut().replies.clear();
+        }
+        self.cols = cols;
+        self.rows = rows;
+        self.scrollback_rows = 0;
+        self.selection = None;
+        self.hover_block = None;
+        if let Some(s) = self.search.as_mut() {
+            s.dirty = true;
         }
     }
 
@@ -525,6 +575,14 @@ impl Terminal {
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
+        if !self.replaying {
+            self.raw.extend_from_slice(bytes);
+            if self.raw.len() > RAW_MAX {
+                let cut = self.raw.len() - RAW_MAX;
+                self.raw.drain(..cut);
+                self.raw_cut = true;
+            }
+        }
         self.last_feed = Instant::now();
         let alt0 = self.parser.screen().alternate_screen();
         let user_off = self.parser.screen().scrollback();
@@ -793,30 +851,46 @@ impl Terminal {
         }
     }
 
-    fn selected_text(&self) -> Option<String> {
+    fn selected_text(&mut self) -> Option<String> {
         let (a, b) = self.selection?;
-        let (s, e) = if (a.row, a.col) <= (b.row, b.col) {
+        let (s, e) = if (a.line, a.col) <= (b.line, b.col) {
             (a, b)
         } else {
             (b, a)
         };
-        let text =
-            self.parser
-                .screen()
-                .contents_between(s.row, s.col, e.row, e.col.saturating_add(1));
-        (!text.is_empty()).then_some(text)
+        let lines = self.lines_text(s.line, e.line + 1);
+        let n = lines.len();
+        let mut text = String::new();
+        for (i, (line, wrapped)) in lines.into_iter().enumerate() {
+            let mut part: String = line.chars().collect();
+            if i + 1 == n {
+                part = part.chars().take(e.col as usize + 1).collect();
+            }
+            if i == 0 {
+                part = part.chars().skip(s.col as usize).collect();
+            }
+            if i + 1 < n && !wrapped {
+                part.truncate(part.trim_end().len());
+                text.push_str(&part);
+                text.push('\n');
+            } else {
+                text.push_str(&part);
+            }
+        }
+        (!text.trim().is_empty()).then_some(text)
     }
 
-    fn in_selection(&self, row: u16, col: u16) -> bool {
+    /// Whether the cell of absolute `line` is inside the selection.
+    fn in_selection(&self, line: usize, col: u16) -> bool {
         let Some((a, b)) = self.selection else {
             return false;
         };
-        let (s, e) = if (a.row, a.col) <= (b.row, b.col) {
+        let (s, e) = if (a.line, a.col) <= (b.line, b.col) {
             (a, b)
         } else {
             (b, a)
         };
-        (row, col) >= (s.row, s.col) && (row, col) <= (e.row, e.col)
+        (line, col) >= (s.line, s.col) && (line, col) <= (e.line, e.col)
     }
 
     /// Floating find bar in the top-right corner. Returns its rect while open.
@@ -1237,15 +1311,32 @@ impl Terminal {
             full.min + Vec2::new(12.0 + gutter, 10.0),
             full.max - Vec2::new(12.0, 10.0),
         );
-        let cols = ((inner.width() / cw).floor() as u16).max(10);
-        let rows = ((inner.height() / ch).floor() as u16).max(3);
-        if (cols, rows) != (self.cols, self.rows) {
-            self.cols = cols;
-            self.rows = rows;
-            self.parser.screen_mut().set_size(rows, cols);
-            self.selection = None;
-            out.resize = Some((cols, rows));
+        let want = (
+            ((inner.width() / cw).floor() as u16).max(10),
+            ((inner.height() / ch).floor() as u16).max(3),
+        );
+        if want != (self.cols, self.rows) {
+            let now = Instant::now();
+            let settled = match self.pending_size {
+                Some((size, since)) if size == want => now.duration_since(since).as_millis() >= 120,
+                _ => {
+                    self.pending_size = Some((want, now));
+                    false
+                }
+            };
+            // Without history to replay there is nothing to lose: resize at once.
+            if settled || self.raw.is_empty() || self.parser.screen().alternate_screen() {
+                self.pending_size = None;
+                self.reflow(want.0, want.1);
+                out.resize = Some(want);
+            } else {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(60));
+            }
+        } else {
+            self.pending_size = None;
         }
+        let (cols, rows) = (self.cols, self.rows);
 
         let map0 = self.row_map(view.blocks);
         let first_src = map0
@@ -1267,7 +1358,7 @@ impl Terminal {
                 _ => first_src,
             };
             CellPos {
-                row: row.min(rows - 1),
+                line: row.min(rows - 1) as usize,
                 col: (((p.x - inner.left()) / cw).floor().max(0.0) as u16).min(cols - 1),
             }
         };
@@ -1285,15 +1376,39 @@ impl Terminal {
                 .input(|i| i.pointer.press_origin())
                 .or(resp.interact_pointer_pos())
         {
-            let c = to_cell(p);
+            let mut c = to_cell(p);
+            c.line += self.view_top();
             self.selection = Some((c, c));
             self.selecting = true;
         }
         if self.selecting
             && resp.dragged()
-            && let (Some(p), Some(sel)) = (resp.interact_pointer_pos(), self.selection.as_mut())
+            && let Some(p) = resp.interact_pointer_pos()
         {
-            sel.1 = to_cell(p);
+            // Dragging above or below the text scrolls on, so a selection can span more
+            // than one screen (the farther out, the faster).
+            let over = if p.y < inner.top() {
+                inner.top() - p.y
+            } else {
+                (p.y - inner.bottom()).max(0.0)
+            };
+            if over > 0.0 {
+                let n = (1.0 + over / ch).min(6.0) as usize;
+                let off = self.scrollback_rows;
+                let target = if p.y < inner.top() {
+                    off + n
+                } else {
+                    off.saturating_sub(n)
+                };
+                self.parser.screen_mut().set_scrollback(target);
+                self.scrollback_rows = self.parser.screen().scrollback();
+                ui.ctx().request_repaint();
+            }
+            let mut c = to_cell(p);
+            c.line += self.view_top();
+            if let Some(sel) = self.selection.as_mut() {
+                sel.1 = c;
+            }
         }
         if self.selecting && resp.drag_stopped() {
             self.selecting = false;
@@ -1555,6 +1670,7 @@ impl Terminal {
 
         // --- paint grid
         let map = self.row_map(view.blocks);
+        let view_top = self.view_top();
         let screen = self.parser.screen();
         let (cur_row, cur_col) = screen.cursor_position();
         for (d, src) in map.iter().enumerate() {
@@ -1590,7 +1706,7 @@ impl Terminal {
                 let start = col;
                 let style = CellStyle::of(cell);
                 let mut text = String::new();
-                let sel = self.in_selection(row, col);
+                let sel = self.in_selection(view_top + row as usize, col);
                 // Extend the run while the style stays the same.
                 while col < cols {
                     let Some(c) = screen.cell(row, col) else {
@@ -1600,7 +1716,9 @@ impl Terminal {
                         col += 1;
                         continue;
                     }
-                    if CellStyle::of(c) != style || self.in_selection(row, col) != sel {
+                    if CellStyle::of(c) != style
+                        || self.in_selection(view_top + row as usize, col) != sel
+                    {
                         break;
                     }
                     if c.has_contents() {
@@ -1950,6 +2068,18 @@ mod tests {
 
 #[cfg(test)]
 mod query_tests {
+    #[test]
+    fn narrowing_and_widening_keeps_the_text() {
+        let mut t = Terminal::with_size(60, 5, 100);
+        let line = "0123456789".repeat(5);
+        t.feed(format!("{line}\r\nsecond\r\n").as_bytes());
+        t.reflow(20, 5);
+        t.reflow(60, 5);
+        let all = t.contents();
+        assert!(all.contains(&line), "{all}");
+        assert!(all.contains("second"));
+    }
+
     use super::*;
 
     fn replies(input: &[u8]) -> Vec<u8> {
