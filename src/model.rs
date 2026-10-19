@@ -334,6 +334,9 @@ pub struct Host {
     /// Wake-on-LAN: MAC address and where to send the magic packet.
     #[serde(default)]
     pub wol: WolSettings,
+    /// SSH: set up shell integration (OSC 133/7 marks) in the login shell after login.
+    #[serde(default)]
+    pub shell_integration: bool,
 }
 
 /// Wake-on-LAN settings of a host.
@@ -376,6 +379,7 @@ impl Default for Host {
             persistent: false,
             cert: CertSettings::default(),
             wol: WolSettings::default(),
+            shell_integration: false,
         }
     }
 }
@@ -762,6 +766,8 @@ pub struct Settings {
     pub paste_guard: bool,
     /// Keep the last 30 minutes of each terminal's output for rewinding.
     pub time_travel: bool,
+    /// Command blocks in the terminal (gutter marks, toolbar, jump keys).
+    pub command_blocks: bool,
 }
 
 impl Default for Settings {
@@ -790,6 +796,7 @@ impl Default for Settings {
             snippet_hints_dismissed: Vec::new(),
             paste_guard: true,
             time_travel: true,
+            command_blocks: true,
         }
     }
 }

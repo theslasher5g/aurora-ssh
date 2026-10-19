@@ -1604,6 +1604,10 @@ fn host_row(
             actions.push(Action::PickLog(Some(h.id)));
             ui.close();
         }
+        if h.protocol == Protocol::Ssh && ui.button(t!("Verlauf…")).clicked() {
+            actions.push(Action::SessionLog(crate::ui::sessionlog_ui::Act::History(h.id)));
+            ui.close();
+        }
         if h.protocol.is_network()
             && ui
                 .button(t!("Ports scannen…"))

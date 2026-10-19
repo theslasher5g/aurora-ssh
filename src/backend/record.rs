@@ -83,7 +83,8 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    pub fn start(title: &str, cols: u16, rows: u16) -> Result<Self> {
+    /// Starts a recording; the host id goes into the header (for the session history).
+    pub fn start_for(title: &str, cols: u16, rows: u16, host: Option<uuid::Uuid>) -> Result<Self> {
         let dir = dir();
         std::fs::create_dir_all(&dir).with_context(|| dir.display().to_string())?;
         // Never overwrite: two sessions starting in the same second get `-2`, `-3` …
@@ -108,7 +109,7 @@ impl Recorder {
             }
         };
         let mut out = BufWriter::new(file);
-        let header = serde_json::json!({
+        let mut header = serde_json::json!({
             "version": 2,
             "width": cols.max(1),
             "height": rows.max(1),
@@ -116,6 +117,9 @@ impl Recorder {
             "title": title,
             "env": { "TERM": "xterm-256color" },
         });
+        if let Some(h) = host {
+            header["aurora_host"] = serde_json::Value::from(h.to_string());
+        }
         writeln!(out, "{header}")?;
         Ok(Self {
             path,
@@ -156,6 +160,17 @@ impl Recorder {
         self.line("o", &text);
     }
 
+    /// A marker with a note at the current time (asciicast v2 `m` event).
+    pub fn marker(&mut self, label: &str) {
+        self.line("m", label);
+        let _ = self.out.flush();
+    }
+
+    /// Seconds since the recording started.
+    pub fn elapsed(&self) -> f64 {
+        self.start.elapsed().as_secs_f64()
+    }
+
     pub fn resize(&mut self, cols: u16, rows: u16) {
         self.line("r", &format!("{cols}x{rows}"));
     }
@@ -174,8 +189,28 @@ pub struct Frame {
     pub data: String,
 }
 
+/// A whole recording.
+#[derive(Debug, Default)]
+pub struct Cast {
+    pub width: u16,
+    pub height: u16,
+    pub title: String,
+    /// Unix time of the start.
+    pub timestamp: i64,
+    pub host: Option<String>,
+    pub frames: Vec<Frame>,
+    /// Markers stored in the file: (seconds, note).
+    pub markers: Vec<(f64, String)>,
+}
+
 /// Reads a `.cast` file: (width, height, output frames). Other event kinds are skipped.
 pub fn read(path: &Path) -> Result<(u16, u16, Vec<Frame>)> {
+    let c = read_full(path)?;
+    Ok((c.width, c.height, c.frames))
+}
+
+/// Reads a `.cast` file with header data and markers.
+pub fn read_full(path: &Path) -> Result<Cast> {
     let mut lines = BufReader::new(File::open(path)?).lines();
     let header: serde_json::Value = serde_json::from_str(
         &lines
@@ -188,6 +223,7 @@ pub fn read(path: &Path) -> Result<(u16, u16, Vec<Frame>)> {
     let w = header["width"].as_u64().unwrap_or(80) as u16;
     let h = header["height"].as_u64().unwrap_or(24) as u16;
     let mut frames = Vec::new();
+    let mut markers = Vec::new();
     for line in lines {
         let line = line?;
         if line.trim().is_empty() {
@@ -203,9 +239,21 @@ pub fn read(path: &Path) -> Result<(u16, u16, Vec<Frame>)> {
                 time,
                 data: data.to_string(),
             });
+        } else if v[1].as_str() == Some("m")
+            && let (Some(time), Some(label)) = (v[0].as_f64(), v[2].as_str())
+        {
+            markers.push((time, label.to_string()));
         }
     }
-    Ok((w, h, frames))
+    Ok(Cast {
+        width: w,
+        height: h,
+        title: header["title"].as_str().unwrap_or_default().to_string(),
+        timestamp: header["timestamp"].as_i64().unwrap_or(0),
+        host: header["aurora_host"].as_str().map(str::to_string),
+        frames,
+        markers,
+    })
 }
 
 /// Plays a recording into a terminal tab. Space pauses, the tab's reconnect starts over.
@@ -270,13 +318,37 @@ mod tests {
             writeln!(r.out, r#"{{"version": 2, "width": 100, "height": 30}}"#).unwrap();
             r.output(b"hello \xc3");
             r.output(b"\xa4\r\n");
+            r.marker("deploy \"start\"");
             r.output("\"quoted\"".as_bytes());
         }
+        let cast = read_full(&path).unwrap();
+        assert_eq!(cast.markers.len(), 1);
+        assert_eq!(cast.markers[0].1, "deploy \"start\"");
         let (w, h, frames) = read(&path).unwrap();
         assert_eq!((w, h), (100, 30));
         let text: Vec<&str> = frames.iter().map(|f| f.data.as_str()).collect();
         assert_eq!(text, vec!["hello ", "ä\r\n", "\"quoted\""]);
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(file_name("root@web 01").starts_with("root_web_01_"));
+    }
+
+    #[test]
+    fn old_casts_without_markers_still_read() {
+        let dir = std::env::temp_dir().join(format!("aurora-cast-old-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("old.cast");
+        std::fs::write(
+            &path,
+            "{\"version\": 2, \"width\": 80, \"height\": 24, \"timestamp\": 1700000000, \"title\": \"web\"}\n[0.5, \"o\", \"hi\"]\n[0.9, \"x\", \"?\"]\n",
+        )
+        .unwrap();
+        let c = read_full(&path).unwrap();
+        assert_eq!(
+            (c.frames.len(), c.markers.len(), c.timestamp),
+            (1, 0, 1700000000)
+        );
+        assert_eq!(c.title, "web");
+        assert!(c.host.is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

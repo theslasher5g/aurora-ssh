@@ -60,6 +60,8 @@ pub enum Icon {
     Down,
     /// Diagnostics bundle: heartbeat line.
     Pulse,
+    /// Session marker.
+    Flag,
 }
 
 enum Prim {
@@ -190,6 +192,7 @@ fn prims(icon: Icon) -> &'static [Prim] {
         )],
         Icon::Down => &[Path("M12 5v14M6 13l6 6 6-6")],
         Icon::Pulse => &[Path("M3 12h4l3-8 4 16 3-8h4")],
+        Icon::Flag => &[Path("M5 21V4M5 5h12l-2.5 4L17 13H5")],
     }
 }
 

@@ -75,6 +75,8 @@ pub struct TermTab {
     pub side_log: Option<SideLog>,
     /// Running recording of this session.
     pub recorder: Option<backend::record::Recorder>,
+    /// Automatic shell integration after login (per-host switch).
+    pub si: crate::ui::blocks_setup::AutoSetup,
 }
 
 /// State of the log panel at the right of a terminal.
@@ -620,6 +622,8 @@ pub enum Action {
     PortScan(Uuid),
     /// Replay a `.cast` recording in a terminal tab.
     PlayRecording(PathBuf),
+    /// Marker, search, history and export of recordings.
+    SessionLog(crate::ui::sessionlog_ui::Act),
     OpenSftp(Uuid),
     /// New file tab; `None` = local disk.
     OpenFiles(Option<Uuid>, Option<Uuid>),
@@ -1441,6 +1445,7 @@ impl App {
             persist,
             side_log: None,
             recorder: None,
+            si: crate::ui::blocks_setup::AutoSetup::new(false),
         }
     }
 
@@ -2270,6 +2275,7 @@ impl App {
         if self.split.len() < 2 {
             self.split.clear();
         }
+        self.termx.slog.tab_closed(id);
         if let Some(idx) = self.tabs.iter().position(|t| t.id == id) {
             let tab = self.tabs.remove(idx);
             match tab.kind {
@@ -2485,13 +2491,40 @@ impl App {
                             }
                             TermEvent::Connected => {
                                 t.state = ConnState::Connected;
+                                if let ConnectSpec::Replay(p) = &t.spec {
+                                    self.termx.slog.replay_start(tab.id, p);
+                                } else {
+                                    self.termx
+                                        .slog
+                                        .session_start(tab.id, tab.host_id, &tab.title);
+                                }
+                                let want_si = tab
+                                    .host_id
+                                    .and_then(|h| self.lib.host(h))
+                                    .is_some_and(|h| h.shell_integration);
+                                if want_si
+                                    && matches!(t.spec, ConnectSpec::Ssh(_))
+                                    && t.persist.is_none()
+                                    && t.startup.is_none()
+                                    && t.run_once.is_none()
+                                {
+                                    t.si = crate::ui::blocks_setup::AutoSetup::new(true);
+                                }
                                 if record_all
                                     && t.recorder.is_none()
                                     && matches!(t.spec, ConnectSpec::Ssh(_))
                                 {
                                     let (cols, rows) = t.term.size();
-                                    match backend::record::Recorder::start(&tab.title, cols, rows) {
-                                        Ok(r) => t.recorder = Some(r),
+                                    match backend::record::Recorder::start_for(
+                                        &tab.title,
+                                        cols,
+                                        rows,
+                                        tab.host_id,
+                                    ) {
+                                        Ok(r) => {
+                                            self.termx.slog.set_rec(tab.id, Some(r.path.clone()));
+                                            t.recorder = Some(r)
+                                        }
                                         Err(e) => toasts.push((
                                             t!("Aufnahme fehlgeschlagen: {}", e),
                                             theme::red(),
@@ -2518,6 +2551,12 @@ impl App {
                                 }
                             }
                             TermEvent::Output(b) => {
+                                // The automatic shell setup hides its own exchange.
+                                let b = if t.si.swallowing() { t.si.absorb(b) } else { b };
+                                if b.is_empty() {
+                                    t.last_output = Instant::now();
+                                    continue;
+                                }
                                 self.termx.record_output(time_travel, tab.id, &t.term, &b);
                                 if let Some(r) = t.recorder.as_mut() {
                                     r.output(&b);
@@ -2571,11 +2610,29 @@ impl App {
                                 {
                                     outcome.push((h, false));
                                 }
+                                self.termx.slog.session_end(tab.id);
                                 t.state = ConnState::Closed(err);
                                 t.cmd_started = None;
                                 t.upload = None;
                             }
                         }
+                    }
+                    if t.si.waiting() || t.si.swallowing() {
+                        if t.si.waiting() && t.term.blocks().osc {
+                            // The server's shell already sends the marks.
+                            let _ = t.si.cancel();
+                        }
+                        let ready = matches!(t.state, ConnState::Connected)
+                            && t.last_output.elapsed() > Duration::from_millis(450)
+                            && t.term.at_prompt();
+                        let flush = t.si.tick(ready);
+                        if !flush.is_empty() {
+                            t.term.feed(&flush);
+                        }
+                        for m in t.si.outbox.drain(..) {
+                            let _ = t.tx.send(TermCmd::Input(m));
+                        }
+                        ctx.request_repaint_after(Duration::from_millis(200));
                     }
                     // Background notifications: a long command finished, or the bell rang.
                     if t.term.take_bell() && !seen {
@@ -2833,6 +2890,7 @@ impl App {
                 }
             }
             Action::PlayRecording(path) => self.play_recording(path, ctx),
+            Action::SessionLog(a) => crate::ui::sessionlog_ui::handle(self, a, ctx),
             Action::PortScan(id) => {
                 self.port_scan = crate::ui::portscan::PortScan::new(self, id);
             }
@@ -3366,6 +3424,10 @@ impl App {
             .collect();
         let mut toggle_log = false;
         let mut toggle_record = false;
+        let mut toggle_markers = false;
+        let mut add_marker = false;
+        let markers_open = self.termx.slog.sess.get(&tab_id).is_some_and(|s| s.panel);
+        let mut block_notice: Option<String> = None;
         let mut open_files = false;
         let mut side_action = None;
         let maint = host_id.and_then(|h| {
@@ -3427,6 +3489,16 @@ impl App {
                         open_files = true;
                     }
                 }
+                if theme::icon_toggle(
+                    ui,
+                    crate::ui::icons::Icon::Flag,
+                    t!("Marker und Notizen zur Sitzung (Ctrl+Shift+M)"),
+                    markers_open,
+                )
+                .clicked()
+                {
+                    toggle_markers = true;
+                }
                 if settings.time_travel
                     && theme::icon_toggle(
                         ui,
@@ -3476,6 +3548,57 @@ impl App {
         }
         if toggle_rewind {
             self.termx.toggle_rewind(tab_id, &t.spec);
+        }
+        if toggle_markers && let Some(s) = self.termx.slog.sess.get_mut(&tab_id) {
+            s.panel = !s.panel;
+        }
+        let mut marker_panel = None;
+        if let Some(s) = self.termx.slog.sess.get_mut(&tab_id)
+            && s.panel
+        {
+            let replay = matches!(t.spec, ConnectSpec::Replay(_));
+            let can_add = !replay || self.termx.rewind_views.contains_key(&tab_id);
+            egui::Panel::right(egui::Id::new(("term-markers", tab_id)))
+                .resizable(false)
+                .exact_size(300.0)
+                .frame(
+                    egui::Frame::NONE
+                        .fill(theme::bg_panel())
+                        .inner_margin(Margin::symmetric(14, 14)),
+                )
+                .show(ui, |ui| {
+                    marker_panel = Some(crate::ui::sessionlog_ui::panel(ui, tab_id, s, can_add));
+                });
+            if let Some(po) = &marker_panel {
+                if po.close {
+                    s.panel = false;
+                }
+                if let Some(kind) = po.export
+                    && let Some(path) = s.file().cloned()
+                {
+                    actions.push(Action::SessionLog(crate::ui::sessionlog_ui::Act::Export(
+                        path, kind,
+                    )));
+                }
+            }
+        }
+        if let Some(po) = marker_panel {
+            add_marker |= po.add;
+            if let Some((mt, at)) = po.seek {
+                let target = match at {
+                    Some(at) => self.termx.rewinds.get(&tab_id).map(|rw| rw.time_at(at)),
+                    None => Some(mt),
+                };
+                if let Some(target) = target {
+                    if !self.termx.rewind_views.contains_key(&tab_id) {
+                        self.termx.toggle_rewind(tab_id, &t.spec);
+                    }
+                    if let Some(v) = self.termx.rewind_views.get_mut(&tab_id) {
+                        v.t = target;
+                        v.playing = false;
+                    }
+                }
+            }
         }
         if let Some(m) = &maint
             && let Some(a) =
@@ -3736,7 +3859,13 @@ impl App {
                     glow: None,
                     overlay,
                     ctrl_r: ssh_session && settings.command_history,
+                    blocks: settings.command_blocks,
                 };
+                let marks = self.termx.slog.timeline_marks(
+                    tab_id,
+                    self.termx.rewinds.get(&tab_id),
+                    matches!(t.spec, ConnectSpec::Replay(_)),
+                );
                 let term_rect = ui.available_rect_before_wrap();
                 let mut out = match self.termx.rewind_views.get_mut(&tab_id) {
                     Some(v) => {
@@ -3747,6 +3876,7 @@ impl App {
                             self.termx.rewinds.get(&tab_id),
                             v,
                             view,
+                            &marks,
                         );
                         if shown.live {
                             self.termx.rewind_views.remove(&tab_id);
@@ -3792,6 +3922,22 @@ impl App {
                         }
                     }
                 }
+                if let Some(cmd) = out.rerun.take()
+                    && t.term.at_shell_prompt()
+                {
+                    // Type the command again. On PROD (and with "warn everywhere") Enter
+                    // stays with the user, who then gets the usual danger dialog.
+                    out.input.push(0x15);
+                    out.input.extend_from_slice(cmd.as_bytes());
+                    if !guarded {
+                        out.input.push(b'\r');
+                        command = Some((cmd, t.term.cwd()));
+                    }
+                }
+                if let Some(n) = out.notice.take() {
+                    block_notice = Some(n);
+                }
+                add_marker |= out.marker;
                 if let Some(text) = out.paste.take() {
                     let check = settings.paste_guard && !matches!(t.state, ConnState::Closed(_));
                     match check
@@ -3845,6 +3991,23 @@ impl App {
                             line.push_str(&String::from_utf8_lossy(&out.input[..pos]));
                             command = Some((line, t.term.cwd()));
                         }
+                        if out.input.contains(&b'\r') {
+                            // Command blocks without shell integration: the prompt heuristic
+                            // needs to know which line Enter runs.
+                            let typed = command.as_ref().map(|c| c.0.clone()).or_else(|| {
+                                let pos = out.input.iter().position(|&b| b == b'\r')?;
+                                let head = &out.input[..pos];
+                                head.iter()
+                                    .all(|&b| b >= 0x20 && b != 0x7f)
+                                    .then(|| {
+                                        let mut line = t.term.prompt_command()?;
+                                        line.push_str(&String::from_utf8_lossy(head));
+                                        Some(line)
+                                    })
+                                    .flatten()
+                            });
+                            t.term.note_enter(typed.as_deref());
+                        }
                         input = Some(out.input);
                     }
                 }
@@ -3868,9 +4031,10 @@ impl App {
                 ));
             } else {
                 let (cols, rows) = t.term.size();
-                match backend::record::Recorder::start(&title, cols, rows) {
+                match backend::record::Recorder::start_for(&title, cols, rows, host_id) {
                     Ok(mut r) => {
                         r.output(&t.term.snapshot());
+                        self.termx.slog.set_rec(tab_id, Some(r.path.clone()));
                         t.recorder = Some(r);
                     }
                     Err(e) => {
@@ -3879,11 +4043,28 @@ impl App {
                 }
             }
         }
+        let mut marker_failed = false;
+        if add_marker {
+            let replay_t = self.termx.rewind_views.get(&tab_id).map(|v| v.t);
+            marker_failed = !self
+                .termx
+                .slog
+                .add_marker(tab_id, t.recorder.as_mut(), replay_t);
+        }
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
             tab.notes_open = notes_open;
         }
         if let Some((text, color)) = record_note {
             self.toast(text, color);
+        }
+        if let Some(n) = block_notice {
+            self.toast(n, theme::accent());
+        }
+        if marker_failed {
+            self.toast(
+                t!("Marker in einer Aufnahme: erst die Zeitreise öffnen und eine Stelle wählen"),
+                theme::amber(),
+            );
         }
         if let Some((cmd, why)) = danger {
             self.danger = Some((tab_id, cmd, why));
@@ -3961,7 +4142,7 @@ impl App {
     }
 
     /// Replays a recording in a new terminal tab (Space pauses, reconnect starts over).
-    fn play_recording(&mut self, path: PathBuf, ctx: &egui::Context) {
+    pub fn play_recording(&mut self, path: PathBuf, ctx: &egui::Context) {
         let name = path
             .file_stem()
             .map(|n| n.to_string_lossy().into_owned())
@@ -4622,6 +4803,7 @@ impl eframe::App for App {
         crate::ui::palette::show(self, &ctx, &mut actions);
         crate::ui::dialogs::show(self, &ctx);
         crate::ui::history::frame(self, &ctx);
+        crate::ui::sessionlog_ui::frame(self);
         crate::ui::containers::show(self, &ctx, &mut actions);
         crate::ui::portscan::show(self, &ctx, &mut actions);
         crate::ui::net::show(self, &ctx, &mut actions);

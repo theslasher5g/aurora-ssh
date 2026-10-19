@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### New
+- **Command blocks:** every command and its output get a gutter mark (green exit 0, red
+  failed, grey unknown) and a hover toolbar (copy command/output/both, rerun, collapse,
+  duration). `Ctrl+↑/↓` jumps between commands, `Ctrl+Shift+O` copies the last output, the
+  context menu jumps to the last error. Uses OSC 133 shell integration (snippets for bash,
+  zsh, fish in Settings; optional per-host automatic setup after login), falls back to
+  guessing at the prompt.
+- **Session markers and history:** `Ctrl+Shift+M` sets a marker with a note (also written to
+  recordings as asciicast `m` events; replays keep notes in `<name>.cast.notes.json`), flags on
+  the time-travel timeline, full-text search over all recordings, session history per host,
+  export of recordings as Markdown or text.
+
 ## 0.7.1
 
 ### New
