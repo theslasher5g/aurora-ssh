@@ -58,6 +58,13 @@ DMGROOT="$STAGE/dmg"
 mkdir -p "$DMGROOT"
 cp -R "$APP" "$DMGROOT/"
 ln -s /Applications "$DMGROOT/Applications"
-hdiutil create -volname "Aurora $VERSION" -srcfolder "$DMGROOT" -ov -format UDZO \
-  "$OUT/Aurora-$VERSION-macos-universal.dmg"
+# hdiutil sometimes fails with "Resource busy" on CI runners: try again a few times.
+for attempt in 1 2 3 4 5; do
+  if hdiutil create -volname "Aurora $VERSION" -srcfolder "$DMGROOT" -ov -format UDZO \
+    "$OUT/Aurora-$VERSION-macos-universal.dmg"; then
+    break
+  fi
+  [ "$attempt" = 5 ] && exit 1
+  sleep $((attempt * 5))
+done
 ls -la "$OUT"
