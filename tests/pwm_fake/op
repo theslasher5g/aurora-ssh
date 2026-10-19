@@ -1,0 +1,28 @@
+#!/bin/sh
+# Fake `op`. State: op_locked file next to this script.
+D=$(cd "$(dirname "$0")" && pwd)
+echo "op $*" >> "$D/argv.log"
+cmd="$1"; shift
+if [ -f "$D/op_locked" ]; then echo "[ERROR] 2026/01/01 00:00:00 account is not signed in" >&2; exit 1; fi
+case "$cmd" in
+whoami) echo '{"url":"my.1password.com","email":"me@example.com"}' ;;
+item)
+  sub="$1"; shift
+  last=""; for a in "$@"; do last="$a"; done
+  if [ "$sub" = "list" ]; then
+    echo '[{"id":"abcd1234efgh5678ijkl9012mn","title":"aurora-lab","vault":{"id":"v1","name":"Private"},"category":"LOGIN","additional_information":"aurora"},{"id":"zzzz1234efgh5678ijkl9012mn","title":"web-prod","vault":{"id":"v1","name":"Private"},"category":"LOGIN","additional_information":"deploy"}]'
+  elif [ "$sub" = "get" ]; then
+    case "$last" in
+      abcd1234efgh5678ijkl9012mn) echo '{"id":"abcd1234efgh5678ijkl9012mn","title":"aurora-lab","fields":[{"id":"username","type":"STRING","purpose":"USERNAME","label":"username","value":"aurora"},{"id":"password","type":"CONCEALED","purpose":"PASSWORD","label":"password","value":"testpass123"},{"id":"notesPlain","type":"STRING","purpose":"NOTES","label":"notesPlain","value":""}]}';;
+      *) echo "[ERROR] \"$last\" isn't an item" >&2; exit 1;;
+    esac
+  fi ;;
+read)
+  last=""; for a in "$@"; do last="$a"; done
+  case "$last" in
+    op://Private/aurora-lab/password) printf %s testpass123;;
+    op://Private/aurora-lab/username) printf %s aurora;;
+    *) echo "[ERROR] could not be found" >&2; exit 1;;
+  esac ;;
+*) echo "unknown" >&2; exit 2 ;;
+esac

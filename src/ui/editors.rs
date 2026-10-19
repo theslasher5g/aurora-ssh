@@ -210,6 +210,7 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         return;
     };
     let mut new_identity = false;
+    let mut pwm_pick = false;
     let mut browse = None;
     let fonts = theme::term_fonts();
     let app_font = app.lib.settings.term_font.clone();
@@ -298,6 +299,12 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                             }
                         },
                     );
+                    if h.protocol != Protocol::Serial {
+                        f.field(ui, t!("Manager"), |ui| {
+                            pwm_pick |=
+                                crate::ui::pwmanager_ui::source_row(ui, &mut h.credential_source);
+                        });
+                    }
                 }
                 f.field(ui, t!("Gruppe"), |ui| {
                     group_combo(ui, "host-group", &mut h.group_id, &groups, None, lib);
@@ -656,6 +663,18 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
     if new_identity {
         actions.push(Action::NewIdentity);
     }
+    if pwm_pick {
+        let cur = app
+            .host_editor
+            .as_ref()
+            .and_then(|e| e.host.credential_source.clone());
+        let settings = app.lib.settings.pwm.clone();
+        app.pwm.open_picker(
+            crate::ui::pwmanager_ui::PickTarget::Host,
+            cur.as_ref(),
+            &settings,
+        );
+    }
     if let Some(host) = app.host_editor.as_ref().map(|e| e.host.clone()) {
         if route_req == Some(crate::ui::route::EditorRequest::Find) {
             crate::ui::route::start(app, host.clone(), crate::ui::route::Mode::Editor, ctx);
@@ -897,6 +916,7 @@ fn identity_editor(app: &mut App, ctx: &egui::Context) {
         return;
     };
     let mut toast = None;
+    let mut pwm_pick = false;
     let title = if *is_new {
         t!("Neuer Schlüssel")
     } else {
@@ -922,6 +942,9 @@ fn identity_editor(app: &mut App, ctx: &egui::Context) {
                             .hint_text(RichText::new(t!("Passwort")).color(theme::text_dim()))
                             .desired_width(f32::INFINITY),
                     );
+                });
+                f.field(ui, t!("Manager"), |ui| {
+                    pwm_pick |= crate::ui::pwmanager_ui::source_row(ui, &mut ident.secret_source);
                 });
                 if !key_groups.is_empty() {
                     f.field(ui, t!("Gruppe"), |ui| {
@@ -1043,6 +1066,18 @@ fn identity_editor(app: &mut App, ctx: &egui::Context) {
     let cancel = c_ || dismissed;
     if let Some((t, c)) = toast {
         app.toast(t, c);
+    }
+    if pwm_pick {
+        let cur = app
+            .identity_editor
+            .as_ref()
+            .and_then(|e| e.0.secret_source.clone());
+        let settings = app.lib.settings.pwm.clone();
+        app.pwm.open_picker(
+            crate::ui::pwmanager_ui::PickTarget::Identity,
+            cur.as_ref(),
+            &settings,
+        );
     }
     if cancel {
         app.identity_editor = None;

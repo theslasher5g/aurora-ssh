@@ -9,6 +9,12 @@ pub mod local;
 pub mod logs;
 pub mod portscan;
 pub mod proxmox;
+pub mod pwmanager_cli;
+pub mod pwmanager_proton;
+pub mod pwmanager_run;
+#[cfg(all(test, unix))]
+mod pwmanager_tests;
+pub mod pwmanager_types;
 pub mod rdp;
 pub mod rdp_embed;
 pub mod reach;

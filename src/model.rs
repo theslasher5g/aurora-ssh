@@ -334,6 +334,10 @@ pub struct Host {
     /// Wake-on-LAN: MAC address and where to send the magic packet.
     #[serde(default)]
     pub wol: WolSettings,
+    /// Password (and optionally user name) from an external password manager; only the
+    /// reference is stored here.
+    #[serde(default)]
+    pub credential_source: Option<crate::backend::pwmanager_types::CredentialSource>,
 }
 
 /// Wake-on-LAN settings of a host.
@@ -376,6 +380,7 @@ impl Default for Host {
             persistent: false,
             cert: CertSettings::default(),
             wol: WolSettings::default(),
+            credential_source: None,
         }
     }
 }
@@ -545,6 +550,9 @@ pub struct Identity {
     pub passphrase: String,
     /// Keychain group (`Keychain::groups`); `None` = "Ohne Gruppe".
     pub group_id: Option<Uuid>,
+    /// Password or private key taken from a password manager at connect time (only the
+    /// reference is stored; the vault does not hold the secret).
+    pub secret_source: Option<crate::backend::pwmanager_types::CredentialSource>,
 }
 
 impl Identity {
@@ -762,6 +770,8 @@ pub struct Settings {
     pub paste_guard: bool,
     /// Keep the last 30 minutes of each terminal's output for rewinding.
     pub time_travel: bool,
+    /// Password-manager integration (Bitwarden, 1Password, KeePassXC, Proton Pass).
+    pub pwm: crate::backend::pwmanager_types::PwmSettings,
 }
 
 impl Default for Settings {
@@ -790,6 +800,7 @@ impl Default for Settings {
             snippet_hints_dismissed: Vec::new(),
             paste_guard: true,
             time_travel: true,
+            pwm: Default::default(),
         }
     }
 }
