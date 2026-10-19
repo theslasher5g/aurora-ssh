@@ -762,6 +762,8 @@ pub struct Settings {
     pub paste_guard: bool,
     /// Keep the last 30 minutes of each terminal's output for rewinding.
     pub time_travel: bool,
+    /// Warning thresholds of the server inventory page.
+    pub inventory: crate::backend::inventory_rules::InventorySettings,
 }
 
 impl Default for Settings {
@@ -790,6 +792,7 @@ impl Default for Settings {
             snippet_hints_dismissed: Vec::new(),
             paste_guard: true,
             time_travel: true,
+            inventory: Default::default(),
         }
     }
 }
@@ -874,6 +877,9 @@ pub struct Library {
     /// Active maintenance windows of hosts and groups.
     #[serde(default)]
     pub maintenance: Vec<crate::ui::maintenance::Maintenance>,
+    /// Container page: marked/hidden container hosts and remembered namespaces.
+    #[serde(default)]
+    pub ctr: crate::backend::containers_parse::CtrPrefs,
 }
 
 /// Network data Aurora remembers between runs.
@@ -903,6 +909,15 @@ pub struct HostFacts {
     pub updates: Option<u32>,
     pub proxmox: bool,
     pub collected: Option<DateTime<Utc>>,
+    /// Kernel release (`uname -r`).
+    pub kernel: String,
+    /// Pending updates that come from a security repository, if known.
+    pub security_updates: Option<u32>,
+    pub cpus: Option<u32>,
+    pub mem_total_mb: Option<u64>,
+    pub mem_used_pct: Option<u8>,
+    /// Load average over one minute.
+    pub load1: Option<f32>,
 }
 
 impl HostFacts {
@@ -929,6 +944,12 @@ impl HostFacts {
                 "disk" => f.disk_used_pct = v.trim().trim_end_matches('%').parse().ok(),
                 "upd" => f.updates = v.trim().parse().ok(),
                 "pve" => f.proxmox = v.trim() == "1",
+                "kernel" => f.kernel = clean(v),
+                "supd" => f.security_updates = v.trim().parse().ok(),
+                "cpus" => f.cpus = v.trim().parse().ok().filter(|n| *n > 0),
+                "mem" => f.mem_total_mb = v.trim().parse().ok().filter(|n| *n > 0),
+                "memused" => f.mem_used_pct = v.trim().parse::<u8>().ok().filter(|n| *n <= 100),
+                "load" => f.load1 = v.trim().parse().ok(),
                 _ => {}
             }
         }

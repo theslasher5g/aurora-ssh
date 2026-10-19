@@ -1,6 +1,8 @@
 pub mod certradar;
 pub mod chrome;
 pub mod containers;
+pub mod containers_page;
+pub mod containers_sheets;
 pub mod diag;
 pub mod dialogs;
 pub mod editors;
@@ -9,6 +11,8 @@ pub mod history;
 pub mod hostkey;
 pub mod hosts;
 pub mod icons;
+pub mod inventory_page;
+pub mod inventory_table;
 pub mod keychain;
 pub mod lock;
 pub mod logview;

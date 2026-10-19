@@ -109,6 +109,16 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         ),
         ("CMD", "Snippets anzeigen", Action::Navigate(View::Snippets)),
         ("CMD", "Proxmox anzeigen", Action::Navigate(View::Proxmox)),
+        (
+            "CMD",
+            "Container anzeigen",
+            Action::Navigate(View::Containers),
+        ),
+        (
+            "CMD",
+            "Inventar anzeigen",
+            Action::Navigate(View::Inventory),
+        ),
         ("CMD", "Einstellungen", Action::Navigate(View::Settings)),
         ("CMD", "Tresor sperren", Action::Lock),
     ];

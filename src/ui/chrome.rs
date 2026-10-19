@@ -375,6 +375,8 @@ fn rail_top(app: &mut App, ui: &mut egui::Ui, wide: bool, low: bool, actions: &m
         (View::Files, Icon::Folder, "Dateien"),
         (View::Snippets, Icon::Bolt, "Snippets"),
         (View::Proxmox, Icon::Server, "Proxmox"),
+        (View::Containers, Icon::Cube, "Container"),
+        (View::Inventory, Icon::Table, "Inventar"),
     ] {
         if nav_item(
             ui,

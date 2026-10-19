@@ -266,7 +266,7 @@ async fn list(
 }
 
 /// Turns typical CLI failures into a hint what to do.
-fn explain(cli: &str, msg: &str) -> String {
+pub(crate) fn explain(cli: &str, msg: &str) -> String {
     let low = msg.to_lowercase();
     let hint = if low.contains("not found") || low.contains("nicht gefunden") {
         t!("{} ist dort nicht installiert.", cli)

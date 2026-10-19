@@ -60,6 +60,10 @@ pub enum Icon {
     Down,
     /// Diagnostics bundle: heartbeat line.
     Pulse,
+    /// Container (cube).
+    Cube,
+    /// Table of servers.
+    Table,
 }
 
 enum Prim {
@@ -190,6 +194,14 @@ fn prims(icon: Icon) -> &'static [Prim] {
         )],
         Icon::Down => &[Path("M12 5v14M6 13l6 6 6-6")],
         Icon::Pulse => &[Path("M3 12h4l3-8 4 16 3-8h4")],
+        Icon::Cube => &[
+            Path("M12 3l8 4.5v9L12 21l-8-4.5v-9z"),
+            Path("M4 7.5l8 4.5 8-4.5M12 12v9"),
+        ],
+        Icon::Table => &[
+            R(3.0, 4.0, 18.0, 16.0, 2.0),
+            Path("M3 10h18M3 15h18M9 10v10"),
+        ],
     }
 }
 
@@ -580,7 +592,7 @@ mod tests {
             Sparkle, Close, Split, Maximize, Exit, External, Keyboard, Expand, Monitor, Up,
             Refresh, File, Lock, Broadcast, Download, Terminal, Windows, Upload, Trash, Copy, Wrap,
             Pause, Play, Stop, Server, Logs, Record, Clock, Shield, Route, Power, Checklist,
-            Wrench, Down, Pulse,
+            Wrench, Down, Pulse, Cube, Table,
         ] {
             for prim in prims(icon) {
                 if let Prim::Path(d) = prim {

@@ -28,6 +28,10 @@ pub enum View {
     Settings,
     Help,
     Proxmox,
+    /// Docker/Kubernetes overview.
+    Containers,
+    /// Server inventory table.
+    Inventory,
 }
 
 #[derive(Clone)]
@@ -610,6 +614,10 @@ pub struct App {
     pub net: crate::ui::net::NetState,
     /// Runbooks, maintenance windows, diagnostics bundles.
     pub ops: crate::ui::ops::OpsState,
+    /// Docker/Kubernetes overview page.
+    pub ctr: crate::ui::containers_page::CtrState,
+    /// Server inventory page.
+    pub inv: crate::ui::inventory_page::InvState,
 }
 
 /// UI intents collected while drawing and applied afterwards.
@@ -699,6 +707,10 @@ pub enum Action {
     Net(crate::ui::net::NetAction),
     /// Runbooks, maintenance windows, diagnostics bundles.
     Ops(crate::ui::ops::OpsAction),
+    /// Container overview page.
+    Ctr(crate::ui::containers_page::CtrAction),
+    /// Server inventory page.
+    Inv(crate::ui::inventory_page::InvAction),
 }
 
 impl App {
@@ -809,6 +821,8 @@ impl App {
             termx: Default::default(),
             net: Default::default(),
             ops: Default::default(),
+            ctr: Default::default(),
+            inv: Default::default(),
         }
     }
 
@@ -2440,6 +2454,8 @@ impl App {
     fn pump_events(&mut self, ctx: &egui::Context) {
         self.pump_updates(ctx);
         crate::ui::proxmox::pump(self);
+        crate::ui::containers_page::pump(self, ctx);
+        crate::ui::inventory_page::pump(self, ctx);
         while let Ok(p) = self.prompts_rx.try_recv() {
             self.hostkey_queue.push_back(p);
         }
@@ -3049,6 +3065,8 @@ impl App {
             Action::Pve(a) => crate::ui::proxmox::apply(self, a, ctx),
             Action::Net(a) => crate::ui::net::apply(self, a, ctx),
             Action::Ops(a) => crate::ui::ops::apply(self, a, ctx),
+            Action::Ctr(a) => crate::ui::containers_page::apply(self, a, ctx),
+            Action::Inv(a) => crate::ui::inventory_page::apply(self, a, ctx),
             Action::OpenGroup(gid) => {
                 let hosts: Vec<Host> = self
                     .lib
@@ -4591,6 +4609,10 @@ impl eframe::App for App {
                         View::Settings => crate::ui::settings::show(self, ui, &mut actions),
                         View::Help => crate::ui::help::show(self, ui),
                         View::Proxmox => crate::ui::proxmox::show(self, ui, &mut actions),
+                        View::Containers => {
+                            crate::ui::containers_page::show(self, ui, &mut actions)
+                        }
+                        View::Inventory => crate::ui::inventory_page::show(self, ui, &mut actions),
                     });
             }
         }
@@ -4626,6 +4648,7 @@ impl eframe::App for App {
         crate::ui::portscan::show(self, &ctx, &mut actions);
         crate::ui::net::show(self, &ctx, &mut actions);
         crate::ui::ops::show(self, &ctx, &mut actions);
+        crate::ui::containers_page::sheets(self, &ctx);
         self.toasts_ui(&ctx);
 
         for a in actions {
