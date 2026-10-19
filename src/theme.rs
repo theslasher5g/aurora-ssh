@@ -719,7 +719,64 @@ pub fn find(id: &str) -> Palette {
         .iter()
         .copied()
         .find(|t| t.id == id)
+        .or_else(|| custom_palettes().into_iter().find(|t| t.id == id))
         .unwrap_or(THEMES[0])
+}
+
+/// An imported theme with the colors a `Palette` cannot hold.
+#[derive(Clone, Copy)]
+struct CustomEntry {
+    palette: Palette,
+    cursor: Option<Color32>,
+    selection: Option<Color32>,
+}
+
+static CUSTOM: RwLock<Vec<CustomEntry>> = RwLock::new(Vec::new());
+static INTERNED: RwLock<Vec<&'static str>> = RwLock::new(Vec::new());
+
+/// A `'static` copy of `s` (palettes of imported themes carry `&'static str` names). Equal
+/// strings share one copy, so renaming back and forth does not grow memory.
+pub fn intern(s: &str) -> &'static str {
+    if let Some(found) = INTERNED.read().unwrap().iter().find(|x| **x == s) {
+        return found;
+    }
+    let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
+    INTERNED.write().unwrap().push(leaked);
+    leaked
+}
+
+/// Replaces the imported themes: (palette, cursor color, selection color).
+pub fn set_custom(list: Vec<(Palette, Option<Color32>, Option<Color32>)>) {
+    *CUSTOM.write().unwrap() = list
+        .into_iter()
+        .map(|(palette, cursor, selection)| CustomEntry {
+            palette,
+            cursor,
+            selection,
+        })
+        .collect();
+}
+
+/// Imported themes, in the order they were added.
+pub fn custom_palettes() -> Vec<Palette> {
+    CUSTOM.read().unwrap().iter().map(|e| e.palette).collect()
+}
+
+/// Built-in themes followed by the imported ones.
+pub fn all_themes() -> Vec<Palette> {
+    THEMES.iter().copied().chain(custom_palettes()).collect()
+}
+
+/// Cursor and selection color an imported theme brings along (built-in themes: `None`,
+/// the terminal then derives both from the accent).
+pub fn term_extras(p: &Palette) -> (Option<Color32>, Option<Color32>) {
+    CUSTOM
+        .read()
+        .unwrap()
+        .iter()
+        .find(|e| e.palette.id == p.id)
+        .map(|e| (e.cursor, e.selection))
+        .unwrap_or((None, None))
 }
 
 pub fn bg_deep() -> Color32 {

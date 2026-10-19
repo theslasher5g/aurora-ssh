@@ -348,6 +348,7 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                                  nach einem Abbruch landet das Neu-Verbinden in derselben Session \
                                  mit allen laufenden Programmen."
                             ));
+                        crate::ui::reconnect_auto::host_row(ui, f, &mut h.auto_reconnect);
                     });
                     crate::ui::sshca::host_section(ui, h, has_ca);
                     let key_id = format!("{}:{}", h.hostname.trim(), h.port);
@@ -724,7 +725,7 @@ fn term_profile(
                 .height(360.0)
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut p.theme, String::new(), t!("— wie die App —"));
-                    for t in theme::THEMES.iter() {
+                    for t in theme::all_themes().iter() {
                         ui.horizontal(|ui| {
                             let (r, _) =
                                 ui.allocate_exact_size(Vec2::new(26.0, 14.0), egui::Sense::hover());

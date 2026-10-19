@@ -15,6 +15,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     key_setup(app, ctx);
     scan(app, ctx);
     tour(app, ctx);
+    crate::ui::whatsnew_sheet::show(app, ctx);
 }
 
 /// Enter on a dangerous command in a guarded (PROD) session.

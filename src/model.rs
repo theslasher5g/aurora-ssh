@@ -334,6 +334,19 @@ pub struct Host {
     /// Wake-on-LAN: MAC address and where to send the magic packet.
     #[serde(default)]
     pub wol: WolSettings,
+    /// Reconnect this host's session automatically after an unexpected drop.
+    #[serde(default)]
+    pub auto_reconnect: ReconnectMode,
+}
+
+/// Per-host override of the global "reconnect automatically" switch.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
+pub enum ReconnectMode {
+    /// Follow the global setting.
+    #[default]
+    Default,
+    On,
+    Off,
 }
 
 /// Wake-on-LAN settings of a host.
@@ -376,6 +389,7 @@ impl Default for Host {
             persistent: false,
             cert: CertSettings::default(),
             wol: WolSettings::default(),
+            auto_reconnect: ReconnectMode::Default,
         }
     }
 }
@@ -762,6 +776,14 @@ pub struct Settings {
     pub paste_guard: bool,
     /// Keep the last 30 minutes of each terminal's output for rewinding.
     pub time_travel: bool,
+    /// Reconnect SSH sessions automatically after an unexpected drop.
+    pub auto_reconnect: bool,
+    /// Give up after this many minutes without success.
+    pub auto_reconnect_minutes: u32,
+    /// Version whose "What's new" was last shown (empty = never).
+    pub last_seen_version: String,
+    /// Imported terminal colour schemes (shown as themes).
+    pub custom_themes: Vec<crate::themeimport_parse::Scheme>,
 }
 
 impl Default for Settings {
@@ -790,6 +812,10 @@ impl Default for Settings {
             snippet_hints_dismissed: Vec::new(),
             paste_guard: true,
             time_travel: true,
+            auto_reconnect: true,
+            auto_reconnect_minutes: 10,
+            last_seen_version: String::new(),
+            custom_themes: Vec::new(),
         }
     }
 }

@@ -545,6 +545,16 @@ fn ports(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             tab.env,
         );
         let tile = resp.rect;
+        if matches!(&tab.kind, TabKind::Term(t) if t.auto.is_some()) {
+            // Waiting for the automatic reconnect.
+            ui.painter().text(
+                tile.right_bottom() - Vec2::new(11.0, 11.0),
+                egui::Align2::CENTER_CENTER,
+                "⟳",
+                egui::FontId::proportional(14.0),
+                theme::amber(),
+            );
+        }
         // Low windows scroll the rail: keep the active session in view (unless the
         // pointer is on the rail, where the user may be scrolling).
         if app.active == Some(tab.id) {

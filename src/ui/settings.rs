@@ -74,6 +74,7 @@ fn appearance(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
         }
         ui.add_space(12.0);
     }
+    crate::ui::themeimport_ui::section(app, ui, changed);
     ui.add_space(14.0);
     caption(ui, t!("Ansicht"));
     theme::settings_card(ui, |ui, rows| {
@@ -372,6 +373,7 @@ fn general(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>, changed:
                 *changed |= theme::toggle(ui, &mut app.lib.settings.restore_sessions).changed();
             },
         );
+        crate::ui::reconnect_auto::settings_rows(app, ui, rows, changed);
         rows.setting(
             ui,
             "Editor",
@@ -639,7 +641,12 @@ fn updates(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
 }
 
 /// Clickable mini preview of a theme, drawn in the theme's own colours.
-fn theme_card(ui: &mut egui::Ui, t: &theme::Palette, width: f32, selected: bool) -> egui::Response {
+pub(crate) fn theme_card(
+    ui: &mut egui::Ui,
+    t: &theme::Palette,
+    width: f32,
+    selected: bool,
+) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 104.0), egui::Sense::click());
     let p = ui.painter();
     p.rect_filled(rect, CornerRadius::same(12), t.bg_card);

@@ -94,6 +94,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 );
                 ui.add_space(10.0);
             }
+            if theme::btn(ui, theme::Btn::Small, None, t!("Was ist neu")).clicked() {
+                crate::ui::whatsnew_sheet::open_flag(&mut app.whatsnew);
+            }
             let width = bar.flex(160.0, 240.0);
             theme::search_field(
                 ui,
