@@ -137,7 +137,14 @@ async fn run_ssh(
     events.send(LogEvent::Status(t!("Verbinde mit {}…", p.host_id())));
     let handle = connect(&p, prompts).await?;
     let mut ch = handle.channel_open_session().await?;
-    ch.exec(true, format!("{} 2>&1", source.command())).await?;
+    ch.exec(
+        true,
+        format!(
+            "export TERM=${{TERM:-xterm-256color}} COLUMNS=${{COLUMNS:-200}}; {} 2>&1",
+            source.command()
+        ),
+    )
+    .await?;
     events.send(LogEvent::Connected);
     let mut lines = Lines::default();
     let mut status = None;

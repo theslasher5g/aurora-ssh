@@ -329,6 +329,8 @@ pub enum Act {
     Export(PathBuf, Kind),
     /// Show the session history of a host.
     History(Uuid),
+    /// Remove sessions from the history, and their recordings.
+    Delete(Vec<String>, Vec<PathBuf>),
 }
 
 pub fn handle(app: &mut App, act: Act, ctx: &egui::Context) {
@@ -357,6 +359,13 @@ pub fn handle(app: &mut App, act: Act, ctx: &egui::Context) {
             });
             app.termx.slog.exports.push(rx);
             app.toast(t!("Export läuft…"), theme::accent());
+        }
+        Act::Delete(ids, files) => {
+            sessionlog_history::remove(&ids);
+            for f in files {
+                let _ = std::fs::remove_file(f);
+            }
+            app.toast(t!("Gelöscht"), theme::accent());
         }
         Act::History(h) => {
             app.termx.slog.history_host = Some(h);
@@ -502,6 +511,8 @@ pub fn panel(ui: &mut egui::Ui, tab: u64, s: &mut Sess, can_add: bool) -> PanelO
 /// One line of the session history.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HistRow {
+    /// Session id in the history file (empty for recordings the file does not know).
+    pub id: String,
     pub start: i64,
     pub duration: Option<f64>,
     pub name: String,
@@ -529,6 +540,7 @@ pub fn build_history(
             seen.push(r.clone());
         }
         rows.push(HistRow {
+            id: s.id.clone(),
             start: s.start,
             duration: s.duration().map(|d| d as f64).or(entry.map(|e| e.duration)),
             name: s.name.clone(),
@@ -551,6 +563,7 @@ pub fn build_history(
             };
             if ours {
                 rows.push(HistRow {
+                    id: String::new(),
                     start: e.start,
                     duration: Some(e.duration),
                     name: e.title.clone(),
@@ -732,7 +745,27 @@ pub fn settings_cards(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action
                 ui.label(RichText::new(t!("Noch keine Sitzungen")).color(theme::text_dim()));
             });
         }
-        for r in list.iter().take(40) {
+        let more_id = egui::Id::new("history-more");
+        let all = ui.data(|d| d.get_temp::<bool>(more_id)).unwrap_or(false);
+        let stale: Vec<&HistRow> = list.iter().filter(|r| r.rec.is_none()).collect();
+        if !stale.is_empty() {
+            rows.full(ui, |ui| {
+                if theme::btn(
+                    ui,
+                    Btn::Small,
+                    Some(Icon::Trash),
+                    &t!("Nicht aufgenommene löschen ({})", stale.len()),
+                )
+                .clicked()
+                {
+                    actions.push(Action::SessionLog(Act::Delete(
+                        stale.iter().map(|r| r.id.clone()).collect(),
+                        Vec::new(),
+                    )));
+                }
+            });
+        }
+        for r in list.iter().take(if all { 200 } else { 12 }) {
             let dur = r
                 .duration
                 .map(|d| crate::ui::short_duration(Duration::from_secs_f64(d)))
@@ -753,6 +786,12 @@ pub fn settings_cards(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action
                 help
             };
             rows.setting(ui, &r.name, Some(&help), |ui| {
+                if theme::btn(ui, Btn::Small, Some(Icon::Trash), "").clicked() {
+                    actions.push(Action::SessionLog(Act::Delete(
+                        vec![r.id.clone()],
+                        r.rec.iter().map(|f| dir.join(f)).collect(),
+                    )));
+                }
                 if let Some(file) = &r.rec {
                     let path = dir.join(file);
                     if !path.exists() {
@@ -774,6 +813,18 @@ pub fn settings_cards(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action
                     if theme::btn(ui, Btn::Small, Some(Icon::Play), t!("Abspielen")).clicked() {
                         actions.push(Action::PlayRecording(path));
                     }
+                }
+            });
+        }
+        if list.len() > 12 {
+            rows.full(ui, |ui| {
+                let label = if all {
+                    t!("Weniger anzeigen").to_string()
+                } else {
+                    t!("Alle {} anzeigen", list.len())
+                };
+                if theme::btn(ui, Btn::Link, None, &label).clicked() {
+                    ui.data_mut(|d| d.insert_temp(more_id, !all));
                 }
             });
         }

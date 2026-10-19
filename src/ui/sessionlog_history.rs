@@ -103,7 +103,72 @@ pub fn parse(text: &str) -> Vec<Session> {
     list
 }
 
+/// Sessions without a recording that are kept (the newest ones).
+const KEEP_UNRECORDED: usize = 20;
+/// Sessions kept in total.
+const KEEP_TOTAL: usize = 300;
+
+/// Ids to drop so that only the newest unrecorded sessions and at most `KEEP_TOTAL`
+/// remain (recordings are never dropped by age here).
+pub fn prune_ids(sessions: &[Session]) -> Vec<String> {
+    let mut drop = Vec::new();
+    let mut unrecorded = 0;
+    for (i, s) in sessions.iter().enumerate() {
+        let over = if s.rec.is_none() {
+            unrecorded += 1;
+            unrecorded > KEEP_UNRECORDED
+        } else {
+            false
+        };
+        if over || i >= KEEP_TOTAL {
+            drop.push(s.id.clone());
+        }
+    }
+    drop
+}
+
+/// Removes the sessions with these ids from the history file.
+pub fn remove(ids: &[String]) {
+    remove_in(&path(), ids);
+}
+
+pub fn remove_in(path: &std::path::Path, ids: &[String]) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|l| {
+            serde_json::from_str::<Line>(l)
+                .map(|x| !ids.contains(&x.id))
+                .unwrap_or(false)
+        })
+        .collect();
+    let mut out = kept.join("\n");
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    let _ = std::fs::write(path, out);
+}
+
+/// Once per run: trims the history so it does not fill up.
+fn prune_once() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let Ok(text) = std::fs::read_to_string(path()) else {
+        return;
+    };
+    let drop = prune_ids(&parse(&text));
+    if !drop.is_empty() {
+        remove(&drop);
+    }
+}
+
 pub fn load() -> Vec<Session> {
+    prune_once();
     std::fs::read_to_string(path())
         .map(|t| parse(&t))
         .unwrap_or_default()
@@ -148,5 +213,46 @@ mod tests {
         // No command text anywhere in the file.
         assert!(!text.contains("cmd"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::*;
+
+    #[test]
+    fn keeps_recordings_and_newest_unrecorded() {
+        let list: Vec<Session> = (0..30)
+            .map(|i| Session {
+                id: format!("s{i}"),
+                start: 1000 - i,
+                rec: (i == 25).then(|| "a.cast".to_string()),
+                ..Default::default()
+            })
+            .collect();
+        let drop = prune_ids(&list);
+        assert_eq!(drop.len(), 30 - 1 - KEEP_UNRECORDED);
+        assert!(!drop.contains(&"s25".to_string()));
+        assert!(!drop.contains(&"s0".to_string()));
+    }
+
+    #[test]
+    fn removes_both_lines_of_a_session() {
+        let f = std::env::temp_dir().join(format!("aurora-hist-{}.jsonl", std::process::id()));
+        for (ev, id) in [("start", "a"), ("start", "b"), ("end", "a")] {
+            append_to(
+                &f,
+                &Line {
+                    ev: ev.into(),
+                    id: id.into(),
+                    ..Default::default()
+                },
+            );
+        }
+        remove_in(&f, &["a".to_string()]);
+        let text = std::fs::read_to_string(&f).unwrap();
+        assert_eq!(text.lines().count(), 1);
+        assert!(text.contains("\"b\""));
+        let _ = std::fs::remove_file(&f);
     }
 }
