@@ -394,6 +394,11 @@ fn rail_top(app: &mut App, ui: &mut egui::Ui, wide: bool, low: bool, actions: &m
     }
     tunnel_item(app, ui, wide, actions);
     xfer_item(app, ui, wide);
+    if wide {
+        crate::ui::nav_rail::sections(app, ui, actions);
+    } else {
+        crate::ui::nav_rail::scope_tile(app, ui, actions);
+    }
 
     if !app.tabs.is_empty() {
         ui.add_space(6.0);

@@ -304,8 +304,10 @@ pub fn visible(app: &App, now: chrono::DateTime<Utc>) -> (Vec<Row>, Vec<Col>) {
         only_prod: app.inv.only_prod,
         group: app.inv.group,
     };
+    let scope = app.lib.nav.scope;
     let mut rows: Vec<Row> = rules::rows(&app.lib, now)
         .into_iter()
+        .filter(|r| scope.is_none_or(|s| r.group_chain.contains(&s)))
         .filter(|r| rules::matches(r, &filter))
         .collect();
     let sort = Col::from_key(&s.sort_col).unwrap_or(Col::Name);
@@ -326,7 +328,9 @@ pub fn columns(s: &InventorySettings) -> Vec<Col> {
 
 pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     let now = Utc::now();
-    let all = rules::rows(&app.lib, now);
+    let scope = app.lib.nav.scope;
+    let mut all = rules::rows(&app.lib, now);
+    all.retain(|r| scope.is_none_or(|s| r.group_chain.contains(&s)));
     let summary = rules::summarize(&all);
     let (rows, cols) = visible(app, now);
     if app.inv.run.as_ref().is_some_and(Run::active) {
@@ -359,10 +363,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         .collect();
 
     let mut text = std::mem::take(&mut st.text);
+    let mut chip_actions = Vec::new();
+    let app_ref = &*app;
     theme::page_header(
         ui,
         "inv",
-        |ui| theme::page_title(ui, t!("Inventar"), Some(rows.len())),
+        |ui| {
+            theme::page_title(ui, t!("Inventar"), Some(rows.len()));
+            crate::ui::nav_list::scope_chip(app_ref, ui, &mut chip_actions);
+        },
         |_| {},
         |ui, bar| {
             export_button(ui, bar.compact, actions);
@@ -394,6 +403,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         },
     );
     st.text = text;
+    actions.append(&mut chip_actions);
     ui.add_space(14.0);
 
     tiles(ui, &summary, &mut st);

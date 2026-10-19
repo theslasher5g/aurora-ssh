@@ -36,6 +36,7 @@ mod ui_v072_inv;
 mod ui_v072_logvars;
 mod ui_v072_pwm;
 mod ui_v081_inventory;
+mod ui_v082_scale;
 mod ui_vnc;
 
 static ENGLISH: AtomicBool = AtomicBool::new(false);
@@ -72,6 +73,7 @@ const TABLES: &[&[(&str, &str)]] = &[
     ui_vnc::T,
     ui_v072_blocks::T,
     ui_v081_inventory::T,
+    ui_v082_scale::T,
 ];
 
 /// "de", "en" or "" (follow the system: German for German locales, English otherwise).

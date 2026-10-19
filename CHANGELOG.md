@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.9.0
+
+### Large inventories
+- **Group tree for 20 000+ hosts:** customer -> site/type -> host as a collapsible tree with a
+  count per group ("Acme · 214"), a status roll-up on every group (red = unreachable or
+  critical, amber = warnings from the collected facts), a letter badge in the group colour,
+  pinned groups on top and groups sorted by name (numbers sort naturally). Expand/collapse
+  all, expansion is remembered, and only the visible rows are drawn (virtual scrolling), so
+  the list stays smooth and opens fast; the flattened rows are cached.
+- **Keyboard:** arrows move, Enter opens a host or toggles a group, Right/Left expand/collapse
+  (Left also jumps to the parent), Space selects, Home/End/PageUp/PageDown; typing starts the
+  search. A breadcrumb above the list shows where you are.
+- **Only this customer (focus):** right-click a group -> "Show only this group" scopes the
+  list, the palette (Ctrl+K), the inventory page and the bulk actions to it; a chip with an
+  X in the page header and in the sidebar ends it.
+- **Search language:** `customer/site/name`, `type:switch`, `tag:x` / `#x`, `env:prod`,
+  `is:down|up|unknown|fav|warn|maint|live`, `ip:10.1.` (or just `10.1.`), `os:ubuntu`,
+  `group:x`, `-` negates, `"quotes"` keep spaces. Free words still match fuzzily.
+- **Saved views** (search + protocol filter + sort + focus + list/table) in the sidebar and
+  the "Views" menu; recent hosts and pinned groups in the sidebar and as chips above the list.
+- **Table view** next to the list (remembered per focus): name, address, type, tags, status,
+  last seen, environment, group; sortable, resizable and hideable columns (right-click the
+  header), automatic column dropping in narrow windows, Ctrl/Shift multi-select and the host
+  context menu.
+- **Group actions:** pin, badge letters, set the environment or add/remove a tag on all hosts
+  of a group (with confirmation and count); "Open all" shows how many hosts it connects.
+- Reachability probes run at most 128 at a time, hosts in view first, and results show up as
+  they arrive; big libraries are written to disk compactly; `AURORA_PERF=1` prints frame times.
+
 ## 0.8.1
 
 ### Servers

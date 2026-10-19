@@ -67,10 +67,13 @@ impl Store {
     }
 
     pub fn save_library(&self, lib: &Library) -> Result<()> {
-        write_atomic(
-            &self.library_path(),
-            serde_json::to_string_pretty(lib)?.as_bytes(),
-        )
+        // Big inventories (megabytes) are written compactly: several times faster.
+        let json = if lib.hosts.len() > 2000 {
+            serde_json::to_string(lib)?
+        } else {
+            serde_json::to_string_pretty(lib)?
+        };
+        write_atomic(&self.library_path(), json.as_bytes())
     }
 
     pub fn vault_exists(&self) -> bool {
