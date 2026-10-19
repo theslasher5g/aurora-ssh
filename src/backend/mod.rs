@@ -3,8 +3,13 @@
 
 pub mod certradar;
 pub mod container;
+pub mod containers_parse;
+pub mod containers_run;
 pub mod diag;
 pub mod hostkey_check;
+pub mod inventory_export;
+pub mod inventory_refresh;
+pub mod inventory_rules;
 pub mod local;
 pub mod logs;
 pub mod portscan;

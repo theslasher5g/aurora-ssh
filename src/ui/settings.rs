@@ -427,6 +427,8 @@ fn general(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>, changed:
             },
         );
     });
+    ui.add_space(22.0);
+    crate::ui::inventory_page::settings_card(app, ui, changed);
 }
 
 fn security(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>, changed: &mut bool) {

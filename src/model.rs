@@ -784,6 +784,8 @@ pub struct Settings {
     pub last_seen_version: String,
     /// Imported terminal colour schemes (shown as themes).
     pub custom_themes: Vec<crate::themeimport_parse::Scheme>,
+    /// Warning thresholds of the server inventory page.
+    pub inventory: crate::backend::inventory_rules::InventorySettings,
 }
 
 impl Default for Settings {
@@ -816,6 +818,7 @@ impl Default for Settings {
             auto_reconnect_minutes: 10,
             last_seen_version: String::new(),
             custom_themes: Vec::new(),
+            inventory: Default::default(),
         }
     }
 }
@@ -903,6 +906,9 @@ pub struct Library {
     /// Recent values of `{{variables}}` in log commands, newest first.
     #[serde(default)]
     pub log_var_history: HashMap<String, Vec<String>>,
+    /// Container page: marked/hidden container hosts and remembered namespaces.
+    #[serde(default)]
+    pub ctr: crate::backend::containers_parse::CtrPrefs,
 }
 
 /// Network data Aurora remembers between runs.
@@ -932,6 +938,15 @@ pub struct HostFacts {
     pub updates: Option<u32>,
     pub proxmox: bool,
     pub collected: Option<DateTime<Utc>>,
+    /// Kernel release (`uname -r`).
+    pub kernel: String,
+    /// Pending updates that come from a security repository, if known.
+    pub security_updates: Option<u32>,
+    pub cpus: Option<u32>,
+    pub mem_total_mb: Option<u64>,
+    pub mem_used_pct: Option<u8>,
+    /// Load average over one minute.
+    pub load1: Option<f32>,
 }
 
 impl HostFacts {
@@ -958,6 +973,12 @@ impl HostFacts {
                 "disk" => f.disk_used_pct = v.trim().trim_end_matches('%').parse().ok(),
                 "upd" => f.updates = v.trim().parse().ok(),
                 "pve" => f.proxmox = v.trim() == "1",
+                "kernel" => f.kernel = clean(v),
+                "supd" => f.security_updates = v.trim().parse().ok(),
+                "cpus" => f.cpus = v.trim().parse().ok().filter(|n| *n > 0),
+                "mem" => f.mem_total_mb = v.trim().parse().ok().filter(|n| *n > 0),
+                "memused" => f.mem_used_pct = v.trim().parse::<u8>().ok().filter(|n| *n <= 100),
+                "load" => f.load1 = v.trim().parse().ok(),
                 _ => {}
             }
         }

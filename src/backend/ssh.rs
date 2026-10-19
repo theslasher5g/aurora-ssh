@@ -605,9 +605,9 @@ fn cert_note(login: &super::sshca::CertLogin) -> Option<String> {
 
 /// Read-only system facts: os-release, hostname, uptime, root disk, pending updates.
 /// Runs under `sh` so it works whatever the login shell is.
-const FACTS_SCRIPT: &str = r#"sh -c '. /etc/os-release 2>/dev/null; echo "id=$ID"; echo "name=$PRETTY_NAME"; echo "host=$(hostname 2>/dev/null || cat /etc/hostname 2>/dev/null)"; echo "up=$(cut -d. -f1 /proc/uptime 2>/dev/null)"; echo "disk=$(df -P / 2>/dev/null | awk "NR==2{print \$5}")"; command -v pveversion >/dev/null 2>&1 && echo pve=1; if command -v apt-get >/dev/null 2>&1; then echo "upd=$(apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null | grep -c "^Inst ")"; elif command -v dnf >/dev/null 2>&1; then echo "upd=$(dnf -q --cacheonly check-update 2>/dev/null | grep -c "^[a-zA-Z0-9]")"; fi'"#;
+const FACTS_SCRIPT: &str = r#"sh -c '. /etc/os-release 2>/dev/null; echo "id=$ID"; echo "name=$PRETTY_NAME"; echo "host=$(hostname 2>/dev/null || cat /etc/hostname 2>/dev/null)"; echo "up=$(cut -d. -f1 /proc/uptime 2>/dev/null)"; echo "disk=$(df -P / 2>/dev/null | awk "NR==2{print \$5}")"; command -v pveversion >/dev/null 2>&1 && echo pve=1; echo "kernel=$(uname -r 2>/dev/null)"; echo "cpus=$(nproc 2>/dev/null)"; echo "mem=$(awk "/^MemTotal/{print int(\$2/1024)}" /proc/meminfo 2>/dev/null)"; echo "memused=$(awk "/^MemTotal/{t=\$2}/^MemAvailable/{a=\$2}END{if(t>0)print int((t-a)*100/t)}" /proc/meminfo 2>/dev/null)"; echo "load=$(cut -d" " -f1 /proc/loadavg 2>/dev/null)"; if command -v apt-get >/dev/null 2>&1; then u=$(apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null); echo "upd=$(echo "$u" | grep -c "^Inst ")"; echo "supd=$(echo "$u" | grep "^Inst " | grep -ci security)"; elif command -v dnf >/dev/null 2>&1; then echo "upd=$(dnf -q --cacheonly check-update 2>/dev/null | grep -c "^[a-zA-Z0-9]")"; echo "supd=$(dnf -q --cacheonly updateinfo list security 2>/dev/null | grep -c "^[A-Za-z]")"; fi'"#;
 
-async fn collect_facts(handle: &SshHandle) -> Option<crate::model::HostFacts> {
+pub(crate) async fn collect_facts(handle: &SshHandle) -> Option<crate::model::HostFacts> {
     let mut facts = match exec(handle, FACTS_SCRIPT).await {
         Ok((_, out)) => crate::model::HostFacts::parse(&out),
         Err(_) => None,
