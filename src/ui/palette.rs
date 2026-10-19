@@ -21,27 +21,44 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
     }
     let q = app.palette.query.clone();
     let mut items: Vec<Item> = Vec::new();
-    for h in &app.lib.hosts {
+    // Hosts: the query language of the list (type:, is:, customer/site/name …) inside the
+    // current scope; only the best matches are listed, so 20 000 hosts stay fast.
+    let hits = crate::ui::nav_state::palette_hosts(app, ctx, &q, 60);
+    let scope = app.lib.nav.scope;
+    let mut shown: Vec<usize> = hits.clone();
+    for (i, h) in app.lib.hosts.iter().enumerate() {
+        if !h.tunnels.is_empty()
+            && !hits.contains(&i)
+            && crate::ui::nav_state::in_scope(&app.lib, h.group_id, scope)
+        {
+            shown.push(i);
+        }
+    }
+    for (rank, &i) in shown.iter().enumerate() {
+        let h = &app.lib.hosts[i];
+        let in_hits = rank < hits.len();
         let hay = format!("{} {} {}", h.display_name(), h.hostname, h.tags.join(" "));
-        if let Some(score) = fuzzy(&q, &hay) {
+        let base = 1030 - rank.min(500) as i32;
+        if in_hits {
             items.push(Item {
                 icon: crate::ui::hosts::protocol_tag(h.protocol).into(),
                 title: h.display_name().to_string(),
                 subtitle: h.subtitle(),
                 action: Action::Connect(h.id),
-                score: score + 30,
+                score: base,
             });
-        }
-        if matches!(h.protocol, Protocol::Ssh | Protocol::Rdp)
-            && let Some(score) = fuzzy(&q, &format!("sftp dateien {} {hay}", t!("Dateien")))
-        {
-            items.push(Item {
-                icon: "SFTP".into(),
-                title: format!("SFTP: {}", h.display_name()),
-                subtitle: t!("Dateien").into(),
-                action: Action::OpenSftp(h.id),
-                score,
-            });
+            if matches!(h.protocol, Protocol::Ssh | Protocol::Rdp)
+                && !q.trim().is_empty()
+                && let Some(score) = fuzzy(&q, &format!("sftp dateien {} {hay}", t!("Dateien")))
+            {
+                items.push(Item {
+                    icon: "SFTP".into(),
+                    title: format!("SFTP: {}", h.display_name()),
+                    subtitle: t!("Dateien").into(),
+                    action: Action::OpenSftp(h.id),
+                    score,
+                });
+            }
         }
         for t in &h.tunnels {
             if let Some(score) = fuzzy(&q, &format!("tunnel {} {hay}", t.label())) {

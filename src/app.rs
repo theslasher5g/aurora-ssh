@@ -636,6 +636,8 @@ pub struct App {
     pub ops: crate::ui::ops::OpsState,
     /// Importer for other connection managers (mRemoteNG, Royal TS, RDM, CSV).
     pub import: crate::ui::import_ui::State,
+    /// Large-inventory navigation (cache, cursor, scope sheets).
+    pub nav: crate::ui::nav_state::NavState,
     /// Docker/Kubernetes overview page.
     pub ctr: crate::ui::containers_page::CtrState,
     /// Server inventory page.
@@ -749,6 +751,8 @@ pub enum Action {
     Ctr(crate::ui::containers_page::CtrAction),
     /// Server inventory page.
     Inv(crate::ui::inventory_page::InvAction),
+    /// Scope, saved views, expansion, table settings of the host list.
+    Nav(crate::ui::nav_state::NavAction),
 }
 
 impl App {
@@ -865,6 +869,7 @@ impl App {
             net: Default::default(),
             ops: Default::default(),
             import: Default::default(),
+            nav: Default::default(),
             ctr: Default::default(),
             inv: Default::default(),
             xfer: crate::ui::xfer::XferUi::new(&cc.egui_ctx),
@@ -885,6 +890,7 @@ impl App {
     }
 
     pub fn save_library(&mut self) {
+        self.nav.bump();
         if let Err(e) = self.store.save_library(&self.lib) {
             self.toast(
                 t!("Speichern fehlgeschlagen: {}", format!("{e:#}")),
@@ -3228,14 +3234,13 @@ impl App {
                     }
                 }
                 self.lib.groups.retain(|g| g.id != id);
+                let alive: std::collections::HashSet<Uuid> =
+                    self.lib.groups.iter().map(|g| g.id).collect();
+                self.lib.nav.prune(|g| alive.contains(&g));
                 self.save_library();
             }
-            Action::ToggleGroup(id) => {
-                if let Some(g) = self.lib.groups.iter_mut().find(|g| g.id == id) {
-                    g.collapsed = !g.collapsed;
-                }
-                self.save_library();
-            }
+            Action::ToggleGroup(id) => crate::ui::nav_state::toggle_group(self, id),
+            Action::Nav(a) => crate::ui::nav_state::apply(self, a, ctx),
             Action::NewIdentity => {
                 self.identity_editor = Some((Identity::new(), true, String::new()))
             }
@@ -4878,6 +4883,7 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let _perf = crate::nav_perf::frame();
         let ctx = ui.ctx().clone();
         self.pump_events(&ctx);
         self.tick_auto_reconnect(&ctx);
@@ -5082,6 +5088,7 @@ impl eframe::App for App {
         crate::ui::editors::show_all(self, &ctx, &mut actions);
         crate::ui::proxmox::windows(self, &ctx);
         crate::ui::palette::show(self, &ctx, &mut actions);
+        crate::ui::nav_rail::sheets(self, &ctx);
         crate::ui::dialogs::show(self, &ctx);
         crate::ui::logvars::show(self, &ctx, &mut actions);
         crate::ui::pwmanager_ui::show(self, &ctx);

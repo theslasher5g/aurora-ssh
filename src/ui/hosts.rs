@@ -4,34 +4,21 @@
 use egui::{Color32, CornerRadius, FontId, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use uuid::Uuid;
 
-use crate::app::{Action, App, ConnState, TabKind, parse_quick};
+use crate::app::{Action, App, ConnState, TabKind};
 use crate::backend::reach::Reach;
 use crate::model::{Host, Protocol};
 use crate::theme;
 use crate::ui::icons::{self, Icon};
 use crate::ui::maintenance::Target;
 use crate::ui::ops::OpsAction;
-use crate::ui::{fuzzy, relative_time};
+use crate::ui::relative_time;
 
-const ROW_H: f32 = 66.0;
-const ROW_H_COMPACT: f32 = 44.0;
+const ROW_H: f32 = crate::ui::nav_state::ROW_H;
+const ROW_H_COMPACT: f32 = crate::ui::nav_state::ROW_H_COMPACT;
 
 /// Visible host order of the last frame, for Shift+click ranges.
 pub fn order_id() -> egui::Id {
     egui::Id::new("aurora-host-order")
-}
-
-fn sort_hosts(app: &App, hosts: &mut [Host]) {
-    match app.lib.settings.sort {
-        1 => hosts.sort_by_key(|h| std::cmp::Reverse(h.last_connected)),
-        2 => hosts.sort_by_key(|h| {
-            (
-                !matches!(app.reach.get(h.id), Some(Reach::Up(_))),
-                h.display_name().to_lowercase(),
-            )
-        }),
-        _ => hosts.sort_by_key(|h| h.display_name().to_lowercase()),
-    }
 }
 
 pub fn protocol_color(p: Protocol) -> Color32 {
@@ -64,7 +51,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     // Header: title, search/quick connect, primary action.
     let mut enter = false;
     let mut pill_actions = Vec::new();
-    let count = app.lib.hosts.len();
+    let count = match (app.lib.nav.scope, app.nav.cache.as_ref()) {
+        (Some(_), Some(c)) => c.shown.order.len(),
+        _ => app.lib.hosts.len(),
+    };
     let mut search_text = std::mem::take(&mut app.search);
     let app_ref = &*app;
     theme::page_header(
@@ -73,6 +63,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         |ui| {
             theme::page_title(ui, t!("Verbindungen"), Some(count));
             crate::ui::maintenance::header_pill(app_ref, ui, &mut pill_actions);
+            crate::ui::nav_list::scope_chip(app_ref, ui, &mut pill_actions);
         },
         |_| {},
         |ui, bar| {
@@ -145,9 +136,21 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 egui::Id::new("host-search"),
             );
             enter = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if app_ref.nav.focus_search {
+                search.request_focus();
+                let id = egui::Id::new("host-search");
+                if let Some(mut st) = egui::TextEdit::load_state(ui.ctx(), id) {
+                    let n = search_text.chars().count();
+                    st.cursor.set_char_range(Some(egui::text::CCursorRange::one(
+                        egui::text::CCursor::new(n),
+                    )));
+                    st.store(ui.ctx(), id);
+                }
+            }
         },
     );
     app.search = search_text;
+    app.nav.focus_search = false;
     actions.append(&mut pill_actions);
     ui.add_space(18.0);
 
@@ -157,7 +160,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     }
 
     let mut filter = app.host_filter;
+    let scope_label = crate::ui::nav_state::scope_name(&app.lib).map(str::to_string);
+    let view_mode = app.lib.nav.mode(app.lib.nav.scope);
     let settings = &mut app.lib.settings;
+    let nav_state = &mut app.nav;
+    let search_now = app.search.trim().to_string();
     let mut changed = false;
     theme::toolbar(
         ui,
@@ -215,6 +222,16 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         .color(theme::text_dim()),
                 );
             }
+            crate::ui::nav_list::toolbar_extras(
+                ui,
+                bar.compact,
+                &settings.saved_views,
+                view_mode,
+                &search_now,
+                scope_label.as_deref(),
+                nav_state,
+                actions,
+            );
         },
     );
     app.host_filter = filter;
@@ -223,135 +240,34 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     }
     ui.add_space(14.0);
     selection_bar(app, ui, actions);
-    ui.ctx()
-        .data_mut(|d| d.insert_temp(order_id(), Vec::<Uuid>::new()));
-
-    let query = app.search.trim().to_string();
     let live = live_hosts(app);
-
-    egui::ScrollArea::vertical()
-        .id_salt("hosts-page")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            // Room for the scroll bar next to the cards.
-            ui.set_max_width(ui.available_width() - 14.0);
-            ui.spacing_mut().item_spacing.y = 0.0;
-            if !query.is_empty() {
-                let quick = parse_quick(&query).filter(|_| query.contains('@'));
-                if let Some(h) = &quick {
-                    quick_row(
-                        ui,
-                        &format!("{}@{}:{}", h.username, h.hostname, h.port),
-                        actions,
-                        &query,
-                    );
-                }
-                let hosts = filter_hosts(app, &query);
-                if enter {
-                    match (&quick, hosts.first()) {
-                        (Some(_), _) => actions.push(Action::QuickConnect(query.clone())),
-                        (None, Some(h)) => actions.push(Action::Connect(h.id)),
-                        _ => {}
-                    }
-                }
-                if hosts.is_empty() && quick.is_none() {
-                    ui.add_space(20.0);
-                    ui.label(theme::heading(t!("Kein Host passt zu „{}“", query), 17.0));
-                    ui.add_space(4.0);
-                    ui.label(
-                        RichText::new(t!(
-                            "Leg ihn an – oder tippe user@host, um direkt zu verbinden."
-                        ))
-                        .color(theme::text_dim()),
-                    );
-                    ui.add_space(14.0);
-                    ui.horizontal(|ui| {
-                        if theme::primary_button(ui, &t!("„{}“ als Host anlegen", query)).clicked()
-                        {
-                            actions.push(Action::NewHostNamed(query.clone()));
-                        }
-                        if !query.contains(' ')
-                            && theme::btn(ui, theme::Btn::Normal, None, t!("Direkt verbinden"))
-                                .clicked()
-                        {
-                            actions.push(Action::QuickConnect(query.clone()));
-                        }
-                    });
-                }
-                if !hosts.is_empty() {
-                    host_card(app, ui, &hosts, &live, actions);
-                }
-                return;
-            }
-            if ui.input(|i| i.key_pressed(egui::Key::Escape)) && !app.selected_hosts.is_empty() {
-                actions.push(Action::ClearSelection);
-            }
-
-            group_tree(app, ui, None, 0, &live, actions);
-            let mut loose: Vec<Host> = app
-                .lib
-                .hosts
-                .iter()
-                .filter(|h| h.group_id.is_none_or(|g| app.lib.group(g).is_none()))
-                .filter(|h| passes_filter(app.host_filter, h))
-                .cloned()
-                .collect();
-            sort_hosts(app, &mut loose);
-            subnet_hint(app, ui, &loose, actions);
-            if !loose.is_empty() || (!app.lib.groups.is_empty() && dragging_host(ui)) {
-                if !app.lib.groups.is_empty() {
-                    ui.add_space(22.0);
-                    // Drop zone: hosts dragged here leave their group.
-                    let (r, resp) = ui
-                        .allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::hover());
-                    let hot = resp.dnd_hover_payload::<Uuid>().is_some();
-                    if hot {
-                        ui.painter().rect_stroke(
-                            r,
-                            CornerRadius::same(8),
-                            Stroke::new(1.5, theme::accent()),
-                            egui::StrokeKind::Inside,
-                        );
-                    }
-                    ui.painter().text(
-                        r.left_center() + Vec2::new(8.0, 0.0),
-                        egui::Align2::LEFT_CENTER,
-                        t!("OHNE GRUPPE"),
-                        theme::semibold(12.0),
-                        theme::text_dim(),
-                    );
-                    if let Some(id) = resp.dnd_release_payload::<Uuid>() {
-                        actions.push(Action::MoveHosts(drag_set(app, *id), None));
-                    }
-                    ui.add_space(6.0);
-                } else {
-                    ui.add_space(4.0);
-                }
-                if !loose.is_empty() {
-                    host_card(app, ui, &loose, &live, actions);
-                }
-            }
-            ui.add_space(40.0);
-        });
-}
-
-/// One rounded card with a row per host.
-fn host_card(
-    app: &App,
-    ui: &mut egui::Ui,
-    hosts: &[Host],
-    live: &[String],
-    actions: &mut Vec<Action>,
-) {
-    theme::card(ui, theme::bg_deep(), |ui| {
-        for (i, h) in hosts.iter().enumerate() {
-            host_row(app, ui, h, live, i > 0, actions);
-        }
-    });
+    // Loose hosts that share a /24: offer a group (small sets only).
+    if app
+        .nav
+        .cache
+        .as_ref()
+        .is_some_and(|c| !c.filtering && c.shown.loose.len() >= 3 && c.shown.loose.len() <= 300)
+        && app.search.trim().is_empty()
+    {
+        let loose: Vec<Host> = app
+            .nav
+            .cache
+            .as_ref()
+            .map(|c| {
+                c.shown
+                    .loose
+                    .iter()
+                    .map(|e| app.lib.hosts[c.idx.entries[*e as usize].host].clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        subnet_hint(app, ui, &loose, actions);
+    }
+    crate::ui::nav_list::body(app, ui, actions, enter, &live);
 }
 
 /// Ids of hosts that currently have a connected session.
-fn live_hosts(app: &App) -> Vec<String> {
+pub(crate) fn live_hosts(app: &App) -> Vec<String> {
     app.tabs
         .iter()
         .filter(|t| match &t.kind {
@@ -372,7 +288,7 @@ fn live_hosts(app: &App) -> Vec<String> {
         .collect()
 }
 
-fn passes_filter(filter: usize, h: &Host) -> bool {
+pub(crate) fn passes_filter(filter: usize, h: &Host) -> bool {
     match filter {
         1 => h.protocol == Protocol::Ssh,
         2 => matches!(h.protocol, Protocol::Rdp | Protocol::Vnc),
@@ -445,20 +361,6 @@ fn empty_state(ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 });
             });
     });
-}
-
-/// "5 Hosts im Netz 192.168.0.x – als Gruppe anlegen?" for loose hosts sharing a /24.
-/// Hosts that a drag of `id` carries: the whole selection if `id` is part of it.
-fn drag_set(app: &App, id: Uuid) -> Vec<Uuid> {
-    if app.selected_hosts.contains(&id) {
-        app.selected_hosts.iter().copied().collect()
-    } else {
-        vec![id]
-    }
-}
-
-fn dragging_host(ui: &egui::Ui) -> bool {
-    egui::DragAndDrop::has_payload_of_type::<Uuid>(ui.ctx())
 }
 
 /// Bulk actions for the multi-selection (Ctrl/Shift+click).
@@ -601,7 +503,7 @@ fn subnet_hint(app: &App, ui: &mut egui::Ui, loose: &[Host], actions: &mut Vec<A
         });
 }
 
-fn quick_row(ui: &mut egui::Ui, target: &str, actions: &mut Vec<Action>, query: &str) {
+pub(crate) fn quick_row(ui: &mut egui::Ui, target: &str, actions: &mut Vec<Action>, query: &str) {
     let (rect, resp) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 56.0), Sense::click());
     let p = ui.painter();
@@ -650,252 +552,6 @@ fn quick_row(ui: &mut egui::Ui, target: &str, actions: &mut Vec<Action>, query: 
     ui.add_space(12.0);
 }
 
-fn filter_hosts(app: &App, query: &str) -> Vec<Host> {
-    if let Some(name) = query.strip_prefix("group:") {
-        let name = name.trim().to_lowercase();
-        let ids: Vec<Uuid> = app
-            .lib
-            .groups
-            .iter()
-            .filter(|g| g.name.to_lowercase() == name)
-            .map(|g| g.id)
-            .collect();
-        return app
-            .lib
-            .hosts
-            .iter()
-            .filter(|h| {
-                h.group_id
-                    .is_some_and(|g| ids.iter().any(|id| app.lib.is_descendant(g, *id)))
-            })
-            .cloned()
-            .collect();
-    }
-    let mut scored: Vec<(i32, Host)> = app
-        .lib
-        .hosts
-        .iter()
-        .filter(|h| passes_filter(app.host_filter, h))
-        .filter_map(|h| {
-            let group = h
-                .group_id
-                .and_then(|g| app.lib.group(g))
-                .map(|g| g.name.as_str())
-                .unwrap_or("");
-            let hay = format!(
-                "{} {} {} {} {}",
-                h.display_name(),
-                h.hostname,
-                h.username,
-                h.tags.join(" "),
-                group
-            );
-            fuzzy(query, &hay).map(|s| (s, h.clone()))
-        })
-        .collect();
-    scored.sort_by_key(|s| std::cmp::Reverse(s.0));
-    scored.into_iter().map(|(_, h)| h).collect()
-}
-
-fn group_tree(
-    app: &mut App,
-    ui: &mut egui::Ui,
-    parent: Option<Uuid>,
-    depth: usize,
-    live: &[String],
-    actions: &mut Vec<Action>,
-) {
-    let groups: Vec<_> = app
-        .lib
-        .groups
-        .iter()
-        .filter(|g| g.parent_id == parent)
-        .cloned()
-        .collect();
-    for (gi, g) in groups.into_iter().enumerate() {
-        let mut hosts: Vec<Host> = app
-            .lib
-            .hosts
-            .iter()
-            .filter(|h| h.group_id == Some(g.id) && passes_filter(app.host_filter, h))
-            .cloned()
-            .collect();
-        sort_hosts(app, &mut hosts);
-        let total = app
-            .lib
-            .hosts
-            .iter()
-            .filter(|h| h.group_id.is_some_and(|hg| app.lib.is_descendant(hg, g.id)))
-            .count();
-        // With a protocol filter, groups without a matching host disappear.
-        if app.host_filter != 0
-            && !app.lib.hosts.iter().any(|h| {
-                h.group_id.is_some_and(|hg| app.lib.is_descendant(hg, g.id))
-                    && passes_filter(app.host_filter, h)
-            })
-        {
-            continue;
-        }
-        ui.add_space(if depth == 0 && gi == 0 && parent.is_none() {
-            4.0
-        } else if depth == 0 {
-            22.0
-        } else {
-            12.0
-        });
-        let indent = depth as f32 * 20.0;
-        let (full, resp) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), Sense::click());
-        // Hosts dropped on a group header move into that group.
-        let drop_hot = resp.dnd_hover_payload::<Uuid>().is_some();
-        if let Some(id) = resp.dnd_release_payload::<Uuid>() {
-            actions.push(Action::MoveHosts(drag_set(app, *id), Some(g.id)));
-        }
-        let rect = Rect::from_min_max(full.min + Vec2::new(indent, 0.0), full.max);
-        let p = ui.painter();
-        let cy = rect.center().y;
-        if drop_hot {
-            p.rect_filled(rect, CornerRadius::same(8), theme::accent_soft());
-        }
-        // Chevron, colour square, name, online count.
-        let chev = Rect::from_center_size(Pos2::new(rect.left() + 10.0, cy), Vec2::splat(12.0));
-        if g.collapsed {
-            // Pointing right.
-            let c = chev.center();
-            let s = Stroke::new(2.0, theme::text_dim());
-            p.line_segment([c + Vec2::new(-2.0, -4.0), c + Vec2::new(2.5, 0.0)], s);
-            p.line_segment([c + Vec2::new(2.5, 0.0), c + Vec2::new(-2.0, 4.0)], s);
-        } else {
-            icons::paint(p, chev, Icon::Chevron, theme::text_dim());
-        }
-        p.rect_filled(
-            Rect::from_center_size(Pos2::new(rect.left() + 28.0, cy), Vec2::splat(9.0)),
-            CornerRadius::same(2),
-            theme::rgb(g.color),
-        );
-        let galley = p.layout_no_wrap(g.name.clone(), theme::semibold(14.5), theme::text());
-        let w = galley.size().x;
-        p.galley(
-            Pos2::new(rect.left() + 40.0, cy - galley.size().y / 2.0),
-            galley,
-            theme::text(),
-        );
-        let mut tx = rect.left() + 40.0 + w + 10.0;
-        // "2 von 3 online" from the reachability probe.
-        let members = app.lib.hosts_in_group(g.id);
-        let up = members
-            .iter()
-            .filter(|h| matches!(app.reach.get(h.id), Some(Reach::Up(_))))
-            .count();
-        let count = if app.lib.settings.reachability && total > 0 {
-            t!("{} von {} online", up, total)
-        } else {
-            total.to_string()
-        };
-        let cg = p.layout_no_wrap(count, FontId::proportional(13.0), theme::text_dim());
-        let cw = cg.size().x;
-        p.galley(Pos2::new(tx, cy - cg.size().y / 2.0), cg, theme::text_dim());
-        tx += cw + 10.0;
-        if g.env != crate::model::Env::None {
-            let mut child = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(Rect::from_min_size(
-                        Pos2::new(tx, cy - 9.0),
-                        Vec2::new(90.0, 18.0),
-                    ))
-                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
-            );
-            theme::pill(&mut child, g.env.label(), theme::env_color(g.env));
-            tx += 70.0;
-        }
-        let group_maint =
-            crate::ui::maintenance::active_for_group(&app.lib, g.id, chrono::Utc::now()).cloned();
-        if let Some(m) = &group_maint {
-            let mut child = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(Rect::from_min_size(
-                        Pos2::new(tx, cy - 11.0),
-                        Vec2::new(360.0, 22.0),
-                    ))
-                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
-            );
-            theme::tag(&mut child, &m.banner(), Some(theme::amber()));
-        }
-        // "Alle öffnen" and "+ Host" as quiet links on the right.
-        let mut links = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(Rect::from_min_max(
-                    Pos2::new(rect.right() - 260.0, rect.top()),
-                    rect.right_bottom() - Vec2::new(4.0, 0.0),
-                ))
-                .layout(egui::Layout::right_to_left(egui::Align::Center)),
-        );
-        links.spacing_mut().item_spacing.x = 4.0;
-        let plus = theme::btn(&mut links, theme::Btn::Link, None, "+ Host");
-        let all =
-            (total > 0).then(|| theme::btn(&mut links, theme::Btn::Link, None, t!("Alle öffnen")));
-        if plus.clicked() {
-            actions.push(Action::NewHost(Some(g.id)));
-        } else if all.as_ref().is_some_and(|a| a.clicked()) {
-            actions.push(Action::OpenGroup(g.id));
-        } else if resp.clicked() {
-            actions.push(Action::ToggleGroup(g.id));
-        }
-        if let Some(a) = all {
-            a.on_hover_text(t!(
-                "Verbindet die ersten vier Hosts der Gruppe im Splitscreen"
-            ));
-        }
-        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-            .context_menu(|ui| {
-                if total > 0
-                    && ui
-                        .button(t!("Alle öffnen (nebeneinander)"))
-                        .on_hover_text(t!(
-                            "Verbindet die ersten vier Hosts der Gruppe im Splitscreen"
-                        ))
-                        .clicked()
-                {
-                    actions.push(Action::OpenGroup(g.id));
-                    ui.close();
-                }
-                if ui.button(t!("Host hinzufügen")).clicked() {
-                    actions.push(Action::NewHost(Some(g.id)));
-                    ui.close();
-                }
-                if ui.button(t!("Untergruppe")).clicked() {
-                    actions.push(Action::NewGroup(Some(g.id)));
-                    ui.close();
-                }
-                maintenance_menu(ui, group_maint.as_ref(), Target::Group(g.id), actions);
-                if ui.button(t!("Bearbeiten")).clicked() {
-                    actions.push(Action::EditGroup(g.id));
-                    ui.close();
-                }
-                if ui
-                    .button(RichText::new(t!("Löschen")).color(theme::red()))
-                    .clicked()
-                {
-                    actions.push(Action::Confirm(
-                        t!("Gruppe „{}“ löschen? Die Hosts bleiben erhalten.", g.name),
-                        Box::new(Action::DeleteGroup(g.id)),
-                    ));
-                    ui.close();
-                }
-            });
-        if !g.collapsed {
-            if !hosts.is_empty() {
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(indent);
-                    ui.vertical(|ui| host_card(app, ui, &hosts, live, actions));
-                });
-            }
-            group_tree(app, ui, Some(g.id), depth + 1, live, actions);
-        }
-    }
-}
-
 fn uptime_text(secs: u64) -> String {
     let d = secs / 86_400;
     match (d, secs / 3600) {
@@ -925,7 +581,7 @@ struct RowTag {
 }
 
 /// "Wartung starten…" or, while one runs, extend/end it.
-fn maintenance_menu(
+pub(crate) fn maintenance_menu(
     ui: &mut egui::Ui,
     active: Option<&crate::ui::maintenance::Maintenance>,
     target: Target,
@@ -960,12 +616,13 @@ fn maintenance_menu(
     }
 }
 
-fn host_row(
+pub(crate) fn host_row(
     app: &App,
     ui: &mut egui::Ui,
     h: &Host,
     live: &[String],
     divider: bool,
+    path: Option<&str>,
     actions: &mut Vec<Action>,
 ) {
     let compact = app.lib.settings.compact;
@@ -974,10 +631,6 @@ fn host_row(
         Vec2::new(ui.available_width(), row_h),
         Sense::click_and_drag(),
     );
-    ui.ctx().data_mut(|d| {
-        d.get_temp_mut_or_default::<Vec<Uuid>>(order_id())
-            .push(h.id)
-    });
     let hovered = ui.rect_contains_pointer(rect.shrink2(Vec2::new(0.0, 0.5)));
     let selected = app.selected_hosts.contains(&h.id);
     let p = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
@@ -1237,6 +890,22 @@ fn host_row(
         ui.interact(r, ui.id().with(("notes", h.id)), Sense::hover())
             .on_hover_text(h.notes.trim());
         nx += 20.0;
+    }
+
+    // Search results: where the host lives (customer / site).
+    if let Some(path) = path
+        && nx + 60.0 <= text_right
+    {
+        let g = theme::truncated(
+            &p,
+            path,
+            FontId::proportional(12.0),
+            theme::text_dim(),
+            text_right - nx,
+        );
+        let gw = g.size().x;
+        p.galley(Pos2::new(nx, y1 - g.size().y / 2.0), g, theme::text_dim());
+        nx += gw + 8.0;
     }
 
     // --- address: only what the name doesn't already say; default ports are hidden.
@@ -1600,61 +1269,73 @@ fn host_row(
     if resp.double_clicked() {
         actions.push(Action::Connect(h.id));
     }
-    resp.context_menu(|ui| {
-        if ui.button(t!("Verbinden")).clicked() {
-            actions.push(Action::Connect(h.id));
-            ui.close();
-        }
-        if matches!(h.protocol, Protocol::Ssh | Protocol::Rdp)
-            && ui.button(t!("Dateien (SFTP)")).clicked()
-        {
-            actions.push(Action::OpenSftp(h.id));
-            ui.close();
-        }
-        if (h.protocol == Protocol::Ssh || h.protocol.is_container())
-            && ui
-                .button(t!("Log ansehen…"))
-                .on_hover_text(t!("Logdatei oder journalctl live verfolgen, mit Filter"))
+    resp.context_menu(|ui| host_menu(ui, app, h, maint, actions));
+}
+
+/// Right-click menu of a host (list row and table row).
+pub(crate) fn host_menu(
+    ui: &mut egui::Ui,
+    app: &App,
+    h: &Host,
+    maint: Option<&crate::ui::maintenance::Maintenance>,
+    actions: &mut Vec<Action>,
+) {
+    if ui.button(t!("Verbinden")).clicked() {
+        actions.push(Action::Connect(h.id));
+        ui.close();
+    }
+    if matches!(h.protocol, Protocol::Ssh | Protocol::Rdp)
+        && ui.button(t!("Dateien (SFTP)")).clicked()
+    {
+        actions.push(Action::OpenSftp(h.id));
+        ui.close();
+    }
+    if (h.protocol == Protocol::Ssh || h.protocol.is_container())
+        && ui
+            .button(t!("Log ansehen…"))
+            .on_hover_text(t!("Logdatei oder journalctl live verfolgen, mit Filter"))
+            .clicked()
+    {
+        actions.push(Action::PickLog(Some(h.id)));
+        ui.close();
+    }
+    if h.protocol == Protocol::Ssh && ui.button(t!("Verlauf…")).clicked() {
+        actions.push(Action::SessionLog(crate::ui::sessionlog_ui::Act::History(
+            h.id,
+        )));
+        ui.close();
+    }
+    if h.protocol.is_network()
+        && ui
+            .button(t!("Ports scannen…"))
+            .on_hover_text(t!("Offene Ports des Hosts finden, mit Tunnel per Klick"))
+            .clicked()
+    {
+        actions.push(Action::PortScan(h.id));
+        ui.close();
+    }
+    if crate::ui::wol::can_wake(h) {
+        if app.net.wol.waiting(h.id).is_some() {
+            if ui.button(t!("Aufwecken abbrechen")).clicked() {
+                actions.push(Action::Net(crate::ui::net::NetAction::CancelWake(h.id)));
+                ui.close();
+            }
+        } else {
+            if ui
+                .button(t!("Aufwecken"))
+                .on_hover_text(t!("Wake-on-LAN-Paket senden"))
                 .clicked()
-        {
-            actions.push(Action::PickLog(Some(h.id)));
-            ui.close();
-        }
-        if h.protocol == Protocol::Ssh && ui.button(t!("Verlauf…")).clicked() {
-            actions.push(Action::SessionLog(crate::ui::sessionlog_ui::Act::History(h.id)));
-            ui.close();
-        }
-        if h.protocol.is_network()
-            && ui
-                .button(t!("Ports scannen…"))
-                .on_hover_text(t!("Offene Ports des Hosts finden, mit Tunnel per Klick"))
-                .clicked()
-        {
-            actions.push(Action::PortScan(h.id));
-            ui.close();
-        }
-        if crate::ui::wol::can_wake(h) {
-            if app.net.wol.waiting(h.id).is_some() {
-                if ui.button(t!("Aufwecken abbrechen")).clicked() {
-                    actions.push(Action::Net(crate::ui::net::NetAction::CancelWake(h.id)));
-                    ui.close();
-                }
-            } else {
-                if ui
-                    .button(t!("Aufwecken"))
-                    .on_hover_text(t!("Wake-on-LAN-Paket senden"))
-                    .clicked()
-                {
-                    actions.push(Action::Net(crate::ui::net::NetAction::Wake(h.id, false)));
-                    ui.close();
-                }
-                if ui.button(t!("Aufwecken und verbinden")).clicked() {
-                    actions.push(Action::Net(crate::ui::net::NetAction::Wake(h.id, true)));
-                    ui.close();
-                }
+            {
+                actions.push(Action::Net(crate::ui::net::NetAction::Wake(h.id, false)));
+                ui.close();
+            }
+            if ui.button(t!("Aufwecken und verbinden")).clicked() {
+                actions.push(Action::Net(crate::ui::net::NetAction::Wake(h.id, true)));
+                ui.close();
             }
         }
-        if h.protocol == Protocol::Ssh
+    }
+    if h.protocol == Protocol::Ssh
             && ui
                 .button(t!("Weg finden…"))
                 .on_hover_text(t!(
@@ -1665,98 +1346,97 @@ fn host_row(
             actions.push(Action::Net(crate::ui::net::NetAction::FindRoute(h.id)));
             ui.close();
         }
-        if h.protocol == Protocol::Ssh
-            && ui
-                .button(t!("Diagnose-Paket erstellen…"))
-                .on_hover_text(t!(
-                    "System-, Log- und Dienstinformationen sammeln und als Archiv speichern"
-                ))
-                .clicked()
-        {
-            actions.push(Action::Ops(OpsAction::Diag(h.id)));
-            ui.close();
-        }
-        maintenance_menu(ui, maint, Target::Host(h.id), actions);
-        if h.protocol == Protocol::Ssh {
-            ui.menu_button(t!("Container auf diesem Host"), |ui| {
-                for p in [Protocol::Docker, Protocol::Kubernetes] {
-                    if ui.button(format!("{} {}", p.icon(), p.label())).clicked() {
-                        actions.push(Action::BrowseContainers(p, Some(h.id), false));
-                        ui.close();
-                    }
-                }
-            });
-        }
-        ui.separator();
-        if ui
-            .button(if h.favorite {
-                t!("Aus Favoriten entfernen")
-            } else {
-                t!("Zu Favoriten")
-            })
+    if h.protocol == Protocol::Ssh
+        && ui
+            .button(t!("Diagnose-Paket erstellen…"))
+            .on_hover_text(t!(
+                "System-, Log- und Dienstinformationen sammeln und als Archiv speichern"
+            ))
             .clicked()
-        {
-            actions.push(Action::ToggleFavorite(h.id));
-            ui.close();
-        }
-        if ui.button(t!("Bearbeiten")).clicked() {
-            actions.push(Action::EditHost(h.id));
-            ui.close();
-        }
-        if ui.button(t!("Umbenennen  (F2)")).clicked() {
-            ui.ctx()
-                .data_mut(|d| d.insert_temp(rename_id(), (h.id, h.label.clone())));
-            ui.close();
-        }
-        if h.protocol == Protocol::Ssh {
-            if ui
-                .button(t!("SSH-Key einrichten…"))
-                .on_hover_text(t!(
-                    "Schlüssel auf dem Server hinterlegen – danach ohne Passwort anmelden"
-                ))
-                .clicked()
-            {
-                actions.push(Action::SetupKey(h.id));
-                ui.close();
-            }
-            if let Some(n) = app
-                .lib
-                .facts
-                .get(&h.id)
-                .and_then(|f| f.updates)
-                .filter(|n| *n > 0)
-                && ui.button(t!("{} Updates installieren", n)).clicked()
-            {
-                actions.push(Action::RunUpdates(h.id));
-                ui.close();
-            }
-        }
-        if ui.button(t!("Duplizieren")).clicked() {
-            actions.push(Action::DuplicateHost(h.id));
-            ui.close();
-        }
-        ui.menu_button(t!("Verschieben nach"), |ui| {
-            if ui.button(t!("Ohne Gruppe")).clicked() {
-                actions.push(Action::MoveHost(h.id, None));
-                ui.close();
-            }
-            for g in &app.lib.groups {
-                if ui.button(&g.name).clicked() {
-                    actions.push(Action::MoveHost(h.id, Some(g.id)));
+    {
+        actions.push(Action::Ops(OpsAction::Diag(h.id)));
+        ui.close();
+    }
+    maintenance_menu(ui, maint, Target::Host(h.id), actions);
+    if h.protocol == Protocol::Ssh {
+        ui.menu_button(t!("Container auf diesem Host"), |ui| {
+            for p in [Protocol::Docker, Protocol::Kubernetes] {
+                if ui.button(format!("{} {}", p.icon(), p.label())).clicked() {
+                    actions.push(Action::BrowseContainers(p, Some(h.id), false));
                     ui.close();
                 }
             }
         });
-        ui.separator();
+    }
+    ui.separator();
+    if ui
+        .button(if h.favorite {
+            t!("Aus Favoriten entfernen")
+        } else {
+            t!("Zu Favoriten")
+        })
+        .clicked()
+    {
+        actions.push(Action::ToggleFavorite(h.id));
+        ui.close();
+    }
+    if ui.button(t!("Bearbeiten")).clicked() {
+        actions.push(Action::EditHost(h.id));
+        ui.close();
+    }
+    if ui.button(t!("Umbenennen  (F2)")).clicked() {
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(rename_id(), (h.id, h.label.clone())));
+        ui.close();
+    }
+    if h.protocol == Protocol::Ssh {
         if ui
-            .button(RichText::new(t!("Löschen")).color(theme::red()))
+            .button(t!("SSH-Key einrichten…"))
+            .on_hover_text(t!(
+                "Schlüssel auf dem Server hinterlegen – danach ohne Passwort anmelden"
+            ))
             .clicked()
         {
-            actions.push(Action::Confirm(
-                t!("Host „{}“ löschen?", h.display_name()),
-                Box::new(Action::DeleteHost(h.id)),
-            ));
+            actions.push(Action::SetupKey(h.id));
             ui.close();
         }
+        if let Some(n) = app
+            .lib
+            .facts
+            .get(&h.id)
+            .and_then(|f| f.updates)
+            .filter(|n| *n > 0)
+            && ui.button(t!("{} Updates installieren", n)).clicked()
+        {
+            actions.push(Action::RunUpdates(h.id));
+            ui.close();
+        }
+    }
+    if ui.button(t!("Duplizieren")).clicked() {
+        actions.push(Action::DuplicateHost(h.id));
+        ui.close();
+    }
+    ui.menu_button(t!("Verschieben nach"), |ui| {
+        if ui.button(t!("Ohne Gruppe")).clicked() {
+            actions.push(Action::MoveHost(h.id, None));
+            ui.close();
+        }
+        for g in &app.lib.groups {
+            if ui.button(&g.name).clicked() {
+                actions.push(Action::MoveHost(h.id, Some(g.id)));
+                ui.close();
+            }
+        }
     });
+    ui.separator();
+    if ui
+        .button(RichText::new(t!("Löschen")).color(theme::red()))
+        .clicked()
+    {
+        actions.push(Action::Confirm(
+            t!("Host „{}“ löschen?", h.display_name()),
+            Box::new(Action::DeleteHost(h.id)),
+        ));
+        ui.close();
+    }
 }

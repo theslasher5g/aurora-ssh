@@ -871,6 +871,8 @@ pub struct Settings {
     pub transfer_limit_kbps: u32,
     /// Compare checksums after each transferred file.
     pub transfer_verify: bool,
+    /// Saved searches/filters/scopes of the connections list (sidebar).
+    pub saved_views: Vec<crate::nav_model::SavedView>,
 }
 
 impl Default for Settings {
@@ -910,6 +912,7 @@ impl Default for Settings {
             transfer_slots: 2,
             transfer_limit_kbps: 0,
             transfer_verify: false,
+            saved_views: Vec::new(),
         }
     }
 }
@@ -1003,6 +1006,9 @@ pub struct Library {
     /// Inventory detail data (services, ports, firewall, disks …) of each host.
     #[serde(default)]
     pub detail: HashMap<Uuid, crate::backend::inventory_detail::HostDetail>,
+    /// Large-inventory navigation: group badges/pins, scope, view mode, table columns.
+    #[serde(default)]
+    pub nav: crate::nav_model::NavData,
 }
 
 /// Network data Aurora remembers between runs.
