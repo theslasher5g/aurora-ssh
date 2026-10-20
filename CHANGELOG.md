@@ -2,6 +2,13 @@
 
 ## 0.9.0
 
+### Keychain
+- **Add existing SSH keys by drag & drop:** drop key files (or a whole `~/.ssh` folder) onto the
+  Keys page. Aurora reads the private key, names it after the file, skips duplicates (same
+  fingerprint) and opens the entry when it is a single key so you can set the user name and
+  the passphrase of an encrypted key. *From ~/.ssh* lists the keys that are not in the
+  keychain yet. `.pub` and PuTTY `.ppk` files are rejected with a hint.
+
 ### Web interfaces
 - **New host type "Web interface"** (like the web entries of Devolutions Remote Desktop
   Manager): keep the web UIs of firewalls, switches, NAS boxes, Proxmox, iDRAC/iLO … next to
