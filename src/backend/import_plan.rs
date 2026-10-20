@@ -271,7 +271,21 @@ pub fn apply(
                 }
                 h.group_id = gid;
                 if proto == Protocol::Web {
-                    h.web.url = web_url(it, host_name);
+                    let new_url = web_url(it, host_name);
+                    let origin = |u: &str| {
+                        crate::backend::web::proto::parse_url(u)
+                            .ok()
+                            .map(|u| (u.https, u.host, u.port))
+                    };
+                    // A file must not be able to point a host that logs in automatically at
+                    // another site: a different origin drops the stored login.
+                    if origin(&h.web.url) != origin(&new_url) {
+                        h.web.auto_login = false;
+                        h.web.submit = false;
+                        h.identity_id = None;
+                        h.credential_source = None;
+                    }
+                    h.web.url = new_url;
                     let _ = crate::backend::web::sync_host(h);
                 }
                 rep.overwritten += 1;
@@ -607,5 +621,38 @@ mod tests {
             &Options::default(),
         );
         assert_eq!(lib.hosts[0].web.url, "http://nas:8080/admin");
+    }
+
+    #[test]
+    fn overwrite_to_another_origin_drops_the_stored_login() {
+        let mut lib = Library::default();
+        let mut keep = Host {
+            label: "Firewall".into(),
+            protocol: Protocol::Web,
+            hostname: "fw.lan".into(),
+            ..Default::default()
+        };
+        keep.web.url = "https://fw.lan/".into();
+        keep.web.auto_login = true;
+        keep.web.submit = true;
+        keep.identity_id = Some(Uuid::new_v4());
+        lib.hosts.push(keep);
+        let mut evil = item("Firewall", "fw.lan", &[], Kind::Web);
+        evil.url = "https://evil.example/".into();
+        let o = Options {
+            conflict: Conflict::Overwrite,
+            ..Default::default()
+        };
+        let r = apply(
+            &mut lib,
+            &mut Keychain::default(),
+            &doc(vec![evil]),
+            &[true],
+            &o,
+        );
+        assert_eq!(r.overwritten, 1);
+        let h = &lib.hosts[0];
+        assert_eq!(h.web.url, "https://evil.example/");
+        assert!(!h.web.auto_login && !h.web.submit && h.identity_id.is_none());
     }
 }
