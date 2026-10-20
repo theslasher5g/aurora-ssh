@@ -79,6 +79,7 @@ impl Reachability {
             })
             .collect();
         targets.sort_by_key(|t| t.0);
+        let probed: std::collections::HashSet<Uuid> = targets.iter().map(|t| t.1).collect();
         let (results, running, rev, ctx) = (
             self.results.clone(),
             self.running.clone(),
@@ -116,6 +117,10 @@ impl Reachability {
             });
             let ctx2 = ctx.clone();
             futures_join(probes).await;
+            // Hosts that are no longer probed (deleted, address removed) lose their result.
+            if let Ok(mut map) = results.lock() {
+                map.retain(|id, _| probed.contains(id));
+            }
             running.store(false, Ordering::Relaxed);
             ctx2.request_repaint();
         });

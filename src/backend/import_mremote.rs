@@ -107,6 +107,11 @@ fn walk(n: &Elem, path: &mut Vec<String>, inh: &Inherit, doc: &mut ImportDoc, de
     if !domain.is_empty() && !user.is_empty() && kind == Kind::Rdp {
         user = format!("{domain}\\{user}");
     }
+    let url = if kind == Kind::Web && host.contains("://") {
+        host.clone()
+    } else {
+        String::new()
+    };
     let host = if kind == Kind::Web {
         host_of_url(&host)
     } else {
@@ -121,6 +126,7 @@ fn walk(n: &Elem, path: &mut Vec<String>, inh: &Inherit, doc: &mut ImportDoc, de
     doc.push(ImportItem {
         name: clean_name(if name.is_empty() { &host } else { name }),
         host,
+        url,
         port: n.attr("Port").and_then(parse_port),
         kind: Some(kind),
         raw_type: raw,

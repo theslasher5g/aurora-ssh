@@ -5089,6 +5089,9 @@ impl eframe::App for App {
         crate::ui::proxmox::windows(self, &ctx);
         crate::ui::palette::show(self, &ctx, &mut actions);
         crate::ui::nav_rail::sheets(self, &ctx);
+        // Deferred view-only changes (expansion, scope) are written even when the host list
+        // is not the page on screen.
+        crate::ui::nav_state::flush(self, &ctx);
         crate::ui::dialogs::show(self, &ctx);
         crate::ui::logvars::show(self, &ctx, &mut actions);
         crate::ui::pwmanager_ui::show(self, &ctx);

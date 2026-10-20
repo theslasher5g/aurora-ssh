@@ -54,7 +54,9 @@ fn web_url(it: &ImportItem, host: &str) -> String {
     } else {
         "https"
     };
-    if host.contains("://") {
+    if it.url.contains("://") {
+        it.url.clone()
+    } else if host.contains("://") {
         host.to_string()
     } else {
         match it.port {
@@ -278,7 +280,15 @@ pub fn apply(
                 let mut label = it.name.clone();
                 if existing.is_some() {
                     // Same name again: keep both, tell them apart.
-                    label = format!("{label} (2)");
+                    let mut n = 2;
+                    loop {
+                        let cand = format!("{} ({n})", it.name);
+                        if !idx.contains_key(&key(&cand, host_name)) {
+                            label = cand;
+                            break;
+                        }
+                        n += 1;
+                    }
                 }
                 lib.hosts.push(Host {
                     label,
@@ -302,7 +312,7 @@ pub fn apply(
             }
         }
         // Later entries of the same file compare against the stored state.
-        if existing.is_none() {
+        if !matches!((existing, opts.conflict), (Some(_), Conflict::Overwrite)) {
             idx.entry(key(
                 lib.hosts.last().map_or("", |h| h.label.as_str()),
                 host_name,
@@ -580,5 +590,22 @@ mod tests {
         assert_eq!(r.imported, 2);
         assert_eq!(lib.hosts[0].web.url, "https://10.0.0.1:8443/");
         assert_eq!(lib.hosts[1].web.url, "http://switch.lan/");
+    }
+
+    #[test]
+    fn web_import_keeps_scheme_port_and_path() {
+        let mut lib = Library::default();
+        let mut a = item("nas", "nas", &[], Kind::Web);
+        a.raw_type = "WebBrowser".into();
+        a.url = "http://nas:8080/admin".into();
+        let d = doc(vec![a]);
+        apply(
+            &mut lib,
+            &mut Keychain::default(),
+            &d,
+            &[true],
+            &Options::default(),
+        );
+        assert_eq!(lib.hosts[0].web.url, "http://nas:8080/admin");
     }
 }

@@ -160,7 +160,13 @@ pub fn parse_url(input: &str) -> Result<WebUrl, UrlError> {
             None => (authority, None),
         }
     };
-    let host = host.to_ascii_lowercase();
+    let mut host = host.to_ascii_lowercase();
+    // The browser reports IPv6 hosts in their canonical form; compare with the same one.
+    if host.contains(':')
+        && let Ok(a) = host.parse::<std::net::Ipv6Addr>()
+    {
+        host = a.to_string();
+    }
     if !valid_host(&host) {
         return Err(UrlError::BadHost);
     }
@@ -661,6 +667,14 @@ pub fn short_url(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ipv6_hosts_are_canonical() {
+        let u = parse_url("https://[FE80:0:0:0:0:0:0:1]/x").unwrap();
+        assert_eq!(u.host, "fe80::1");
+        let v = parse_url("https://[::0001]:8443/").unwrap();
+        assert_eq!(v.host, "::1");
+    }
+
     use super::*;
 
     #[test]

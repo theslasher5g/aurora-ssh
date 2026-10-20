@@ -100,11 +100,17 @@ fn from_value(v: &Value) -> Result<ImportDoc, String> {
             &["Host", "HostName", "Computer", "Server", "ComputerName"],
         )
         .unwrap_or_default();
+        let mut web_url = String::new();
         if host.is_empty() {
-            host = find(o, &["Url", "URL", "Uri"])
-                .map(|u| host_of_url(&u))
-                .unwrap_or_default();
+            let u = find(o, &["Url", "URL", "Uri"]).unwrap_or_default();
+            if kind == Kind::Web && u.contains("://") {
+                web_url = u.clone();
+            }
+            host = host_of_url(&u);
         } else if kind == Kind::Web {
+            if host.contains("://") {
+                web_url = host.clone();
+            }
             host = host_of_url(&host);
         }
         if host.is_empty() {
@@ -118,6 +124,7 @@ fn from_value(v: &Value) -> Result<ImportDoc, String> {
         doc.push(ImportItem {
             name: clean_name(if name.is_empty() { &host } else { &name }),
             host,
+            url: web_url,
             port: find(o, &["Port", "HostPort"])
                 .as_deref()
                 .and_then(parse_port),
@@ -128,10 +135,9 @@ fn from_value(v: &Value) -> Result<ImportDoc, String> {
             group: limit_depth(split_path(&group)),
             tags: {
                 let mut t = jtags(o, &["Keywords", "Tags"]);
-                if t.is_empty()
-                    && let Some(k) = jget(o, &["Keywords"])
-                {
-                    t = k.split_whitespace().map(clean_name).collect();
+                // RDM separates keywords by spaces when there is no other delimiter.
+                if t.len() == 1 && t[0].contains(' ') {
+                    t = t[0].split_whitespace().map(clean_name).collect();
                 }
                 t
             },

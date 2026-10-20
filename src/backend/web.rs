@@ -151,12 +151,27 @@ pub fn spawn(start: &WebStart, events: Sink<WebEvent>) -> Result<WebHandle> {
     let mut child = cmd
         .spawn()
         .with_context(|| format!("{} starten", helper.display()))?;
-    let mut stdin = BufWriter::new(child.stdin.take().context("stdin")?);
-    let stdout = child.stdout.take().context("stdout")?;
+    let (Some(child_stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(anyhow!("stdio"));
+    };
+    let mut stdin = BufWriter::new(child_stdin);
 
     // Credentials go over the pipe, never through argv or the environment.
-    writeln!(stdin, "{}", serde_json::to_string(start)?)?;
-    stdin.flush()?;
+    let sent = serde_json::to_string(start)
+        .map_err(anyhow::Error::from)
+        .and_then(|line| {
+            writeln!(stdin, "{line}")?;
+            stdin.flush()?;
+            Ok(())
+        });
+    if let Err(e) = sent {
+        // Do not leave a helper behind that never got its start line.
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(e);
+    }
 
     std::thread::spawn(move || {
         let mut out = BufReader::new(stdout);

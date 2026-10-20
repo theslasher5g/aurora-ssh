@@ -84,6 +84,8 @@ impl Kind {
 pub struct ImportItem {
     pub name: String,
     pub host: String,
+    /// Full URL of a web entry as written in the source (scheme, port, path kept).
+    pub url: String,
     pub port: Option<u16>,
     pub kind: Option<Kind>,
     /// Protocol text as written in the source, for the report.

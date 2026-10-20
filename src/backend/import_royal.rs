@@ -58,7 +58,8 @@ pub fn jtags(o: &Value, keys: &[&str]) -> Vec<String> {
             }
         }
     }
-    out.dedup();
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|t| seen.insert(t.clone()));
     out.truncate(30);
     out
 }
@@ -183,6 +184,13 @@ fn walk(
         {
             host = host_of_url(u);
         }
+        let web_url = if kind == Kind::Web {
+            url.clone()
+                .filter(|u| u.contains("://"))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         if host.is_empty() {
             doc.skip(&name, t!("Kein Hostname"));
             continue;
@@ -203,6 +211,7 @@ fn walk(
         doc.push(ImportItem {
             name: clean_name(if name.is_empty() { &host } else { &name }),
             host,
+            url: web_url,
             port: jget(o, &["Port"]).as_deref().and_then(parse_port),
             kind: Some(kind),
             raw_type: ty,

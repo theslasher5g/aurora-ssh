@@ -522,8 +522,9 @@ fn main() {
                 }
                 WebCmd::Reload => {
                     let (err, home, pending) = {
+                        // The submit budget is per opening, not per reload: a wrong stored
+                        // password must not be sent again with every reload.
                         let s = autofill_state.borrow_mut();
-                        s.submit_budget.store(1, Ordering::SeqCst);
                         (s.error_shown, s.home.clone(), s.pending.clone())
                     };
                     if err || pending.is_some() {
@@ -535,7 +536,6 @@ fn main() {
                 WebCmd::Home => {
                     let home = {
                         let s = autofill_state.borrow_mut();
-                        s.submit_budget.store(1, Ordering::SeqCst);
                         s.home.clone()
                     };
                     let _ = view.load_url(&home);

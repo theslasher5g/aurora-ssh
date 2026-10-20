@@ -170,6 +170,11 @@ pub fn parse(text: &str) -> Result<ImportDoc, String> {
         }
         let proto = get(Col::Protocol);
         let kind = Kind::from_text(&proto);
+        let url = if kind == Kind::Web && host.contains("://") {
+            host.clone()
+        } else {
+            String::new()
+        };
         let host = if kind == Kind::Web {
             host_of_url(&host)
         } else {
@@ -182,6 +187,7 @@ pub fn parse(text: &str) -> Result<ImportDoc, String> {
         doc.push(ImportItem {
             name: clean_name(if name.is_empty() { &host } else { &name }),
             host,
+            url,
             port: parse_port(&get(Col::Port)),
             kind: Some(kind),
             raw_type: proto,
