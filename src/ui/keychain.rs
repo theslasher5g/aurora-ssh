@@ -162,6 +162,9 @@ struct Row {
 }
 
 pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+    // Key files dropped anywhere on the page go into the keychain; "~/.ssh" import sheet.
+    crate::ui::keyimport::drop_zone(app, ui.ctx());
+    crate::ui::keyimport::scan_sheet(app, ui.ctx());
     let count = app.keychain.identities.len();
     theme::page_header(
         ui,
@@ -172,6 +175,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             if theme::btn(ui, theme::Btn::Primary, Some(Icon::Plus), t!("Neu")).clicked() {
                 actions.push(Action::NewIdentity);
             }
+            crate::ui::keyimport::ssh_dir_button(app, ui);
             let group = if bar.compact {
                 theme::icon_btn(ui, Icon::Folder, t!("Neue Gruppe"))
             } else {
@@ -208,7 +212,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             ui,
             t!("Noch keine Schlüssel"),
             t!(
-                "Speichere Passwörter und SSH-Keys einmal und verwende sie für beliebig viele Hosts."
+                "Speichere Passwörter und SSH-Keys einmal und verwende sie für beliebig viele Hosts. Vorhandene Schlüsseldateien kannst du einfach hierher ziehen."
             ),
             t!("Schlüssel anlegen"),
         ) {

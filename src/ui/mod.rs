@@ -21,6 +21,7 @@ pub mod inventory_detail;
 pub mod inventory_page;
 pub mod inventory_table;
 pub mod keychain;
+pub mod keyimport;
 pub mod lock;
 pub mod logvars;
 pub mod logview;

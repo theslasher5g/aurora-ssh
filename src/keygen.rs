@@ -72,6 +72,14 @@ pub fn key_meta(private: &str) -> Option<KeyMeta> {
     })
 }
 
+/// The key needs a passphrase before it can be used.
+pub fn key_encrypted(private: &str) -> bool {
+    match PrivateKey::from_openssh(private.trim()) {
+        Ok(k) => k.is_encrypted(),
+        Err(_) => private.contains("ENCRYPTED"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
