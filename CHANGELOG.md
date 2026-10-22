@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.2
+
+### Diagnostics
+- **HTML report in the diagnostics bundle:** next to `summary.txt` and the text files the bundle now
+  contains `report.html` – a readable page with the host details, key facts (uptime, fullest disk,
+  memory, failed services), a table of contents with status pills and one collapsible section per
+  command (errors and warnings highlighted, long output shortened with a pointer to the text file).
+  Light and dark mode, printable, no scripts, all remote data escaped, redaction applies.
+
+### License
+- Aurora is now released under the MIT License (`LICENSE`).
+
 ## 0.9.1
 
 ### Fixes

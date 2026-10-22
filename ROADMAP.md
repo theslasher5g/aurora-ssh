@@ -53,7 +53,6 @@ Released work is in the [CHANGELOG](CHANGELOG.md).
 
 ## ⚪ Open questions
 
-- Which licence should Aurora have? (There is no licence file yet.)
 - Should web pages open **only** in the tab once embedding exists, or keep the separate window as an option?
 
 ## ✅ Recently done

@@ -128,7 +128,7 @@ fn group_label(g: &str) -> &'static str {
     }
 }
 
-/// Builds the archive members: one file per item plus `summary.txt`.
+/// Builds the archive members: one file per item plus `summary.txt` and `report.html`.
 fn bundle(d: &DiagUi, names: &[String]) -> (String, Vec<(String, Vec<u8>)>) {
     let started = d.started.unwrap_or_else(Local::now);
     let dir = format!("{}_{}", safe_name(&d.name), started.format("%Y-%m-%d_%H%M"));
@@ -183,6 +183,43 @@ fn bundle(d: &DiagUi, names: &[String]) -> (String, Vec<(String, Vec<u8>)>) {
         summary.push_str(&line);
     }
     let summary = clean(summary.as_bytes());
+    // The same data as a readable page (header, key facts, contents, one section per command).
+    let report = crate::backend::diag_html::HtmlReport {
+        name: clean(d.name.as_bytes())
+            .into_iter()
+            .map(char::from)
+            .collect::<String>(),
+        address: String::from_utf8_lossy(&clean(d.address.as_bytes())).into_owned(),
+        hostname: String::from_utf8_lossy(&clean(d.hostname.as_bytes())).into_owned(),
+        user: d.user.clone(),
+        created: started.format("%Y-%m-%d %H:%M:%S %z").to_string(),
+        sudo: d.used_sudo,
+        redacted: d.redact,
+        items: d
+            .run_items
+            .iter()
+            .zip(&d.results)
+            .map(|(item, res)| crate::backend::diag_html::HtmlItem {
+                group: group_label(item.group).to_string(),
+                file: item.file.clone(),
+                command: String::from_utf8_lossy(&clean(item.command.as_bytes())).into_owned(),
+                status: res.as_ref().map(|r| r.status),
+                error: res.as_ref().and_then(|r| r.error.clone()),
+                secs: res.as_ref().map_or(0.0, |r| r.took.as_secs_f32()),
+                output: res
+                    .as_ref()
+                    .map(|r| String::from_utf8_lossy(&clean(&r.output)).into_owned())
+                    .unwrap_or_default(),
+            })
+            .collect(),
+    };
+    files.insert(
+        0,
+        (
+            format!("{dir}/report.html"),
+            crate::backend::diag_html::render(&report).into_bytes(),
+        ),
+    );
     files.insert(0, (format!("{dir}/summary.txt"), summary));
     (dir, files)
 }
@@ -589,12 +626,16 @@ mod tests {
         };
         let (dir, files) = bundle(&d, &["web01".into(), "10.1.2.3".into()]);
         assert!(dir.starts_with("web_01_"));
-        assert_eq!(files.len(), 2);
+        assert_eq!(files.len(), 3);
         assert!(files[0].0.ends_with("/summary.txt"));
+        assert!(files[1].0.ends_with("/report.html"));
+        let html = String::from_utf8(files[1].1.clone()).unwrap();
+        assert!(html.contains("&lt;ip-1&gt;/24"));
+        assert!(!html.contains("10.1.2.3") && !html.contains("web01"));
         let summary = String::from_utf8(files[0].1.clone()).unwrap();
         assert!(summary.contains("ip-addr.txt"));
         assert!(!summary.contains("10.1.2.3") && !summary.contains("web01"));
-        let ip = String::from_utf8(files[1].1.clone()).unwrap();
+        let ip = String::from_utf8(files[2].1.clone()).unwrap();
         assert_eq!(ip, "inet <ip-1>/24 on <host-1>\n");
     }
 }

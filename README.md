@@ -6,6 +6,7 @@
 [![Downloads](https://img.shields.io/github/downloads/theslasher5g/ssh-client/total?style=flat-square&color=6cc9a5)](../../releases)
 ![Platforms](https://img.shields.io/badge/Windows%20·%20Linux%20·%20macOS-grey?style=flat-square)
 ![Rust](https://img.shields.io/badge/built%20with-Rust-dea584?style=flat-square&logo=rust&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/license-MIT-6cc9a5?style=flat-square)](LICENSE)
 ![Languages](https://img.shields.io/badge/UI-English%20·%20Deutsch-grey?style=flat-square)
 
 [**Download**](#-download) · [Features](#-features) · [Demos](#-demos) · [Screenshots](#-screenshots) · [Themes](#-themes) · [Shortcuts](#-keyboard-shortcuts) · [Build](#-building) · [Security](#-data--security) · [Changelog](CHANGELOG.md)
@@ -263,3 +264,8 @@ crates/aurora-rdp/     IronRDP helper process (stdio protocol)
 crates/aurora-web/     web interface helper (wry/tao, JSON lines over stdio)
 packaging/             .deb/.tar.gz script, Inno Setup installer, macOS .app/.dmg script
 ```
+
+## 📄 License
+
+Aurora is released under the [MIT License](LICENSE). The bundled fonts (Inter, IBM Plex Mono) are under the SIL Open Font
+License (`assets/fonts`); third‑party Rust crates keep their own licences.
