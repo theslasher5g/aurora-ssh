@@ -1,5 +1,5 @@
 # Builds Windows, Linux and macOS packages and publishes them together in ONE release.
-#   tag v0.9.0 -> Windows installer + portable zip, .deb + portable tar.gz, SHA256SUMS.txt
+#   tag v0.9.1 -> Windows installer + portable zip, .deb + portable tar.gz, SHA256SUMS.txt
 # Either push the tag, or run the workflow manually (it then creates the tag itself).
 name: Release
 
@@ -11,7 +11,7 @@ on:
     inputs:
       version:
         description: Version (without v)
-        default: "0.9.0"
+        default: "0.9.1"
 
 permissions:
   contents: write
@@ -221,7 +221,7 @@ jobs:
           body: |
             **Aurora ${{ env.VERSION }}** – Windows, Linux and macOS
 
-            **New in 0.9.0:** web interfaces (firewalls, switches, NAS …) as host entries with certificate pinning and auto-login · import from mRemoteNG, Royal TS, Remote Desktop Manager and CSV · tree/table navigation for thousands of hosts with scope, saved views and a search language · add SSH keys to the keychain by drag & drop. Full list: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/v${{ env.VERSION }}/CHANGELOG.md)
+            **New in 0.9.1:** security fixes (paste protection, owner-only recordings) · new app icon · mRemoteNG exports recognised · log commands on fish/csh hosts · many review fixes. 0.9.0 brought web interfaces, imports from mRemoteNG/Royal TS/RDM/CSV, large-inventory navigation and SSH key drag & drop. Full list: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/v${{ env.VERSION }}/CHANGELOG.md)
 
             | System | File | Install |
             |---|---|---|
