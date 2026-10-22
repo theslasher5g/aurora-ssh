@@ -961,10 +961,7 @@ fn layout_menu(ui: &mut egui::Ui, current: SplitLayout) {
     );
     for l in SplitLayout::ALL {
         let on = current == l;
-        let (rect, resp) = ui.allocate_exact_size(
-            Vec2::new(220.0, 28.0),
-            Sense::click(),
-        );
+        let (rect, resp) = ui.allocate_exact_size(Vec2::new(220.0, 28.0), Sense::click());
         let p = ui.painter();
         if resp.hovered() {
             p.rect_filled(rect, CornerRadius::same(6), theme::bg_card());
@@ -1005,7 +1002,7 @@ fn paint_layout_icon(p: &egui::Painter, r: Rect, l: SplitLayout, col: Color32) {
     let big = Rect::from_min_size(Pos2::ZERO, Vec2::new(90.0, 70.0));
     let n = if l == SplitLayout::Auto { 3 } else { 4 };
     let k = Vec2::new(r.width() / big.width(), r.height() / big.height());
-    for q in split_rects_for(big, n, l) {
+    for q in split_rects_for(big, n, l, &SplitRatios::new()) {
         let q = Rect::from_min_max(
             r.min + Vec2::new(q.min.x * k.x, q.min.y * k.y),
             r.min + Vec2::new(q.max.x * k.x, q.max.y * k.y),
