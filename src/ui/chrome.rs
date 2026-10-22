@@ -688,6 +688,11 @@ fn ports(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 push_split_op(ui.ctx(), SplitOp::Add(a, tab.id));
                 ui.close();
             }
+            if app.split.len() >= 2 {
+                ui.separator();
+                layout_menu(ui, app.lib.settings.split_layout);
+                ui.separator();
+            }
             if ui.button(t!("Neu verbinden")).clicked() {
                 reconnect = Some(tab.id);
                 ui.close();
@@ -902,21 +907,7 @@ fn split_menu(ui: &mut egui::Ui, index: usize) {
         }
         if in_split {
             ui.separator();
-            ui.label(
-                RichText::new(t!("Anordnung"))
-                    .size(12.5)
-                    .color(theme::text_dim()),
-            );
-            for l in SplitLayout::ALL {
-                let mark = if info.layout == l { "✔ " } else { "   " };
-                if ui
-                    .button(format!("{mark}{}  {}", l.glyph(), l.label()))
-                    .clicked()
-                {
-                    push_split_op(ui.ctx(), SplitOp::Layout(l));
-                    ui.close();
-                }
-            }
+            layout_menu(ui, info.layout);
             ui.label(
                 RichText::new(t!(
                     "Tipp: Pane an der Kopfzeile ziehen, um sie zu verschieben."
@@ -960,6 +951,68 @@ fn split_menu(ui: &mut egui::Ui, index: usize) {
     });
 }
 
+/// "Anordnung" section of the split menus: one row per layout, ✔ on the current one.
+fn layout_menu(ui: &mut egui::Ui, current: SplitLayout) {
+    ui.label(
+        RichText::new(t!("Anordnung"))
+            .size(12.5)
+            .color(theme::text_dim()),
+    );
+    for l in SplitLayout::ALL {
+        let on = current == l;
+        let (rect, resp) = ui.allocate_exact_size(
+            Vec2::new(220.0, 28.0),
+            Sense::click(),
+        );
+        let p = ui.painter();
+        if resp.hovered() {
+            p.rect_filled(rect, CornerRadius::same(6), theme::bg_card());
+        }
+        let col = if on { theme::accent() } else { theme::text() };
+        if on {
+            p.text(
+                Pos2::new(rect.left() + 12.0, rect.center().y),
+                egui::Align2::CENTER_CENTER,
+                "✔",
+                egui::FontId::proportional(13.0),
+                col,
+            );
+        }
+        let icon = Rect::from_center_size(
+            Pos2::new(rect.left() + 38.0, rect.center().y),
+            Vec2::new(18.0, 14.0),
+        );
+        paint_layout_icon(p, icon, l, col);
+        p.text(
+            Pos2::new(rect.left() + 56.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            l.label(),
+            egui::FontId::proportional(14.0),
+            col,
+        );
+        if resp.clicked() {
+            push_split_op(ui.ctx(), SplitOp::Layout(l));
+            ui.close();
+        }
+    }
+}
+
+/// Tiny pictogram of a layout (four panes), drawn so it needs no special font glyphs.
+fn paint_layout_icon(p: &egui::Painter, r: Rect, l: SplitLayout, col: Color32) {
+    let stroke = Stroke::new(1.2, col);
+    // Lay out on a large canvas (the pane gap is fixed in px), then scale down.
+    let big = Rect::from_min_size(Pos2::ZERO, Vec2::new(90.0, 70.0));
+    let n = if l == SplitLayout::Auto { 3 } else { 4 };
+    let k = Vec2::new(r.width() / big.width(), r.height() / big.height());
+    for q in split_rects_for(big, n, l) {
+        let q = Rect::from_min_max(
+            r.min + Vec2::new(q.min.x * k.x, q.min.y * k.y),
+            r.min + Vec2::new(q.max.x * k.x, q.max.y * k.y),
+        );
+        p.rect_stroke(q, CornerRadius::same(1), stroke, egui::StrokeKind::Inside);
+    }
+}
+
 /// How the panes of a split are arranged.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub enum SplitLayout {
@@ -996,18 +1049,6 @@ impl SplitLayout {
             SplitLayout::MainLeft => t!("Eine groß links"),
             SplitLayout::MainTop => t!("Eine groß oben"),
             SplitLayout::Grid => t!("Raster"),
-        }
-    }
-
-    /// Small pictogram for menus.
-    pub fn glyph(self) -> &'static str {
-        match self {
-            SplitLayout::Auto => "◫",
-            SplitLayout::Columns => "▥",
-            SplitLayout::Rows => "▤",
-            SplitLayout::MainLeft => "◧",
-            SplitLayout::MainTop => "⬒",
-            SplitLayout::Grid => "▦",
         }
     }
 }
