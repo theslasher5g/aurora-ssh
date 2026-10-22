@@ -622,6 +622,12 @@ pub fn apply(app: &mut App, action: NavAction, ctx: &egui::Context) {
             // A search or filter would hide the group again.
             app.search.clear();
             app.host_filter = 0;
+            // Outside the customer scope the target would stay invisible: leave the scope.
+            if let Some(sc) = app.lib.nav.scope
+                && !in_scope(&app.lib, Some(g), Some(sc))
+            {
+                set_scope(app, None);
+            }
             open_chain(app, g);
             app.lib.nav.touch_group(g);
             app.nav.cursor = Some(Cursor::Group(g));
@@ -633,7 +639,13 @@ pub fn apply(app: &mut App, action: NavAction, ctx: &egui::Context) {
             app.active = None;
             app.search.clear();
             app.host_filter = 0;
-            if let Some(g) = app.lib.host(h).and_then(|h| h.group_id) {
+            let group = app.lib.host(h).and_then(|h| h.group_id);
+            if let Some(sc) = app.lib.nav.scope
+                && !in_scope(&app.lib, group, Some(sc))
+            {
+                set_scope(app, None);
+            }
+            if let Some(g) = group {
                 open_chain(app, g);
             }
             app.nav.cursor = Some(Cursor::Host(h));

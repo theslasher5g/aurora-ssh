@@ -151,7 +151,8 @@ pub fn remove_in(path: &std::path::Path, ids: &[String]) {
         .filter(|l| {
             serde_json::from_str::<Line>(l)
                 .map(|x| !ids.contains(&x.id))
-                .unwrap_or(false)
+                // A line we cannot read is not ours to delete.
+                .unwrap_or(true)
         })
         .collect();
     let mut out = kept.join("\n");

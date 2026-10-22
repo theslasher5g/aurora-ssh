@@ -26,6 +26,10 @@ pub fn spawn(
     sink: Sink<Done>,
     prompts: Sink<HostKeyPrompt>,
 ) {
+    // Facts and details take up to ~110 s; every info snippet may need up to 30 s more.
+    let limit = Duration::from_secs(
+        110 + 30 * snippets.len().min(super::inventory_info::MAX_SNIPPETS) as u64,
+    );
     rt.spawn(async move {
         let run = async {
             let handle = connect(&params, prompts)
@@ -37,7 +41,7 @@ pub fn spawn(
                 .await;
             facts.ok_or_else(|| t!("Der Server hat keine Fakten geliefert").to_string())
         };
-        let result = match tokio::time::timeout(Duration::from_secs(110), run).await {
+        let result = match tokio::time::timeout(limit, run).await {
             Ok(r) => r,
             Err(_) => Err(t!("Zeitüberschreitung").to_string()),
         };

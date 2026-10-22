@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.1
+
+### Fixes
+- **Security: paste protection.** Text pasted into a terminal with bracketed paste could rebuild
+  the end-of-paste marker (`ESC[2` + `ESC[201~` + `01~`) and have the rest run as typed
+  input. All control characters except tab and line breaks are now removed from pasted text.
+- Session recordings are created readable by the owner only (mode 0600 on Linux/macOS).
+- mRemoteNG exports (`<mrng:Connections …>`) are recognised; the Markdown/HTML export masks
+  `10.1.2.3:8080` and `10.1.2.3.`; log commands also work on fish/csh login shells; the
+  inventory refresh timeout grows with the number of info snippets; unparseable lines are no
+  longer dropped when the session history is cleaned; deleting a single host also removes its
+  inventory details; "Show in list" leaves a customer scope when the target is outside it;
+  resizing a terminal no longer re-rings old bells.
+
 ## 0.9.0
 
 ### Keychain

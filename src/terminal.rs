@@ -418,8 +418,10 @@ impl Terminal {
             }
             self.replaying = false;
             self.raw = raw;
-            // Questions asked long ago must not be answered again.
-            self.parser.callbacks_mut().replies.clear();
+            // Questions asked long ago must not be answered again, nor old bells rung.
+            let hooks = self.parser.callbacks_mut();
+            hooks.replies.clear();
+            hooks.bell = false;
         }
         self.cols = cols;
         self.rows = rows;
@@ -575,12 +577,13 @@ impl Terminal {
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
-        if !self.replaying {
+        // Once the history outgrew the buffer a replay is impossible: stop keeping it
+        // (no 8 MB memmove per chunk, and the memory goes back).
+        if !self.replaying && !self.raw_cut {
             self.raw.extend_from_slice(bytes);
             if self.raw.len() > RAW_MAX {
-                let cut = self.raw.len() - RAW_MAX;
-                self.raw.drain(..cut);
                 self.raw_cut = true;
+                self.raw = Vec::new();
             }
         }
         self.last_feed = Instant::now();
@@ -841,7 +844,12 @@ impl Terminal {
         if self.bracketed_paste() {
             // Pasted text must not be able to end bracketed paste early and have the rest
             // executed as typed input (the "paste-jacking" trick).
-            let text = text.replace("\x1b[201~", "").replace("\x1b[200~", "");
+            // Removing the marker is not enough (`ESC[2` + `ESC[201~` + `01~` becomes one
+            // again), so every escape and other control character goes, tab and CR stay.
+            let text: String = text
+                .chars()
+                .filter(|c| !c.is_control() || matches!(c, '\t' | '\r'))
+                .collect();
             let mut v = b"\x1b[200~".to_vec();
             v.extend_from_slice(text.as_bytes());
             v.extend_from_slice(b"\x1b[201~");
@@ -2053,8 +2061,12 @@ mod tests {
         assert_eq!(t.paste_bytes("x"), b"\x1b[200~x\x1b[201~");
         assert_eq!(
             t.paste_bytes("a\x1b[201~rm -rf ~\n"),
-            b"\x1b[200~arm -rf ~\r\x1b[201~"
+            b"\x1b[200~a[201~rm -rf ~\r\x1b[201~"
         );
+        // A marker rebuilt from the pieces around a removed one must not survive.
+        let nested = t.paste_bytes("echo ok\x1b[2\x1b[201~01~\nrm -rf ~\n");
+        assert_eq!(nested.windows(6).filter(|w| *w == b"\x1b[201~").count(), 1);
+        assert!(nested.ends_with(b"\x1b[201~"));
     }
 
     #[test]

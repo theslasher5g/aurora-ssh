@@ -25,7 +25,7 @@ pub fn parse_bytes(bytes: &[u8], name: &str) -> Result<ImportDoc, String> {
     let t = text.trim_start();
     if t.starts_with('<') {
         let head: String = t.chars().take(4000).collect();
-        return if head.contains("<Connections") {
+        return if head.contains("<Connections") || head.contains(":Connections") {
             import_mremote::parse(&text)
         } else if head.contains("<ArrayOfConnection") || head.contains("<Connection") {
             import_rdm::parse_xml(&text)

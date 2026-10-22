@@ -139,10 +139,11 @@ async fn run_ssh(
     let mut ch = handle.channel_open_session().await?;
     ch.exec(
         true,
-        format!(
+        // Under `sh`, so a fish/csh login shell does not choke on the POSIX syntax.
+        super::inventory_collect::sh_wrap(&format!(
             "export TERM=${{TERM:-xterm-256color}} COLUMNS=${{COLUMNS:-200}}; {} 2>&1",
             source.command()
-        ),
+        )),
     )
     .await?;
     events.send(LogEvent::Connected);

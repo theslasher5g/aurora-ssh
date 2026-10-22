@@ -3194,6 +3194,7 @@ impl App {
             Action::DeleteHost(id) => {
                 crate::backend::web::forget_host_data(&self.lib.hosts, &[id]);
                 self.lib.hosts.retain(|h| h.id != id);
+                self.lib.detail.remove(&id);
                 self.save_library();
             }
             Action::ToggleFavorite(id) => {

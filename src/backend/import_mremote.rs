@@ -16,7 +16,14 @@ struct Inherit {
 
 pub fn parse(text: &str) -> Result<ImportDoc, String> {
     let root = import_xml::parse(text).map_err(|e| format!("XML: {e}"))?;
-    if !root.name.eq_ignore_ascii_case("Connections") {
+    // Real files use a namespace prefix: `<mrng:Connections xmlns:mrng=…>`.
+    if !root
+        .name
+        .rsplit(':')
+        .next()
+        .unwrap_or("")
+        .eq_ignore_ascii_case("Connections")
+    {
         return Err(
             t!("Das ist keine mRemoteNG-Datei (Wurzelelement <Connections> fehlt).").into(),
         );

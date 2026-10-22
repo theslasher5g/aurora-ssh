@@ -123,6 +123,19 @@ pub fn mask_ips(s: &str) -> String {
             Some(i) => (&tok[..i], &tok[i..]),
             None => (tok.as_str(), ""),
         };
+        // `10.1.2.3:8080` and `reach 10.1.2.3.`: peel a port and trailing punctuation off first.
+        let core = addr.trim_end_matches(['.', ':']);
+        let punct = &addr[core.len()..];
+        let (addr, port) = match core.rfind(':') {
+            Some(i)
+                if core[..i].matches('.').count() == 3
+                    && !core[i + 1..].is_empty()
+                    && core[i + 1..].bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                (&core[..i], &core[i..])
+            }
+            _ => (core, ""),
+        };
         let v4 = {
             let p: Vec<&str> = addr.split('.').collect();
             p.len() == 4
@@ -136,7 +149,8 @@ pub fn mask_ips(s: &str) -> String {
             && addr.chars().any(|c| c.is_ascii_hexdigit());
         if (v4 || v6) && !keep_addr(addr) {
             out.push_str("‹IP›");
-            let _ = rest;
+            out.push_str(port);
+            out.push_str(punct);
             if rest.starts_with('/') && rest[1..].chars().all(|c| c.is_ascii_digit()) {
                 out.push_str(rest);
             }
@@ -1810,5 +1824,13 @@ mod tests {
     fn slugs() {
         assert_eq!(slug("1. web-01"), "1-web-01");
         assert_eq!(slug("Hinweise / nicht erfasst"), "hinweise--nicht-erfasst");
+    }
+
+    #[test]
+    fn masks_addresses_with_port_and_trailing_dot() {
+        assert_eq!(mask_ips("listen 10.1.2.3:8080 ok"), "listen ‹IP›:8080 ok");
+        assert_eq!(mask_ips("reach 10.1.2.3."), "reach ‹IP›.");
+        assert_eq!(mask_ips("net 10.0.0.0/24"), "net ‹IP›/24");
+        assert_eq!(mask_ips("local 127.0.0.1:22"), "local 127.0.0.1:22");
     }
 }

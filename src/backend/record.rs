@@ -98,11 +98,15 @@ impl Recorder {
                 format!("{stem}-{n}.cast")
             };
             let path = dir.join(name);
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            // Raw terminal output: readable by the owner only.
+            #[cfg(unix)]
             {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            match opts.open(&path) {
                 Ok(f) => break (path, f),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && n < 1000 => n += 1,
                 Err(e) => return Err(e.into()),
