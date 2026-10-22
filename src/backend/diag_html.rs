@@ -183,7 +183,7 @@ pub fn facts(items: &[HtmlItem]) -> Vec<Fact> {
     let get = |file: &str| {
         items
             .iter()
-            .find(|i| i.file == file && i.status.is_some())
+            .find(|i| i.file == file && i.status == Some(0) && i.error.is_none())
             .map(|i| i.output.as_str())
     };
     let mut out = Vec::new();
