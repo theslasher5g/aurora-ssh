@@ -1,9 +1,10 @@
 <div align="center">
 
-# Aurora
+<img src="docs/assets/hero.svg" alt="Aurora – one calm, fast client for everything you administer" width="100%">
 
-**One calm, fast client for everything you administer.**<br>
-SSH · SFTP · RDP · VNC · Telnet · Serial · Web interfaces · Docker/Kubernetes · Proxmox
+<h1 hidden>Aurora</h1>
+
+<b>SSH · SFTP · RDP · VNC · Telnet · Serial · Web interfaces · Docker/Kubernetes · Proxmox</b>
 
 [![Release](https://img.shields.io/github/v/release/theslasher5g/ssh-client?style=flat-square&color=7c9cff)](../../releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/theslasher5g/ssh-client/total?style=flat-square&color=6cc9a5)](../../releases)
