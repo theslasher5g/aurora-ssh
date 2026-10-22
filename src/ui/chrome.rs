@@ -793,6 +793,7 @@ pub fn drop_order(
     dragged: u64,
     pos: Pos2,
     layout: SplitLayout,
+    saved: &SplitRatios,
 ) -> Option<Vec<u64>> {
     if !area.contains(pos) {
         return None;
@@ -802,7 +803,7 @@ pub fn drop_order(
         return Some(vec![dragged]);
     }
     if base.len() >= MAX_SPLIT {
-        let i = split_rects_for(area, base.len(), layout)
+        let i = split_rects_for(area, base.len(), layout, saved)
             .iter()
             .position(|r| r.contains(pos))?;
         let mut order = base;
@@ -812,7 +813,7 @@ pub fn drop_order(
     (0..=base.len()).find_map(|k| {
         let mut order = base.clone();
         order.insert(k, dragged);
-        split_rects_for(area, order.len(), layout)[k]
+        split_rects_for(area, order.len(), layout, saved)[k]
             .contains(pos)
             .then_some(order)
     })
@@ -1012,81 +1013,202 @@ impl SplitLayout {
     }
 }
 
-/// Pane rectangles for 1–4 sessions in `layout`.
-pub fn split_rects_for(r: Rect, n: usize, layout: SplitLayout) -> Vec<Rect> {
-    // Half the gap between panes.
-    let g = 5.0;
-    let (l, t, rr, b) = (r.left(), r.top(), r.right(), r.bottom());
-    let mx = r.center().x;
-    let my = r.center().y;
-    let rect = |x0: f32, y0: f32, x1: f32, y1: f32| {
-        Rect::from_min_max(Pos2::new(x0, y0), Pos2::new(x1, y1))
-    };
-    if n <= 1 {
-        return vec![r];
+/// Saved divider positions per layout and pane count (`"Rows-3"` → ratios of its dividers,
+/// `0.0` = not moved yet).
+pub type SplitRatios = std::collections::BTreeMap<String, Vec<f32>>;
+
+pub fn ratio_key(layout: SplitLayout, n: usize) -> String {
+    format!("{layout:?}-{n}")
+}
+
+/// Panes closer than this to a window edge or each other are not allowed (px).
+const MIN_PANE: f32 = 120.0;
+
+/// A draggable divider between panes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Divider {
+    /// Index into the layout's ratios.
+    pub idx: usize,
+    /// Mouse hit area (the gap and a little more).
+    pub hit: Rect,
+    /// Panes on both sides sit next to each other (the line is vertical).
+    pub vertical: bool,
+    /// The area that is divided – the pointer position inside it gives the ratio.
+    pub region: Rect,
+    /// Ratio of an equal division.
+    pub default: f32,
+}
+
+enum Node {
+    Leaf(usize),
+    /// `side_by_side`: `a` left of `b`, else `a` above `b`.
+    Split {
+        side_by_side: bool,
+        idx: usize,
+        default: f32,
+        a: Box<Node>,
+        b: Box<Node>,
+    },
+}
+
+/// `leaves` in a row (or column) with equal default sizes; dividers numbered from `idx0`.
+fn chain(side_by_side: bool, leaves: &[usize], idx0: usize) -> Node {
+    match leaves {
+        [one] => Node::Leaf(*one),
+        [first, rest @ ..] => Node::Split {
+            side_by_side,
+            idx: idx0,
+            default: 1.0 / leaves.len() as f32,
+            a: Box::new(Node::Leaf(*first)),
+            b: Box::new(chain(side_by_side, rest, idx0 + 1)),
+        },
+        [] => Node::Leaf(0),
     }
-    // `n` equal slices along one axis.
-    let slices = |horizontal: bool, count: usize, area: Rect| -> Vec<Rect> {
-        let (from, len) = if horizontal {
-            (area.left(), area.width())
-        } else {
-            (area.top(), area.height())
-        };
-        let step = len / count as f32;
-        (0..count)
-            .map(|i| {
-                let a = from + step * i as f32 + if i > 0 { g } else { 0.0 };
-                let z = from + step * (i + 1) as f32 - if i + 1 < count { g } else { 0.0 };
-                if horizontal {
-                    rect(a, area.top(), z, area.bottom())
-                } else {
-                    rect(area.left(), a, area.right(), z)
-                }
-            })
-            .collect()
-    };
+}
+
+fn split2(side_by_side: bool, idx: usize, a: Node, b: Node) -> Node {
+    Node::Split {
+        side_by_side,
+        idx,
+        default: 0.5,
+        a: Box::new(a),
+        b: Box::new(b),
+    }
+}
+
+fn grid4(n: usize) -> Node {
+    // Both rows share one vertical divider (index 1).
+    let top = split2(true, 1, Node::Leaf(0), Node::Leaf(1));
+    match n {
+        3 => split2(false, 0, top, Node::Leaf(2)),
+        _ => split2(false, 0, top, split2(true, 1, Node::Leaf(2), Node::Leaf(3))),
+    }
+}
+
+fn layout_tree(layout: SplitLayout, n: usize) -> Node {
+    let all: Vec<usize> = (0..n).collect();
     match layout {
-        SplitLayout::Columns => slices(true, n, r),
-        SplitLayout::Rows => slices(false, n, r),
-        SplitLayout::MainLeft => {
-            let mut v = vec![rect(l, t, mx - g, b)];
-            v.extend(slices(false, n - 1, rect(mx + g, t, rr, b)));
-            v
-        }
-        SplitLayout::MainTop => {
-            let mut v = vec![rect(l, t, rr, my - g)];
-            v.extend(slices(true, n - 1, rect(l, my + g, rr, b)));
-            v
-        }
+        SplitLayout::Columns => chain(true, &all, 0),
+        SplitLayout::Rows => chain(false, &all, 0),
+        SplitLayout::MainLeft => split2(true, 0, Node::Leaf(0), chain(false, &all[1..], 1)),
+        SplitLayout::MainTop => split2(false, 0, Node::Leaf(0), chain(true, &all[1..], 1)),
         SplitLayout::Grid => match n {
-            2 => slices(true, 2, r),
-            3 => vec![
-                rect(l, t, mx - g, my - g),
-                rect(mx + g, t, rr, my - g),
-                rect(l, my + g, rr, b),
-            ],
-            _ => vec![
-                rect(l, t, mx - g, my - g),
-                rect(mx + g, t, rr, my - g),
-                rect(l, my + g, mx - g, b),
-                rect(mx + g, my + g, rr, b),
-            ],
+            2 => chain(true, &all, 0),
+            _ => grid4(n),
         },
         SplitLayout::Auto => match n {
-            2 => vec![rect(l, t, mx - g, b), rect(mx + g, t, rr, b)],
-            3 => vec![
-                rect(l, t, mx - g, b),
-                rect(mx + g, t, rr, my - g),
-                rect(mx + g, my + g, rr, b),
-            ],
-            _ => vec![
-                rect(l, t, mx - g, my - g),
-                rect(mx + g, t, rr, my - g),
-                rect(l, my + g, mx - g, b),
-                rect(mx + g, my + g, rr, b),
-            ],
+            2 => chain(true, &all, 0),
+            3 => split2(
+                true,
+                0,
+                Node::Leaf(0),
+                split2(false, 1, Node::Leaf(1), Node::Leaf(2)),
+            ),
+            _ => grid4(n),
         },
     }
+}
+
+fn place(
+    node: &Node,
+    r: Rect,
+    ratios: &[f32],
+    panes: &mut Vec<(usize, Rect)>,
+    dividers: &mut Vec<Divider>,
+) {
+    // Half the gap between panes.
+    let g = 5.0;
+    match node {
+        Node::Leaf(i) => panes.push((*i, r)),
+        Node::Split {
+            side_by_side,
+            idx,
+            default,
+            a,
+            b,
+        } => {
+            let len = if *side_by_side { r.width() } else { r.height() };
+            let lo = (MIN_PANE / len).min(0.45);
+            let ratio = ratios
+                .get(*idx)
+                .copied()
+                .filter(|r| *r > 0.0)
+                .unwrap_or(*default)
+                .clamp(lo, 1.0 - lo);
+            let (ra, rb, hit) = if *side_by_side {
+                let mid = r.left() + r.width() * ratio;
+                (
+                    Rect::from_min_max(r.min, Pos2::new(mid - g, r.bottom())),
+                    Rect::from_min_max(Pos2::new(mid + g, r.top()), r.max),
+                    Rect::from_min_max(
+                        Pos2::new(mid - g - 2.0, r.top()),
+                        Pos2::new(mid + g + 2.0, r.bottom()),
+                    ),
+                )
+            } else {
+                let mid = r.top() + r.height() * ratio;
+                (
+                    Rect::from_min_max(r.min, Pos2::new(r.right(), mid - g)),
+                    Rect::from_min_max(Pos2::new(r.left(), mid + g), r.max),
+                    Rect::from_min_max(
+                        Pos2::new(r.left(), mid - g - 2.0),
+                        Pos2::new(r.right(), mid + g + 2.0),
+                    ),
+                )
+            };
+            dividers.push(Divider {
+                idx: *idx,
+                hit,
+                vertical: *side_by_side,
+                region: r,
+                default: *default,
+            });
+            place(a, ra, ratios, panes, dividers);
+            place(b, rb, ratios, panes, dividers);
+        }
+    }
+}
+
+/// Pane rectangles (in pane order) and the draggable dividers for `n` sessions.
+pub fn split_geometry(
+    r: Rect,
+    n: usize,
+    layout: SplitLayout,
+    saved: &SplitRatios,
+) -> (Vec<Rect>, Vec<Divider>) {
+    if n <= 1 {
+        return (vec![r], Vec::new());
+    }
+    let ratios = saved
+        .get(&ratio_key(layout, n))
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let mut panes = Vec::new();
+    let mut dividers = Vec::new();
+    place(
+        &layout_tree(layout, n),
+        r,
+        ratios,
+        &mut panes,
+        &mut dividers,
+    );
+    panes.sort_by_key(|(i, _)| *i);
+    (panes.into_iter().map(|(_, r)| r).collect(), dividers)
+}
+
+/// Pane rectangles for 1–4 sessions in `layout`.
+pub fn split_rects_for(r: Rect, n: usize, layout: SplitLayout, saved: &SplitRatios) -> Vec<Rect> {
+    split_geometry(r, n, layout, saved).0
+}
+
+/// Ratio for a divider when the pointer is at `pos`.
+pub fn ratio_at(d: &Divider, pos: Pos2) -> f32 {
+    let (p, from, len) = if d.vertical {
+        (pos.x, d.region.left(), d.region.width())
+    } else {
+        (pos.y, d.region.top(), d.region.height())
+    };
+    ((p - from) / len.max(1.0)).clamp(0.05, 0.95)
 }
 
 /// Header above a session: close, port number, name and address, state dot; actions on
@@ -1432,6 +1554,37 @@ pub fn band(painter: &egui::Painter, rect: Rect, color: Color32) {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn dragged_dividers_resize_panes_and_clamp() {
+        use super::{SplitLayout, SplitRatios, ratio_at, ratio_key, split_geometry};
+        use egui::{Pos2, Rect, pos2};
+        let area = Rect::from_min_max(Pos2::ZERO, pos2(1000.0, 600.0));
+        let (r, d) = split_geometry(area, 2, SplitLayout::Columns, &SplitRatios::new());
+        assert_eq!(d.len(), 1);
+        assert!((r[0].width() - r[1].width()).abs() < 1.0);
+        // Drag the divider to 30 % of the width.
+        let ratio = ratio_at(&d[0], pos2(300.0, 100.0));
+        let mut saved = SplitRatios::new();
+        saved.insert(ratio_key(SplitLayout::Columns, 2), vec![ratio]);
+        let (r2, _) = split_geometry(area, 2, SplitLayout::Columns, &saved);
+        assert!((r2[0].width() - 295.0).abs() < 2.0, "{}", r2[0].width());
+        // Never smaller than the minimum pane.
+        saved.insert(ratio_key(SplitLayout::Columns, 2), vec![0.01]);
+        let (r3, _) = split_geometry(area, 2, SplitLayout::Columns, &saved);
+        assert!(r3[0].width() >= 110.0);
+        // 0.0 means "not moved": equal division.
+        saved.insert(ratio_key(SplitLayout::Columns, 2), vec![0.0]);
+        let (r4, _) = split_geometry(area, 2, SplitLayout::Columns, &saved);
+        assert!((r4[0].width() - r4[1].width()).abs() < 1.0);
+        // Stacked panes have horizontal dividers.
+        let (_, d) = split_geometry(area, 3, SplitLayout::Rows, &SplitRatios::new());
+        assert_eq!(d.len(), 2);
+        assert!(d.iter().all(|x| !x.vertical));
+        // The grid has three dividers (one shared vertical position for both rows).
+        let (_, g) = split_geometry(area, 4, SplitLayout::Grid, &SplitRatios::new());
+        assert_eq!(g.len(), 3);
+    }
+
+    #[test]
     fn initials_are_short() {
         assert_eq!(super::initials("web-01"), "W0");
         assert_eq!(super::initials("Raspberry Pi"), "RP");
@@ -1442,12 +1595,12 @@ mod tests {
 
     #[test]
     fn layouts_cover_the_area_without_overlap() {
-        use super::{SplitLayout, split_rects_for};
+        use super::{SplitLayout, SplitRatios, split_rects_for};
         use egui::{Pos2, Rect, pos2};
         let area = Rect::from_min_max(Pos2::ZERO, pos2(1000.0, 600.0));
         for layout in SplitLayout::ALL {
             for n in 1..=4usize {
-                let r = split_rects_for(area, n, layout);
+                let r = split_rects_for(area, n, layout, &SplitRatios::new());
                 assert_eq!(r.len(), n, "{layout:?} {n}");
                 for (i, a) in r.iter().enumerate() {
                     assert!(area.contains_rect(*a), "{layout:?} {n} pane {i} outside");
@@ -1459,74 +1612,151 @@ mod tests {
             }
         }
         // Two panes stacked: same width, one above the other.
-        let rows = split_rects_for(area, 2, SplitLayout::Rows);
+        let rows = split_rects_for(area, 2, SplitLayout::Rows, &SplitRatios::new());
         assert_eq!((rows[0].width(), rows[1].width()), (1000.0, 1000.0));
         assert!(rows[0].bottom() < rows[1].top());
         // Side by side.
-        let cols = split_rects_for(area, 3, SplitLayout::Columns);
+        let cols = split_rects_for(area, 3, SplitLayout::Columns, &SplitRatios::new());
         assert!(cols[0].right() < cols[1].left() && cols[1].right() < cols[2].left());
     }
 
     #[test]
     fn drop_in_stacked_layout_uses_the_stacked_slots() {
-        use super::{SplitLayout, drop_order};
+        use super::{SplitLayout, SplitRatios, drop_order};
         use egui::{Pos2, Rect, pos2};
         let area = Rect::from_min_max(Pos2::ZERO, pos2(100.0, 100.0));
         // One pane shown, stacked: the upper half is slot 0, the lower half slot 1.
         assert_eq!(
-            drop_order(area, &[1], 7, pos2(50.0, 20.0), SplitLayout::Rows),
+            drop_order(
+                area,
+                &[1],
+                7,
+                pos2(50.0, 20.0),
+                SplitLayout::Rows,
+                &SplitRatios::new()
+            ),
             Some(vec![7, 1])
         );
         assert_eq!(
-            drop_order(area, &[1], 7, pos2(50.0, 80.0), SplitLayout::Rows),
+            drop_order(
+                area,
+                &[1],
+                7,
+                pos2(50.0, 80.0),
+                SplitLayout::Rows,
+                &SplitRatios::new()
+            ),
             Some(vec![1, 7])
         );
         // Moving a pane within the stack.
         assert_eq!(
-            drop_order(area, &[1, 2, 3], 3, pos2(50.0, 10.0), SplitLayout::Rows),
+            drop_order(
+                area,
+                &[1, 2, 3],
+                3,
+                pos2(50.0, 10.0),
+                SplitLayout::Rows,
+                &SplitRatios::new()
+            ),
             Some(vec![3, 1, 2])
         );
     }
 
     #[test]
     fn drop_positions() {
-        use super::{SplitLayout, drop_order};
+        use super::{SplitLayout, SplitRatios, drop_order};
         use egui::{Pos2, Rect, pos2};
         let area = Rect::from_min_max(Pos2::ZERO, pos2(100.0, 100.0));
         let at = |x, y| pos2(x, y);
         assert_eq!(
-            drop_order(area, &[], 7, at(50.0, 50.0), SplitLayout::Auto),
+            drop_order(
+                area,
+                &[],
+                7,
+                at(50.0, 50.0),
+                SplitLayout::Auto,
+                &SplitRatios::new()
+            ),
             Some(vec![7])
         );
         assert_eq!(
-            drop_order(area, &[1], 7, at(20.0, 50.0), SplitLayout::Auto),
+            drop_order(
+                area,
+                &[1],
+                7,
+                at(20.0, 50.0),
+                SplitLayout::Auto,
+                &SplitRatios::new()
+            ),
             Some(vec![7, 1])
         );
         assert_eq!(
-            drop_order(area, &[1], 7, at(80.0, 50.0), SplitLayout::Auto),
+            drop_order(
+                area,
+                &[1],
+                7,
+                at(80.0, 50.0),
+                SplitLayout::Auto,
+                &SplitRatios::new()
+            ),
             Some(vec![1, 7])
         );
         // two shown -> left column, top right or bottom right
         assert_eq!(
-            drop_order(area, &[1, 2], 7, at(80.0, 20.0), SplitLayout::Auto),
+            drop_order(
+                area,
+                &[1, 2],
+                7,
+                at(80.0, 20.0),
+                SplitLayout::Auto,
+                &SplitRatios::new()
+            ),
             Some(vec![1, 7, 2])
         );
         assert_eq!(
-            drop_order(area, &[1, 2], 7, at(80.0, 80.0), SplitLayout::Auto),
+            drop_order(
+                area,
+                &[1, 2],
+                7,
+                at(80.0, 80.0),
+                SplitLayout::Auto,
+                &SplitRatios::new()
+            ),
             Some(vec![1, 2, 7])
         );
         // already shown: moves
         assert_eq!(
-            drop_order(area, &[1, 2, 3], 3, at(20.0, 50.0), SplitLayout::Auto),
+            drop_order(
+                area,
+                &[1, 2, 3],
+                3,
+                at(20.0, 50.0),
+                SplitLayout::Auto,
+                &SplitRatios::new()
+            ),
             Some(vec![3, 1, 2])
         );
         // full: replaces the pane under the pointer
         assert_eq!(
-            drop_order(area, &[1, 2, 3, 4], 7, at(20.0, 80.0), SplitLayout::Auto),
+            drop_order(
+                area,
+                &[1, 2, 3, 4],
+                7,
+                at(20.0, 80.0),
+                SplitLayout::Auto,
+                &SplitRatios::new()
+            ),
             Some(vec![1, 2, 7, 4])
         );
         assert_eq!(
-            drop_order(area, &[1], 7, at(150.0, 50.0), SplitLayout::Auto),
+            drop_order(
+                area,
+                &[1],
+                7,
+                at(150.0, 50.0),
+                SplitLayout::Auto,
+                &SplitRatios::new()
+            ),
             None
         );
     }

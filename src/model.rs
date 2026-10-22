@@ -875,6 +875,8 @@ pub struct Settings {
     pub saved_views: Vec<crate::nav_model::SavedView>,
     /// How split panes are arranged (side by side, stacked, main + rest, grid).
     pub split_layout: crate::ui::chrome::SplitLayout,
+    /// Dragged divider positions of the split view per layout and pane count.
+    pub split_ratios: crate::ui::chrome::SplitRatios,
 }
 
 impl Default for Settings {
@@ -914,6 +916,7 @@ impl Default for Settings {
             transfer_slots: 2,
             transfer_limit_kbps: 0,
             split_layout: Default::default(),
+            split_ratios: Default::default(),
             transfer_verify: false,
             saved_views: Vec::new(),
         }

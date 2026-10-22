@@ -2286,7 +2286,9 @@ impl App {
             self.active.into_iter().collect()
         };
         let layout = self.lib.settings.split_layout;
-        let order = pos.and_then(|p| chrome::drop_order(central, &shown, dragged, p, layout));
+        let saved = self.lib.settings.split_ratios.clone();
+        let order =
+            pos.and_then(|p| chrome::drop_order(central, &shown, dragged, p, layout, &saved));
 
         if released || cancel {
             chrome::end_drag(ctx);
@@ -2307,7 +2309,7 @@ impl App {
         ));
         if let Some(order) = &order {
             // Show the resulting layout: the new slot highlighted, the others outlined.
-            let rects = chrome::split_rects_for(central, order.len(), layout);
+            let rects = chrome::split_rects_for(central, order.len(), layout, &saved);
             painter.rect_filled(
                 central,
                 CornerRadius::ZERO,
@@ -4889,6 +4891,7 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        sync_window_icon(ui.ctx());
         let _perf = crate::nav_perf::frame();
         let ctx = ui.ctx().clone();
         self.pump_events(&ctx);
@@ -4985,10 +4988,12 @@ impl eframe::App for App {
                             .inner_margin(Margin::same(PANE_GAP as i8)),
                     )
                     .show(ui, |ui| {
-                        let rects = crate::ui::chrome::split_rects_for(
+                        let layout = self.lib.settings.split_layout;
+                        let (rects, dividers) = crate::ui::chrome::split_geometry(
                             ui.max_rect(),
                             ids.len(),
-                            self.lib.settings.split_layout,
+                            layout,
+                            &self.lib.settings.split_ratios,
                         );
                         for (id, rect) in ids.iter().copied().zip(rects.iter().copied()) {
                             let mut child = ui.new_child(
@@ -5011,6 +5016,59 @@ impl eframe::App for App {
                                 self.active = Some(id);
                                 self.pane_press = Some(id);
                             }
+                        }
+                        // Dividers between the panes: drag to resize, double-click to reset.
+                        let mut moved = false;
+                        for (k, d) in dividers.iter().enumerate() {
+                            let resp = ui.interact(
+                                d.hit,
+                                egui::Id::new(("split-divider", ids.len(), layout as u8, k)),
+                                egui::Sense::click_and_drag(),
+                            );
+                            if resp.hovered() || resp.dragged() {
+                                ctx.set_cursor_icon(if d.vertical {
+                                    egui::CursorIcon::ResizeHorizontal
+                                } else {
+                                    egui::CursorIcon::ResizeVertical
+                                });
+                                let line = if d.vertical {
+                                    egui::vec2(3.0, d.hit.height())
+                                } else {
+                                    egui::vec2(d.hit.width(), 3.0)
+                                };
+                                ui.painter().rect_filled(
+                                    egui::Rect::from_center_size(d.hit.center(), line),
+                                    CornerRadius::same(2),
+                                    theme::accent().gamma_multiply(0.8),
+                                );
+                            }
+                            let key = crate::ui::chrome::ratio_key(layout, ids.len());
+                            if resp.dragged()
+                                && let Some(p) = resp.interact_pointer_pos()
+                            {
+                                let v = self
+                                    .lib
+                                    .settings
+                                    .split_ratios
+                                    .entry(key.clone())
+                                    .or_default();
+                                if v.len() <= d.idx {
+                                    v.resize(d.idx + 1, 0.0);
+                                }
+                                v[d.idx] = crate::ui::chrome::ratio_at(d, p);
+                            } else if resp.double_clicked()
+                                && let Some(v) = self.lib.settings.split_ratios.get_mut(&key)
+                                && d.idx < v.len()
+                            {
+                                v[d.idx] = 0.0;
+                                moved = true;
+                            }
+                            if resp.drag_stopped() {
+                                moved = true;
+                            }
+                        }
+                        if moved {
+                            self.save_library();
                         }
                         if ids.len() >= 2 {
                             self.sync_split_focus(&ctx, &ids, &rects);
@@ -5300,6 +5358,26 @@ fn container_kind(h: &Host) -> String {
         Protocol::Kubernetes => h.subtitle(),
         _ if h.container.podman => "podman".into(),
         _ => "docker".into(),
+    }
+}
+
+/// Taskbar / window icon that matches the theme: the dark logo for dark themes, the light one
+/// for light themes (changed only when the theme flips).
+fn sync_window_icon(ctx: &egui::Context) {
+    use std::sync::atomic::{AtomicU8, Ordering};
+    static SHOWN: AtomicU8 = AtomicU8::new(0);
+    let dark = theme::palette().dark;
+    let want = if dark { 1 } else { 2 };
+    if SHOWN.swap(want, Ordering::Relaxed) == want {
+        return;
+    }
+    let bytes: &[u8] = if dark {
+        include_bytes!("../assets/icon.png")
+    } else {
+        include_bytes!("../assets/icon-light.png")
+    };
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(bytes) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Icon(Some(std::sync::Arc::new(icon))));
     }
 }
 
