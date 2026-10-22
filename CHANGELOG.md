@@ -2,10 +2,17 @@
 
 ## 0.9.2
 
+### Look
+- **Two logos, one per theme:** the new Aurora logo comes in a dark and a light version. The taskbar and
+  window icon follow the theme (dark logo on dark themes, light logo on light themes); the installed app
+  icon is the dark one.
+
 ### Split view
 - **Arrange the panes freely:** besides the automatic layout (side by side → 1 + 2 → 2 × 2) the split
   menu now offers *Side by side*, *Stacked* (two or more panes **below each other**), *One large on
   the left*, *One large on top* and *Grid*. The choice is remembered.
+- **Resize the panes:** drag the divider between two panes (double-click resets it); the positions are
+  remembered per layout.
 - **Move panes by dragging their header** onto the slot where they should go (a preview shows the
   resulting layout); the same drop zones work for sessions dragged out of the rail.
 
