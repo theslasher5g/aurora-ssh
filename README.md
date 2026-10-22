@@ -8,7 +8,7 @@
 ![Rust](https://img.shields.io/badge/built%20with-Rust-dea584?style=flat-square&logo=rust&logoColor=white)
 ![Languages](https://img.shields.io/badge/UI-English%20·%20Deutsch-grey?style=flat-square)
 
-[**Download**](#-download) · [Features](#-features) · [Screenshots](#-screenshots) · [Shortcuts](#-keyboard-shortcuts) · [Build](#-building) · [Security](#-data--security) · [Changelog](CHANGELOG.md)
+[**Download**](#-download) · [Features](#-features) · [Demos](#-demos) · [Screenshots](#-screenshots) · [Themes](#-themes) · [Shortcuts](#-keyboard-shortcuts) · [Build](#-building) · [Security](#-data--security) · [Changelog](CHANGELOG.md)
 
 <br>
 
@@ -145,20 +145,52 @@ Every [release](../../releases/latest) contains Windows, Linux and macOS:
 
 </details>
 
+## 🎬 Demos
+
+| | |
+|---|---|
+| ![Connect](docs/demo/connect.gif)<br><sub><b>Connect</b> – command palette, SSH session, coloured output</sub> | ![Split screen](docs/demo/split.gif)<br><sub><b>Split screen</b> – four sessions side by side</sub> |
+| ![Large inventories](docs/demo/inventory.gif)<br><sub><b>Large inventories</b> – customer → site → host tree, focus on one customer, search language</sub> | ![Logs](docs/demo/logs.gif)<br><sub><b>Live logs</b> – docked next to the terminal, with filters</sub> |
+
 ## 🖼 Screenshots
 
 | | |
 |---|---|
-| ![Split screen – up to four sessions](docs/screenshots/split.png)<br><sub>Split screen – up to four sessions</sub> | ![PROD sessions: red frame and warnings](docs/screenshots/prod.png)<br><sub>PROD sessions: red frame and warnings</sub> |
+| ![Split screen – two panes](docs/screenshots/tokyo.png)<br><sub>Split screen – two panes</sub> | ![PROD sessions: red frame and warnings](docs/screenshots/prod.png)<br><sub>PROD sessions: red frame and warnings</sub> |
 | ![Files: server ⇄ server](docs/screenshots/sftp.png)<br><sub>Files: server ⇄ server</sub> | ![Full screen with session switcher](docs/screenshots/fullscreen.png)<br><sub>Full screen with session switcher</sub> |
-| ![Terminal with command blocks](docs/screenshots/terminal.png)<br><sub>Terminal with command blocks</sub> | ![Theme: Tokyo Night](docs/screenshots/tokyo.png)<br><sub>Theme: Tokyo Night</sub> |
-| ![New host](docs/screenshots/editor.png)<br><sub>New host</sub> | ![Theme: GitHub Light](docs/screenshots/light.png)<br><sub>Theme: GitHub Light</sub> |
-| ![RDP in the tab](docs/screenshots/rdp.png)<br><sub>RDP in the tab</sub> | ![Theme: Paper](docs/screenshots/paper.png)<br><sub>Theme: Paper</sub> |
-| ![Command palette (Ctrl/⌘ + K)](docs/screenshots/palette.png)<br><sub>Command palette (Ctrl/⌘ + K)</sub> | ![Snippets](docs/screenshots/snippets.png)<br><sub>Snippets</sub> |
-| ![Settings & 26 themes](docs/screenshots/themes.png)<br><sub>Settings & 26 themes</sub> | ![Shortcuts help (F1)](docs/screenshots/shortcuts.png)<br><sub>Shortcuts help (F1)</sub> |
-| ![Files](docs/screenshots/files.png)<br><sub>Files</sub> | ![Encrypted vault](docs/screenshots/lock.png)<br><sub>Encrypted vault</sub> |
+| ![Terminal](docs/screenshots/terminal.png)<br><sub>Terminal</sub> | ![New host](docs/screenshots/editor.png)<br><sub>New host</sub> |
+| ![RDP in the tab](docs/screenshots/rdp.png)<br><sub>RDP in the tab</sub> | ![Command palette (Ctrl/⌘ + K)](docs/screenshots/palette.png)<br><sub>Command palette (Ctrl/⌘ + K)</sub> |
+| ![Snippets](docs/screenshots/snippets.png)<br><sub>Snippets</sub> | ![Settings](docs/screenshots/themes.png)<br><sub>Settings</sub> |
+| ![Shortcuts help (F1)](docs/screenshots/shortcuts.png)<br><sub>Shortcuts help (F1)</sub> | ![Files](docs/screenshots/files.png)<br><sub>Files</sub> |
+| ![Encrypted vault](docs/screenshots/lock.png)<br><sub>Encrypted vault</sub> | ![Host list](docs/screenshots/hosts.png)<br><sub>Host list</sub> |
 
-(Screenshots show the German UI.)
+(Screenshots show the German or English UI.)
+
+## 🎨 Themes
+
+26 built-in themes – the whole app and the terminal follow the theme (*Settings → Appearance*,
+or `Ctrl/⌘ + K` → theme). Import your own from iTerm2, Windows Terminal, base16, Alacritty or Kitty/Ghostty.
+
+![Switching themes](docs/demo/themes.gif)
+
+<details>
+<summary><b>All 26 themes</b> – same scene in every theme</summary>
+
+<br>
+
+| | | |
+|---|---|---|
+| ![Phosphor](docs/themes/phosphor.png)<br><sub>Phosphor</sub> | ![Glacier](docs/themes/glacier.png)<br><sub>Glacier</sub> | ![Nord](docs/themes/nord.png)<br><sub>Nord</sub> |
+| ![Dracula](docs/themes/dracula.png)<br><sub>Dracula</sub> | ![Tokyo Night](docs/themes/tokyo-night.png)<br><sub>Tokyo Night</sub> | ![Gruvbox](docs/themes/gruvbox.png)<br><sub>Gruvbox</sub> |
+| ![Catppuccin](docs/themes/catppuccin.png)<br><sub>Catppuccin</sub> | ![Rosé Pine](docs/themes/rose-pine.png)<br><sub>Rosé Pine</sub> | ![Solarized Dark](docs/themes/solarized-dark.png)<br><sub>Solarized Dark</sub> |
+| ![One Dark](docs/themes/one-dark.png)<br><sub>One Dark</sub> | ![Monokai](docs/themes/monokai.png)<br><sub>Monokai</sub> | ![Everforest](docs/themes/everforest.png)<br><sub>Everforest</sub> |
+| ![Kanagawa](docs/themes/kanagawa.png)<br><sub>Kanagawa</sub> | ![Ayu Mirage](docs/themes/ayu-mirage.png)<br><sub>Ayu Mirage</sub> | ![Night Owl](docs/themes/night-owl.png)<br><sub>Night Owl</sub> |
+| ![Synthwave](docs/themes/synthwave.png)<br><sub>Synthwave</sub> | ![Midnight](docs/themes/midnight.png)<br><sub>Midnight</sub> | ![Matrix](docs/themes/matrix.png)<br><sub>Matrix</sub> |
+| ![Paper](docs/themes/paper.png)<br><sub>Paper</sub> | ![Solarized Light](docs/themes/solarized-light.png)<br><sub>Solarized Light</sub> | ![GitHub Light](docs/themes/github-light.png)<br><sub>GitHub Light</sub> |
+| ![Catppuccin Latte](docs/themes/catppuccin-latte.png)<br><sub>Catppuccin Latte</sub> | ![Rosé Pine Dawn](docs/themes/rose-pine-dawn.png)<br><sub>Rosé Pine Dawn</sub> | ![One Light](docs/themes/one-light.png)<br><sub>One Light</sub> |
+| ![Ayu Light](docs/themes/ayu-light.png)<br><sub>Ayu Light</sub> | ![Nord Light](docs/themes/nord-light.png)<br><sub>Nord Light</sub> |  |
+
+</details>
 
 ## ⌨ Keyboard shortcuts
 
