@@ -1,14 +1,42 @@
+<div align="center">
+
 # Aurora
 
-A modern client for **SSH, SFTP, RDP, VNC, Telnet, serial consoles, web interfaces and Docker/Kubernetes
-containers**, written in Rust: clean, fast, with an encrypted keychain, snippets, host groups,
-tunnels, a live log viewer and 26 switchable themes. UI in English and German.
+**One calm, fast client for everything you administer.**<br>
+SSH · SFTP · RDP · VNC · Telnet · Serial · Web interfaces · Docker/Kubernetes · Proxmox
 
-![Hosts](docs/screenshots/hosts.png)
+[![Release](https://img.shields.io/github/v/release/theslasher5g/ssh-client?style=flat-square&color=7c9cff)](../../releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/theslasher5g/ssh-client/total?style=flat-square&color=6cc9a5)](../../releases)
+![Platforms](https://img.shields.io/badge/Windows%20·%20Linux%20·%20macOS-grey?style=flat-square)
+![Rust](https://img.shields.io/badge/built%20with-Rust-dea584?style=flat-square&logo=rust&logoColor=white)
+![Languages](https://img.shields.io/badge/UI-English%20·%20Deutsch-grey?style=flat-square)
 
-## Download
+[**Download**](#-download) · [Features](#-features) · [Screenshots](#-screenshots) · [Shortcuts](#-keyboard-shortcuts) · [Build](#-building) · [Security](#-data--security) · [Changelog](CHANGELOG.md)
 
-Every [release](../../releases) contains Windows, Linux and macOS:
+<br>
+
+![Aurora – host list](docs/screenshots/hosts.png)
+
+</div>
+
+## Why Aurora
+
+Aurora is a native desktop app for people who manage many servers, firewalls and customers.
+Everything lives in one window, one encrypted keychain and one searchable host list – from the
+first `ssh` to a 20 000‑host inventory.
+
+| | |
+|---|---|
+| 🖥️ **All protocols in one place** | SSH, SFTP, RDP, VNC, Telnet, serial, **web interfaces** (firewalls, switches, NAS, Proxmox …), Docker/Podman/Kubernetes – side by side in up to four split panes. |
+| 🔐 **Secrets stay secrets** | Encrypted vault (Argon2id + XChaCha20‑Poly1305), SSH keys by drag & drop, Bitwarden / 1Password / KeePassXC / Proton Pass, SSH certificates, server keys and TLS certificates pinned on first use. |
+| 🏢 **Built for MSP scale** | Customer → site → host tree, "only this customer" focus, a search language (`type:switch is:down env:prod`), saved views, virtual scrolling for 20 000+ hosts. |
+| ⚡ **Fast and light** | Rust, GPU‑drawn UI, one small download, no browser engine in the main app. 26 themes, English and German. |
+| 🧰 **Made for operations** | Command blocks, session recording and time travel, live logs next to the terminal, runbooks, transfer queue, server inventory with system documentation export. |
+| 🚚 **Easy to switch** | Import from **mRemoteNG, Royal TS, Remote Desktop Manager, CSV and `~/.ssh/config`**. |
+
+## ⬇ Download
+
+Every [release](../../releases/latest) contains Windows, Linux and macOS:
 
 | System | File | Install |
 |---|---|---|
@@ -18,12 +46,60 @@ Every [release](../../releases) contains Windows, Linux and macOS:
 | | `aurora-<version>-linux-x86_64.tar.gz` | unpack, `./install.sh` or `./aurora` |
 | **macOS** 11+ (Apple Silicon & Intel) | `Aurora-<version>-macos-universal.dmg` | open, drag Aurora to Applications |
 
-The macOS app is not notarized: on first start right-click Aurora → *Open*
-(or `xattr -cr /Applications/Aurora.app`). Language: *Settings → Sprache / Language*.
+> **Good to know**
+> - **Windows:** without a code‑signing certificate SmartScreen may ask once ("More info" → "Run anyway"). Web interface entries use the Microsoft Edge WebView2 runtime (part of Windows 11 and current Windows 10).
+> - **macOS:** the app is not notarized – on first start right‑click Aurora → *Open* (or `xattr -cr /Applications/Aurora.app`).
+> - **Linux:** needs glibc ≥ 2.35 and X11 or Wayland with OpenGL; web interface entries need WebKitGTK (`libwebkit2gtk-4.1-0`, installed with the `.deb`).
+> - Aurora checks for new versions on start and can update itself (downloads are verified against `SHA256SUMS.txt`). Language: *Settings → Sprache / Language*.
 
-What's new in each version: [CHANGELOG.md](CHANGELOG.md) · planned: [ROADMAP.md](ROADMAP.md).
+## 🚀 Quick start
 
-## Features
+1. **Create the vault** – choose a password on first start; it encrypts your keychain.
+2. **Add hosts** – *New* → SSH / RDP / VNC / Telnet / Serial / Web interface / Container, or import from
+   `~/.ssh/config`, mRemoteNG, Royal TS, RDM or a CSV file (*Settings → General → Other connection manager*).
+3. **Add keys** – drop key files (or your `~/.ssh` folder) on the *Keys* page, or generate an Ed25519 key.
+4. **Connect** – double‑click a host or press `Ctrl/⌘ + K` and type a name, `user@host` or `ssh -p 2222 user@host`.
+5. **Work side by side** – drag a session into the window to split it, press `Ctrl + Shift + L` for live logs.
+
+## ✨ Features
+
+### Connect
+
+| | |
+|---|---|
+| **SSH** | Own terminal emulator (truecolor, scrollback, selection across screens, reflow on resize, bracketed paste), key / password / keyboard‑interactive login, keepalive, **automatic reconnect**, optional tmux/screen persistence |
+| **SFTP & files** | Two columns, each side local or **any server** – including **server ⇄ server**. Transfer queue (concurrency, bandwidth limit, pause/resume, SHA‑256 check), built‑in editor, edit remote files and upload on save |
+| **RDP** | In the tab (IronRDP): clipboard both ways, Ctrl+Alt+Del, type the clipboard as keystrokes, **drop files onto the session**, PowerShell snippets |
+| **VNC · Telnet · Serial** | Own RFB client (ZRLE, clipboard, view‑only) · Telnet with auto‑login for switches and routers · serial consoles with baud rate, flow control and echo |
+| **Web interfaces** | Firewall, switch, NAS, iDRAC/iLO, Proxmox … web UIs as host entries with **vendor templates**, own cookie profile per entry, **self‑signed certificates pinned by fingerprint** and optional **auto‑login** |
+| **Containers** | Docker, Podman and Kubernetes on this PC (also inside WSL) or any SSH host: shell, logs, actions, compose groups, pod warnings |
+| **Proxmox VE** | All VMs and containers by node, snapshots and backups, console (noVNC / SPICE / `pct enter`), live graphs, clone, migration by drag & drop, cluster overview, Proxmox Backup Server |
+| **Tunnels & routes** | Port forwardings as switches, ProxyJump chains, automatic route finding, Wake‑on‑LAN |
+
+### Organise
+
+| | |
+|---|---|
+| **Host list** | Nested groups with colour and icon, tags, favourites, environment labels (PROD / STAGING / TEST / DEV), notes, reachability LEDs, OS / uptime / disk / updates at a glance |
+| **Large inventories** | Customer → site → host tree with counts and status roll‑up, **focus on one customer**, search language, saved views, table view, keyboard navigation |
+| **Server inventory** | Table with OS, kernel, uptime, disk, updates and warnings; per‑host detail view (services, firewall rules, listening ports, your own info snippets); **system documentation export** to Markdown, printable HTML, JSON and CSV |
+| **Migration** | Import from mRemoteNG, Royal TS, Remote Desktop Manager, CSV and `~/.ssh/config` with preview, conflict handling and report |
+| **Keychain** | Passwords and SSH keys in coloured groups, key import by **drag & drop**, Ed25519 generator, SSH certificates (Aurora as a small CA), password managers as credential source |
+
+### Work faster
+
+| | |
+|---|---|
+| **Command blocks** | Every command and its output as a block (exit code, copy, rerun, collapse, jump with `Ctrl+↑/↓`) |
+| **Logs** | Follow files, `journalctl -f` or container logs next to the terminal, with filters, highlighting and **own log commands with `{{variables}}`** |
+| **Recording & history** | Record sessions (asciinema `.cast`), time travel through the last 30 minutes, markers with notes, full‑text search over recordings |
+| **Snippets & runbooks** | Shell / PowerShell snippets with placeholders, step‑by‑step runbooks with a Markdown report |
+| **Safety** | PROD sessions get a red frame and ask before dangerous commands, secret guard for pastes, auto‑lock, maintenance windows |
+
+<details>
+<summary><b>Full feature reference</b> (every feature, one line each)</summary>
+
+<br>
 
 | Area | |
 |---|---|
@@ -70,20 +146,24 @@ What's new in each version: [CHANGELOG.md](CHANGELOG.md) · planned: [ROADMAP.md
 | **Comfort** | Reachability LED per host (TCP check with latency), **update check** on start with one-click update (SHA256-verified) · drop files onto a terminal to upload them to the current directory · **open the file browser at the terminal's folder** · a port blinks when a long command finishes in the background · disconnected sessions marked with ⟳, click to reconnect · encrypted **export/import** of hosts, groups, snippets and keys |
 | **Design** | Calm card layout with Inter and IBM Plex Mono, line icons and rounded sheets for all editors. The sidebar shows labels on the start pages and becomes a slim rail with numbered session tiles once sessions are open. **26 themes** – dark: Phosphor, Glacier, Nord, Dracula, Tokyo Night, Gruvbox, Catppuccin, Rosé Pine, Solarized Dark, One Dark, Monokai, Everforest, Kanagawa, Ayu Mirage, Night Owl, Synthwave, Midnight, Matrix; light: Paper, Solarized Light, GitHub Light, Catppuccin Latte, Rosé Pine Dawn, One Light, Ayu Light, Nord Light – the terminal follows the theme. Settings in tabs (appearance, terminal, general, security, data & updates), command palette `Ctrl/⌘+K`, broadcast mode, first-start tour, help page with all shortcuts (`F1` / `?`) |
 
+</details>
+
+## 🖼 Screenshots
+
 | | |
 |---|---|
-| ![Split screen](docs/screenshots/split.png) | ![PROD warning](docs/screenshots/prod.png) |
-| ![Server ⇄ server](docs/screenshots/sftp.png) | ![Full screen](docs/screenshots/fullscreen.png) |
-| ![Terminal](docs/screenshots/terminal.png) | ![Tokyo Night](docs/screenshots/tokyo.png) |
-| ![New host](docs/screenshots/editor.png) | ![GitHub Light](docs/screenshots/light.png) |
-| ![RDP](docs/screenshots/rdp.png) | ![Paper theme](docs/screenshots/paper.png) |
-| ![Command palette](docs/screenshots/palette.png) | ![Snippets](docs/screenshots/snippets.png) |
-| ![Settings & themes](docs/screenshots/themes.png) | ![Shortcuts](docs/screenshots/shortcuts.png) |
-| ![Files](docs/screenshots/files.png) | ![Vault](docs/screenshots/lock.png) |
+| ![Split screen – up to four sessions](docs/screenshots/split.png)<br><sub>Split screen – up to four sessions</sub> | ![PROD sessions: red frame and warnings](docs/screenshots/prod.png)<br><sub>PROD sessions: red frame and warnings</sub> |
+| ![Files: server ⇄ server](docs/screenshots/sftp.png)<br><sub>Files: server ⇄ server</sub> | ![Full screen with session switcher](docs/screenshots/fullscreen.png)<br><sub>Full screen with session switcher</sub> |
+| ![Terminal with command blocks](docs/screenshots/terminal.png)<br><sub>Terminal with command blocks</sub> | ![Theme: Tokyo Night](docs/screenshots/tokyo.png)<br><sub>Theme: Tokyo Night</sub> |
+| ![New host](docs/screenshots/editor.png)<br><sub>New host</sub> | ![Theme: GitHub Light](docs/screenshots/light.png)<br><sub>Theme: GitHub Light</sub> |
+| ![RDP in the tab](docs/screenshots/rdp.png)<br><sub>RDP in the tab</sub> | ![Theme: Paper](docs/screenshots/paper.png)<br><sub>Theme: Paper</sub> |
+| ![Command palette (Ctrl/⌘ + K)](docs/screenshots/palette.png)<br><sub>Command palette (Ctrl/⌘ + K)</sub> | ![Snippets](docs/screenshots/snippets.png)<br><sub>Snippets</sub> |
+| ![Settings & 26 themes](docs/screenshots/themes.png)<br><sub>Settings & 26 themes</sub> | ![Shortcuts help (F1)](docs/screenshots/shortcuts.png)<br><sub>Shortcuts help (F1)</sub> |
+| ![Files](docs/screenshots/files.png)<br><sub>Files</sub> | ![Encrypted vault](docs/screenshots/lock.png)<br><sub>Encrypted vault</sub> |
 
 (Screenshots show the German UI.)
 
-## Keyboard shortcuts
+## ⌨ Keyboard shortcuts
 
 | Shortcut | Action |
 |---|---|
@@ -101,7 +181,7 @@ What's new in each version: [CHANGELOG.md](CHANGELOG.md) · planned: [ROADMAP.md
 | `Ctrl + Shift + C` / selection | Copy in the terminal |
 | `Enter` in a disconnected session | Reconnect |
 
-## Building
+## 🛠 Building
 
 Rust ≥ 1.88:
 
@@ -125,7 +205,7 @@ secrets `WINDOWS_CERT_PFX` (base64 .pfx) and `WINDOWS_CERT_PASSWORD` are set.
 Translations: German is the source language; English texts live in `src/i18n/*.rs`
 (`t!("…")` in the code). A test fails if a text has no translation.
 
-## Data & security
+## 🔒 Data & security
 
 * `library.json` – hosts, groups, snippets, settings, trusted servers (no secrets)
 * `vault.json` – keychain, encrypted
@@ -135,7 +215,7 @@ Translations: German is the source language; English texts live in `src/i18n/*.r
 Server keys (SSH) and TLS certificates (RDP) are confirmed and pinned on first connect.
 Details and review results: [SECURITY.md](SECURITY.md).
 
-## Architecture
+## 🧱 Architecture
 
 ```
 src/
