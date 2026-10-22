@@ -873,6 +873,8 @@ pub struct Settings {
     pub transfer_verify: bool,
     /// Saved searches/filters/scopes of the connections list (sidebar).
     pub saved_views: Vec<crate::nav_model::SavedView>,
+    /// How split panes are arranged (side by side, stacked, main + rest, grid).
+    pub split_layout: crate::ui::chrome::SplitLayout,
 }
 
 impl Default for Settings {
@@ -911,6 +913,7 @@ impl Default for Settings {
             files_editor_aurora: true,
             transfer_slots: 2,
             transfer_limit_kbps: 0,
+            split_layout: Default::default(),
             transfer_verify: false,
             saved_views: Vec::new(),
         }

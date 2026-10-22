@@ -292,7 +292,6 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         CopyPath,
     }
     let can_collect = d.items.iter().any(|(_, on)| *on) || !d.custom.trim().is_empty();
-    let can_collect = can_collect && (!d.sudo || !d.sudo_pw.is_empty());
     let stage = match &d.phase {
         Phase::Config => 0,
         Phase::Running => 1,
@@ -472,7 +471,7 @@ fn config(ui: &mut egui::Ui, d: &mut DiagUi) {
                 ui.add(
                     egui::TextEdit::singleline(&mut d.sudo_pw)
                         .password(true)
-                        .hint_text(t!("wird nicht gespeichert"))
+                        .hint_text(t!("leer = ohne Passwort (NOPASSWD, z. B. Schlüssel-Login)"))
                         .desired_width(f32::INFINITY),
                 );
             });

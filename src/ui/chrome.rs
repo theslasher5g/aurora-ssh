@@ -745,6 +745,7 @@ pub struct SplitInfo {
     pub focus: bool,
     /// Sessions in their own window.
     pub popped: Vec<u64>,
+    pub layout: SplitLayout,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -763,6 +764,8 @@ pub enum SplitOp {
     Focus(Option<u64>),
     /// Show the session in its own window, or bring it back.
     PopOut(u64),
+    /// Arrange the panes of the split.
+    Layout(SplitLayout),
 }
 
 /// Session tile currently dragged out of the rail.
@@ -784,7 +787,13 @@ pub fn end_drag(ctx: &egui::Context) {
 /// Pane order after dropping `dragged` at `pos` over `area` that currently shows `shown`.
 /// Every free slot of the resulting layout is a drop zone, so the preview is exactly the
 /// pane the session will get. When four are already shown, the pane under `pos` is replaced.
-pub fn drop_order(area: Rect, shown: &[u64], dragged: u64, pos: Pos2) -> Option<Vec<u64>> {
+pub fn drop_order(
+    area: Rect,
+    shown: &[u64],
+    dragged: u64,
+    pos: Pos2,
+    layout: SplitLayout,
+) -> Option<Vec<u64>> {
     if !area.contains(pos) {
         return None;
     }
@@ -793,7 +802,7 @@ pub fn drop_order(area: Rect, shown: &[u64], dragged: u64, pos: Pos2) -> Option<
         return Some(vec![dragged]);
     }
     if base.len() >= MAX_SPLIT {
-        let i = split_rects(area, base.len())
+        let i = split_rects_for(area, base.len(), layout)
             .iter()
             .position(|r| r.contains(pos))?;
         let mut order = base;
@@ -803,7 +812,7 @@ pub fn drop_order(area: Rect, shown: &[u64], dragged: u64, pos: Pos2) -> Option<
     (0..=base.len()).find_map(|k| {
         let mut order = base.clone();
         order.insert(k, dragged);
-        split_rects(area, order.len())[k]
+        split_rects_for(area, order.len(), layout)[k]
             .contains(pos)
             .then_some(order)
     })
@@ -893,6 +902,29 @@ fn split_menu(ui: &mut egui::Ui, index: usize) {
         }
         if in_split {
             ui.separator();
+            ui.label(
+                RichText::new(t!("Anordnung"))
+                    .size(12.5)
+                    .color(theme::text_dim()),
+            );
+            for l in SplitLayout::ALL {
+                let mark = if info.layout == l { "✔ " } else { "   " };
+                if ui
+                    .button(format!("{mark}{}  {}", l.glyph(), l.label()))
+                    .clicked()
+                {
+                    push_split_op(ui.ctx(), SplitOp::Layout(l));
+                    ui.close();
+                }
+            }
+            ui.label(
+                RichText::new(t!(
+                    "Tipp: Pane an der Kopfzeile ziehen, um sie zu verschieben."
+                ))
+                .size(12.0)
+                .color(theme::text_dim()),
+            );
+            ui.separator();
             let mark = if info.split_broadcast { "✔ " } else { "" };
             if ui
                 .button(t!("{}Eingaben an alle Panes senden", mark))
@@ -928,8 +960,60 @@ fn split_menu(ui: &mut egui::Ui, index: usize) {
     });
 }
 
-/// Pane rectangles for 1–4 sessions: side by side, 1+2 or a 2×2 grid.
-pub fn split_rects(r: Rect, n: usize) -> Vec<Rect> {
+/// How the panes of a split are arranged.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub enum SplitLayout {
+    /// Side by side, then 1 + 2, then a 2×2 grid.
+    #[default]
+    Auto,
+    /// All panes next to each other.
+    Columns,
+    /// All panes below each other.
+    Rows,
+    /// One big pane on the left, the others stacked on the right.
+    MainLeft,
+    /// One big pane on top, the others side by side below.
+    MainTop,
+    /// Two by two (a lone last pane spans the row).
+    Grid,
+}
+
+impl SplitLayout {
+    pub const ALL: [SplitLayout; 6] = [
+        SplitLayout::Auto,
+        SplitLayout::Columns,
+        SplitLayout::Rows,
+        SplitLayout::MainLeft,
+        SplitLayout::MainTop,
+        SplitLayout::Grid,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SplitLayout::Auto => t!("Automatisch"),
+            SplitLayout::Columns => t!("Nebeneinander"),
+            SplitLayout::Rows => t!("Untereinander"),
+            SplitLayout::MainLeft => t!("Eine groß links"),
+            SplitLayout::MainTop => t!("Eine groß oben"),
+            SplitLayout::Grid => t!("Raster"),
+        }
+    }
+
+    /// Small pictogram for menus.
+    pub fn glyph(self) -> &'static str {
+        match self {
+            SplitLayout::Auto => "◫",
+            SplitLayout::Columns => "▥",
+            SplitLayout::Rows => "▤",
+            SplitLayout::MainLeft => "◧",
+            SplitLayout::MainTop => "⬒",
+            SplitLayout::Grid => "▦",
+        }
+    }
+}
+
+/// Pane rectangles for 1–4 sessions in `layout`.
+pub fn split_rects_for(r: Rect, n: usize, layout: SplitLayout) -> Vec<Rect> {
     // Half the gap between panes.
     let g = 5.0;
     let (l, t, rr, b) = (r.left(), r.top(), r.right(), r.bottom());
@@ -938,20 +1022,70 @@ pub fn split_rects(r: Rect, n: usize) -> Vec<Rect> {
     let rect = |x0: f32, y0: f32, x1: f32, y1: f32| {
         Rect::from_min_max(Pos2::new(x0, y0), Pos2::new(x1, y1))
     };
-    match n {
-        0 | 1 => vec![r],
-        2 => vec![rect(l, t, mx - g, b), rect(mx + g, t, rr, b)],
-        3 => vec![
-            rect(l, t, mx - g, b),
-            rect(mx + g, t, rr, my - g),
-            rect(mx + g, my + g, rr, b),
-        ],
-        _ => vec![
-            rect(l, t, mx - g, my - g),
-            rect(mx + g, t, rr, my - g),
-            rect(l, my + g, mx - g, b),
-            rect(mx + g, my + g, rr, b),
-        ],
+    if n <= 1 {
+        return vec![r];
+    }
+    // `n` equal slices along one axis.
+    let slices = |horizontal: bool, count: usize, area: Rect| -> Vec<Rect> {
+        let (from, len) = if horizontal {
+            (area.left(), area.width())
+        } else {
+            (area.top(), area.height())
+        };
+        let step = len / count as f32;
+        (0..count)
+            .map(|i| {
+                let a = from + step * i as f32 + if i > 0 { g } else { 0.0 };
+                let z = from + step * (i + 1) as f32 - if i + 1 < count { g } else { 0.0 };
+                if horizontal {
+                    rect(a, area.top(), z, area.bottom())
+                } else {
+                    rect(area.left(), a, area.right(), z)
+                }
+            })
+            .collect()
+    };
+    match layout {
+        SplitLayout::Columns => slices(true, n, r),
+        SplitLayout::Rows => slices(false, n, r),
+        SplitLayout::MainLeft => {
+            let mut v = vec![rect(l, t, mx - g, b)];
+            v.extend(slices(false, n - 1, rect(mx + g, t, rr, b)));
+            v
+        }
+        SplitLayout::MainTop => {
+            let mut v = vec![rect(l, t, rr, my - g)];
+            v.extend(slices(true, n - 1, rect(l, my + g, rr, b)));
+            v
+        }
+        SplitLayout::Grid => match n {
+            2 => slices(true, 2, r),
+            3 => vec![
+                rect(l, t, mx - g, my - g),
+                rect(mx + g, t, rr, my - g),
+                rect(l, my + g, rr, b),
+            ],
+            _ => vec![
+                rect(l, t, mx - g, my - g),
+                rect(mx + g, t, rr, my - g),
+                rect(l, my + g, mx - g, b),
+                rect(mx + g, my + g, rr, b),
+            ],
+        },
+        SplitLayout::Auto => match n {
+            2 => vec![rect(l, t, mx - g, b), rect(mx + g, t, rr, b)],
+            3 => vec![
+                rect(l, t, mx - g, b),
+                rect(mx + g, t, rr, my - g),
+                rect(mx + g, my + g, rr, b),
+            ],
+            _ => vec![
+                rect(l, t, mx - g, my - g),
+                rect(mx + g, t, rr, my - g),
+                rect(l, my + g, mx - g, b),
+                rect(mx + g, my + g, rr, b),
+            ],
+        },
     }
 }
 
@@ -1000,9 +1134,20 @@ pub fn session_header(
             let me = info.tabs.get(index.wrapping_sub(1)).map(|t| t.0);
             let in_split = me.is_some_and(|m| info.split.len() >= 2 && info.split.contains(&m));
             if let (Some(me), true) = (me, in_split) {
-                let bg = ui.interact(ui.max_rect(), ui.id().with("header-bg"), Sense::click());
+                let bg = ui.interact(
+                    ui.max_rect(),
+                    ui.id().with("header-bg"),
+                    Sense::click_and_drag(),
+                );
                 if bg.double_clicked() {
                     push_split_op(ui.ctx(), SplitOp::Maximize(me));
+                }
+                // Drag the pane by its header: the drop preview shows where it lands.
+                if bg.drag_started() {
+                    ui.ctx().data_mut(|d| d.insert_temp(drag_id(), DragTab(me)));
+                }
+                if bg.hovered() || bg.dragged() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1296,33 +1441,93 @@ mod tests {
     }
 
     #[test]
+    fn layouts_cover_the_area_without_overlap() {
+        use super::{SplitLayout, split_rects_for};
+        use egui::{Pos2, Rect, pos2};
+        let area = Rect::from_min_max(Pos2::ZERO, pos2(1000.0, 600.0));
+        for layout in SplitLayout::ALL {
+            for n in 1..=4usize {
+                let r = split_rects_for(area, n, layout);
+                assert_eq!(r.len(), n, "{layout:?} {n}");
+                for (i, a) in r.iter().enumerate() {
+                    assert!(area.contains_rect(*a), "{layout:?} {n} pane {i} outside");
+                    assert!(a.width() > 50.0 && a.height() > 50.0);
+                    for b in &r[i + 1..] {
+                        assert!(!a.intersects(*b), "{layout:?} {n} overlap");
+                    }
+                }
+            }
+        }
+        // Two panes stacked: same width, one above the other.
+        let rows = split_rects_for(area, 2, SplitLayout::Rows);
+        assert_eq!((rows[0].width(), rows[1].width()), (1000.0, 1000.0));
+        assert!(rows[0].bottom() < rows[1].top());
+        // Side by side.
+        let cols = split_rects_for(area, 3, SplitLayout::Columns);
+        assert!(cols[0].right() < cols[1].left() && cols[1].right() < cols[2].left());
+    }
+
+    #[test]
+    fn drop_in_stacked_layout_uses_the_stacked_slots() {
+        use super::{SplitLayout, drop_order};
+        use egui::{Pos2, Rect, pos2};
+        let area = Rect::from_min_max(Pos2::ZERO, pos2(100.0, 100.0));
+        // One pane shown, stacked: the upper half is slot 0, the lower half slot 1.
+        assert_eq!(
+            drop_order(area, &[1], 7, pos2(50.0, 20.0), SplitLayout::Rows),
+            Some(vec![7, 1])
+        );
+        assert_eq!(
+            drop_order(area, &[1], 7, pos2(50.0, 80.0), SplitLayout::Rows),
+            Some(vec![1, 7])
+        );
+        // Moving a pane within the stack.
+        assert_eq!(
+            drop_order(area, &[1, 2, 3], 3, pos2(50.0, 10.0), SplitLayout::Rows),
+            Some(vec![3, 1, 2])
+        );
+    }
+
+    #[test]
     fn drop_positions() {
-        use super::drop_order;
+        use super::{SplitLayout, drop_order};
         use egui::{Pos2, Rect, pos2};
         let area = Rect::from_min_max(Pos2::ZERO, pos2(100.0, 100.0));
         let at = |x, y| pos2(x, y);
-        assert_eq!(drop_order(area, &[], 7, at(50.0, 50.0)), Some(vec![7]));
-        assert_eq!(drop_order(area, &[1], 7, at(20.0, 50.0)), Some(vec![7, 1]));
-        assert_eq!(drop_order(area, &[1], 7, at(80.0, 50.0)), Some(vec![1, 7]));
+        assert_eq!(
+            drop_order(area, &[], 7, at(50.0, 50.0), SplitLayout::Auto),
+            Some(vec![7])
+        );
+        assert_eq!(
+            drop_order(area, &[1], 7, at(20.0, 50.0), SplitLayout::Auto),
+            Some(vec![7, 1])
+        );
+        assert_eq!(
+            drop_order(area, &[1], 7, at(80.0, 50.0), SplitLayout::Auto),
+            Some(vec![1, 7])
+        );
         // two shown -> left column, top right or bottom right
         assert_eq!(
-            drop_order(area, &[1, 2], 7, at(80.0, 20.0)),
+            drop_order(area, &[1, 2], 7, at(80.0, 20.0), SplitLayout::Auto),
             Some(vec![1, 7, 2])
         );
         assert_eq!(
-            drop_order(area, &[1, 2], 7, at(80.0, 80.0)),
+            drop_order(area, &[1, 2], 7, at(80.0, 80.0), SplitLayout::Auto),
             Some(vec![1, 2, 7])
         );
         // already shown: moves
         assert_eq!(
-            drop_order(area, &[1, 2, 3], 3, at(20.0, 50.0)),
+            drop_order(area, &[1, 2, 3], 3, at(20.0, 50.0), SplitLayout::Auto),
             Some(vec![3, 1, 2])
         );
         // full: replaces the pane under the pointer
         assert_eq!(
-            drop_order(area, &[1, 2, 3, 4], 7, at(20.0, 80.0)),
+            drop_order(area, &[1, 2, 3, 4], 7, at(20.0, 80.0), SplitLayout::Auto),
             Some(vec![1, 2, 7, 4])
         );
-        assert_eq!(drop_order(area, &[1], 7, at(150.0, 50.0)), None);
+        assert_eq!(
+            drop_order(area, &[1], 7, at(150.0, 50.0), SplitLayout::Auto),
+            None
+        );
     }
 }

@@ -113,12 +113,19 @@ pub fn sh_quote(s: &str) -> String {
 }
 
 /// The line sent to the server for one command.
+#[cfg(test)]
 pub fn wrap(cmd: &str, sudo: bool) -> String {
+    wrap_with(cmd, sudo, false)
+}
+
+/// Like [`wrap`]; `no_password` runs `sudo -n` (for hosts where sudo needs no password, e.g.
+/// key-only logins with `NOPASSWD`) instead of reading a password from stdin.
+pub fn wrap_with(cmd: &str, sudo: bool, no_password: bool) -> String {
     let inner = format!("env LC_ALL=C sh -c {}", sh_quote(cmd));
-    if sudo {
-        format!("sudo -S -p '' {inner}")
-    } else {
-        inner
+    match (sudo, no_password) {
+        (false, _) => inner,
+        (true, false) => format!("sudo -S -p '' {inner}"),
+        (true, true) => format!("sudo -n {inner}"),
     }
 }
 
@@ -150,14 +157,21 @@ async fn run(
         .await
         .map(|(_, out, _)| String::from_utf8_lossy(&out).trim().to_string())
         .unwrap_or_default();
-    let stdin = sudo.map(|pw| format!("{pw}\n"));
-    if let Some(pw) = &stdin {
-        // Check the password once instead of failing (and maybe locking the account) on
-        // every item.
+    // An empty password means "sudo without a password" (NOPASSWD): `sudo -n` never asks.
+    let no_password = sudo.as_deref().is_some_and(str::is_empty);
+    let use_sudo = sudo.is_some();
+    let stdin = sudo.filter(|pw| !pw.is_empty()).map(|pw| format!("{pw}\n"));
+    if use_sudo {
+        // Check once instead of failing (and maybe locking the account) on every item.
+        let check = if no_password {
+            "sudo -n true"
+        } else {
+            "sudo -S -p '' true"
+        };
         let (status, out, err) = exec_capture(
             &handle,
-            "sudo -S -p '' true",
-            Some(pw),
+            check,
+            stdin.as_deref(),
             64 * 1024,
             Duration::from_secs(30),
         )
@@ -172,6 +186,15 @@ async fn run(
             let _ = handle
                 .disconnect(russh::Disconnect::ByApplication, "bye", "en")
                 .await;
+            if no_password {
+                bail!(
+                    "{}",
+                    t!(
+                        "sudo braucht auf diesem Host ein Passwort (kein NOPASSWD): {}",
+                        msg
+                    )
+                );
+            }
             bail!("{}", t!("sudo abgelehnt: {}", msg));
         }
     }
@@ -182,7 +205,7 @@ async fn run(
         }
         sink.send(DiagEvent::Started(i));
         let start = Instant::now();
-        let line = wrap(&item.command, stdin.is_some());
+        let line = wrap_with(&item.command, use_sudo, no_password);
         let res = exec_capture(&handle, &line, stdin.as_deref(), MAX_ITEM, ITEM_TIMEOUT).await;
         let result = match res {
             Ok((status, mut out, err)) => {
@@ -605,6 +628,10 @@ mod tests {
         assert_eq!(
             wrap("dmesg -T | tail", true),
             "sudo -S -p '' env LC_ALL=C sh -c 'dmesg -T | tail'"
+        );
+        assert_eq!(
+            wrap_with("dmesg", true, true),
+            "sudo -n env LC_ALL=C sh -c 'dmesg'"
         );
         let c = custom_items("lsblk\n\n# note\n cat /proc/mdstat ");
         assert_eq!(c.len(), 2);

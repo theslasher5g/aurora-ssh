@@ -2,7 +2,17 @@
 
 ## 0.9.2
 
+### Split view
+- **Arrange the panes freely:** besides the automatic layout (side by side → 1 + 2 → 2 × 2) the split
+  menu now offers *Side by side*, *Stacked* (two or more panes **below each other**), *One large on
+  the left*, *One large on top* and *Grid*. The choice is remembered.
+- **Move panes by dragging their header** onto the slot where they should go (a preview shows the
+  resulting layout); the same drop zones work for sessions dragged out of the rail.
+
 ### Diagnostics
+- **sudo without a password:** leave the sudo password empty to run the collection with `sudo -n` – for
+  hosts you log in to with a key where sudo needs no password (`NOPASSWD`). Before, the field had to be
+  filled. If the host does ask for a password, Aurora says so.
 - **HTML report in the diagnostics bundle:** next to `summary.txt` and the text files the bundle now
   contains `report.html` – a readable page with the host details, key facts (uptime, fullest disk,
   memory, failed services), a table of contents with status pills and one collapsible section per

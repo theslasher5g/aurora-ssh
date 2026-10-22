@@ -2,6 +2,14 @@
 //! diagnostics bundle.
 
 pub const T: &[(&str, &str)] = &[
+    (
+        "leer = ohne Passwort (NOPASSWD, z. B. Schlüssel-Login)",
+        "empty = no password (NOPASSWD, e.g. key login)",
+    ),
+    (
+        "sudo braucht auf diesem Host ein Passwort (kein NOPASSWD): {}",
+        "sudo needs a password on this host (no NOPASSWD): {}",
+    ),
     ("Fullste Platte", "Fullest disk"),
     ("Arbeitsspeicher", "Memory"),
     ("Fehlgeschlagene Dienste", "Failed services"),

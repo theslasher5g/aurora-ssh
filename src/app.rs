@@ -1775,6 +1775,10 @@ impl App {
                 }
             }
             SplitOp::Clear => self.split.clear(),
+            SplitOp::Layout(l) => {
+                self.lib.settings.split_layout = l;
+                self.save_library();
+            }
             SplitOp::Close(id) => self.close_tab(id),
             SplitOp::Maximize(id) => {
                 self.maximized = if self.maximized == Some(id) {
@@ -2281,7 +2285,8 @@ impl App {
         } else {
             self.active.into_iter().collect()
         };
-        let order = pos.and_then(|p| chrome::drop_order(central, &shown, dragged, p));
+        let layout = self.lib.settings.split_layout;
+        let order = pos.and_then(|p| chrome::drop_order(central, &shown, dragged, p, layout));
 
         if released || cancel {
             chrome::end_drag(ctx);
@@ -2302,7 +2307,7 @@ impl App {
         ));
         if let Some(order) = &order {
             // Show the resulting layout: the new slot highlighted, the others outlined.
-            let rects = chrome::split_rects(central, order.len());
+            let rects = chrome::split_rects_for(central, order.len(), layout);
             painter.rect_filled(
                 central,
                 CornerRadius::ZERO,
@@ -4955,6 +4960,7 @@ impl eframe::App for App {
                     live: self.tabs.iter().map(tab_live).collect(),
                     focus: self.focus,
                     popped: self.popped.clone(),
+                    layout: self.lib.settings.split_layout,
                 },
             )
         });
@@ -4979,7 +4985,11 @@ impl eframe::App for App {
                             .inner_margin(Margin::same(PANE_GAP as i8)),
                     )
                     .show(ui, |ui| {
-                        let rects = crate::ui::chrome::split_rects(ui.max_rect(), ids.len());
+                        let rects = crate::ui::chrome::split_rects_for(
+                            ui.max_rect(),
+                            ids.len(),
+                            self.lib.settings.split_layout,
+                        );
                         for (id, rect) in ids.iter().copied().zip(rects.iter().copied()) {
                             let mut child = ui.new_child(
                                 egui::UiBuilder::new()
