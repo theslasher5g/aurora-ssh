@@ -280,6 +280,7 @@ pub fn start_for(h: &Host, user: &str, password: Option<&str>) -> Result<WebStar
         submit: h.web.submit,
         extra_hosts: proto::parse_extra_hosts(&h.web.extra_hosts),
         download_dir: download_dir().to_string_lossy().into_owned(),
+        embed: None,
     })
 }
 

@@ -8,6 +8,7 @@ description = "Aurora – moderner SSH/SFTP/RDP/Serial-Client mit Keychain, Snip
 [dependencies]
 eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "persistence", "wayland", "x11"] }
 egui = "0.36"
+raw-window-handle = "0.6"
 russh = "0.64"
 russh-sftp = "3.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "net", "process"] }

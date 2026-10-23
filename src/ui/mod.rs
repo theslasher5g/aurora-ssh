@@ -55,6 +55,7 @@ pub mod themeimport_ui;
 pub mod timetravel;
 pub mod vnc;
 pub mod web;
+pub mod web_embed;
 pub mod whatsnew_sheet;
 pub mod wol;
 pub mod xfer;

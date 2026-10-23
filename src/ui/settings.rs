@@ -431,6 +431,7 @@ fn general(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>, changed:
     });
     ui.add_space(10.0);
     crate::ui::xfer::settings_card(app, ui, changed);
+    crate::ui::web_embed::settings_card(app, ui, changed);
     ui.add_space(22.0);
     caption(ui, t!("Hilfe"));
     theme::settings_card(ui, |ui, rows| {

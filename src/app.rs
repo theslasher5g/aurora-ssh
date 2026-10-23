@@ -4905,8 +4905,8 @@ impl App {
     }
 }
 
-impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+impl App {
+    fn ui_frame(&mut self, ui: &mut egui::Ui) {
         sync_window_icon(ui.ctx());
         let _perf = crate::nav_perf::frame();
         let ctx = ui.ctx().clone();
@@ -5198,6 +5198,15 @@ impl eframe::App for App {
         for a in actions {
             self.apply(a, &ctx);
         }
+    }
+}
+
+impl eframe::App for App {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        crate::ui::web_embed::begin_frame(self.lib.settings.web_own_window, frame);
+        self.ui_frame(ui);
+        crate::ui::web_embed::end_frame(self, &ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

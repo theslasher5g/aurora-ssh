@@ -1,9 +1,8 @@
 //! Web interface entries: the form section, the session tab and the certificate dialog.
 //!
-//! The page itself runs in the `aurora-web` helper window. The tab shows its status and
-//! offers "bring to front", "reload" and "close". Everything the helper needs to be
-//! embedded later (a child window inside the tab body) would go into [`WebTab::body`],
-//! the single place that draws the area the page occupies.
+//! The page itself runs in the `aurora-web` helper: embedded as a child window inside the
+//! tab area (see `web_embed`) or, where that is not possible or wanted, in its own window.
+//! [`WebTab::body`] is the single place that draws the area the page occupies.
 
 use egui::{Color32, RichText};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -252,6 +251,13 @@ pub struct WebTab {
     last_error: Option<String>,
     handle: Option<WebHandle>,
     rx: UnboundedReceiver<WebEvent>,
+    /// The page lives inside Aurora's window (confirmed by the helper).
+    pub embedded: bool,
+    /// Embedded tab shows the details card instead of the page.
+    show_info: bool,
+    /// Last rectangle / visibility sent to the helper (only changes are sent).
+    sent: Option<(proto::PixelRect, bool)>,
+    pending_toasts: Vec<(String, bool)>,
 }
 
 impl WebTab {
@@ -275,9 +281,15 @@ impl WebTab {
             last_error: None,
             handle: None,
             rx,
+            embedded: false,
+            show_info: false,
+            sent: None,
+            pending_toasts: Vec::new(),
         };
-        let started = web::start_for(host, user, password)
-            .and_then(|s| web::spawn(&s, sink).map_err(|e| e.to_string()));
+        let started = web::start_for(host, user, password).and_then(|mut s| {
+            s.embed = crate::ui::web_embed::parent_for_open();
+            web::spawn(&s, sink).map_err(|e| e.to_string())
+        });
         match started {
             Ok(h) => tab.handle = Some(h),
             Err(e) => tab.state = ConnState::Closed(Some(e)),
@@ -309,6 +321,10 @@ impl WebTab {
     }
 
     fn note(&mut self, text: String, ok: bool) {
+        if self.embedded {
+            // The details card is hidden behind the page: say it where it is seen.
+            self.pending_toasts.push((text.clone(), ok));
+        }
         self.notes.push((text, ok));
         if self.notes.len() > 12 {
             self.notes.remove(0);
@@ -319,8 +335,9 @@ impl WebTab {
     pub fn pump(&mut self, title: &str, toasts: &mut Vec<(String, Color32)>) {
         while let Ok(ev) = self.rx.try_recv() {
             match ev {
-                WebEvent::Ready { engine } => {
+                WebEvent::Ready { engine, embedded } => {
                     self.engine = engine.chars().take(40).collect();
+                    self.embedded = embedded;
                     self.state = ConnState::Connected;
                 }
                 WebEvent::Title { title } => self.page_title = title,
@@ -375,8 +392,15 @@ impl WebTab {
                     self.state = ConnState::Closed(self.last_error.take());
                     self.handle = None;
                     self.cert = None;
+                    self.sent = None;
                 }
             }
+        }
+        for (text, ok) in std::mem::take(&mut self.pending_toasts) {
+            toasts.push((
+                format!("{title}: {text}"),
+                if ok { theme::accent() } else { theme::amber() },
+            ));
         }
         if self.handle.as_mut().is_some_and(|h| !h.alive()) && !self.is_closed() {
             self.state = ConnState::Closed(Some(t!("Web-Komponente unerwartet beendet").into()));
@@ -384,10 +408,57 @@ impl WebTab {
         }
     }
 
-    /// The area the page occupies. Today a status card (the page is in its own window);
-    /// embedding the web view as a child window would size and place it here instead.
-    fn body(&self, ui: &mut egui::Ui, pinned: &str) {
-        status_card(ui, self, pinned);
+    /// Positions the embedded page (`view` = pixel rectangle in the main window, `None` =
+    /// hidden because something else is shown or drawn over it). Only changes are sent.
+    pub fn apply_view(&mut self, view: Option<proto::PixelRect>, active: bool, pressed: bool) {
+        if self.handle.is_none() {
+            return;
+        }
+        let was_visible = self.sent.is_some_and(|s| s.1);
+        let (rect, visible) = match view {
+            Some(r) => (r, true),
+            None => (
+                self.sent.map(|s| s.0).unwrap_or(proto::PixelRect {
+                    x: 0,
+                    y: 0,
+                    w: 1,
+                    h: 1,
+                }),
+                false,
+            ),
+        };
+        if self.sent != Some((rect, visible)) {
+            self.send(WebCmd::Bounds {
+                x: rect.x,
+                y: rect.y,
+                w: rect.w,
+                h: rect.h,
+                visible,
+            });
+            self.sent = Some((rect, visible));
+        }
+        if visible && !was_visible && active {
+            // Typing goes to the page that just appeared.
+            self.send(WebCmd::Focus);
+        } else if (!visible && was_visible) || (visible && pressed) {
+            // A click anywhere in Aurora (the page itself never reaches Aurora) or the
+            // page going away: the keyboard belongs to Aurora again.
+            self.send(WebCmd::Blur);
+        }
+    }
+
+    /// The area the page occupies: the page itself (embedded) or the status card.
+    fn body(&self, ui: &mut egui::Ui, tab_id: u64, pinned: &str) {
+        let in_main = ui.ctx().viewport_id() == egui::ViewportId::ROOT;
+        if self.embedded && in_main && !self.show_info && !self.is_closed() {
+            let rect = ui.available_rect_before_wrap();
+            ui.painter()
+                .rect_filled(rect, egui::CornerRadius::ZERO, theme::bg_deep());
+            ui.allocate_rect(rect, egui::Sense::hover());
+            crate::ui::web_embed::register(ui, tab_id, rect);
+        } else {
+            status_card(ui, self, pinned);
+        }
     }
 }
 
@@ -395,6 +466,9 @@ impl WebTab {
 fn status_card(ui: &mut egui::Ui, t: &WebTab, pinned: &str) {
     let (color, state) = match &t.state {
         ConnState::Connecting(m) => (theme::amber(), m.clone()),
+        ConnState::Connected if t.embedded => {
+            (theme::green(), t!("Seite im Tab geöffnet").to_string())
+        }
         ConnState::Connected => (theme::green(), t!("Fenster geöffnet").to_string()),
         ConnState::Closed(Some(e)) => (theme::red(), e.clone()),
         ConnState::Closed(None) => (theme::text_dim(), t!("Fenster geschlossen").to_string()),
@@ -491,9 +565,11 @@ fn status_card(ui: &mut egui::Ui, t: &WebTab, pinned: &str) {
                 ui.add_space(8.0);
                 ui.add(
                     egui::Label::new(
-                        RichText::new(t!(
-                            "Die Weboberfläche läuft in einem eigenen Fenster mit eigenem Profil. Schließt du den Tab, schließt auch das Fenster – und umgekehrt."
-                        ))
+                        RichText::new(if t.embedded {
+                            t!("Die Weboberfläche läuft eingebettet in diesem Tab mit eigenem Profil. Schließt du den Tab, endet auch die Seite.")
+                        } else {
+                            t!("Die Weboberfläche läuft in einem eigenen Fenster mit eigenem Profil. Schließt du den Tab, schließt auch das Fenster – und umgekehrt.")
+                        })
                         .size(12.5)
                         .color(theme::text_dim()),
                     )
@@ -535,6 +611,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64, actions: &mut Vec<Act
     let closed = t.is_closed();
     let (mut front, mut reload, mut close, mut reopen, mut edit) =
         (false, false, false, false, false);
+    let mut switch: Option<bool> = None;
+    let mut toggle_info = false;
+    let in_main = ui.ctx().viewport_id() == egui::ViewportId::ROOT;
+    let embedded = t.embedded;
+    let show_info = t.show_info;
     crate::ui::chrome::session_header(
         ui,
         egui::Id::new(("web-bar", tab_id)),
@@ -558,15 +639,55 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64, actions: &mut Vec<Act
                 {
                     reload = true;
                 }
-                if theme::btn(
-                    ui,
-                    theme::Btn::Small,
-                    Some(Icon::External),
-                    t!("Fenster nach vorn"),
-                )
-                .clicked()
-                {
-                    front = true;
+                if embedded {
+                    if theme::btn(
+                        ui,
+                        theme::Btn::Small,
+                        Some(Icon::Shield),
+                        if show_info {
+                            t!("Seite anzeigen")
+                        } else {
+                            t!("Details")
+                        },
+                    )
+                    .clicked()
+                    {
+                        toggle_info = true;
+                    }
+                    if theme::btn(
+                        ui,
+                        theme::Btn::Small,
+                        Some(Icon::External),
+                        t!("In eigenem Fenster öffnen"),
+                    )
+                    .on_hover_text(t!("Öffnet die Seite neu in einem eigenen Fenster"))
+                    .clicked()
+                    {
+                        switch = Some(false);
+                    }
+                } else {
+                    if theme::btn(
+                        ui,
+                        theme::Btn::Small,
+                        Some(Icon::External),
+                        t!("Fenster nach vorn"),
+                    )
+                    .clicked()
+                    {
+                        front = true;
+                    }
+                    if crate::ui::web_embed::can_embed()
+                        && theme::btn(
+                            ui,
+                            theme::Btn::Small,
+                            Some(Icon::Expand),
+                            t!("Im Tab einbetten"),
+                        )
+                        .on_hover_text(t!("Öffnet die Seite neu eingebettet in diesem Tab"))
+                        .clicked()
+                    {
+                        switch = Some(true);
+                    }
                 }
             }
             if t.refused.is_some()
@@ -582,19 +703,51 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, tab_id: u64, actions: &mut Vec<Act
             }
         },
     );
-    egui::CentralPanel::default()
-        .frame(
-            egui::Frame::NONE
-                .fill(theme::bg_deep())
-                .inner_margin(egui::Margin::same(20)),
-        )
-        .show(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                t.body(ui, &pinned);
+    if t.embedded && !t.show_info && !closed && in_main {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(theme::bg_deep()))
+            .show(ui, |ui| t.body(ui, tab_id, &pinned));
+    } else {
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::NONE
+                    .fill(theme::bg_deep())
+                    .inner_margin(egui::Margin::same(20)),
+            )
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    if t.embedded && !in_main {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(t!(
+                                    "Die Seite ist in das Hauptfenster eingebettet und hier nicht sichtbar. Öffne sie in einem eigenen Fenster oder hole den Tab zurück."
+                                ))
+                                .color(theme::amber()),
+                            )
+                            .wrap(),
+                        );
+                        ui.add_space(10.0);
+                    }
+                    t.body(ui, tab_id, &pinned);
+                });
             });
-        });
+    }
+    if toggle_info {
+        t.show_info = !t.show_info;
+    }
     if front {
         t.send(WebCmd::Focus);
+    }
+    if let Some(embed) = switch
+        && let Some(h) = host_id.and_then(|h| app.lib.host(h)).cloned()
+    {
+        // The mode is chosen when the helper starts: reopen the entry the other way.
+        app.close_tab(tab_id);
+        crate::ui::web_embed::force_next_open(embed);
+        // After the frame: the new tab becomes active then (the pane click of this very
+        // frame must not win).
+        actions.push(Action::Connect(h.id));
+        return;
     }
     if reload {
         t.declined = false;

@@ -81,6 +81,7 @@ Out of scope: someone who already controls your unlocked session or your operati
 | Navigation | Limited to the entry's origin (plus listed hosts); other links open in the system browser after re‑validation; no second windows; no developer tools in release builds |
 | Downloads | Sanitised file name in `Downloads/Aurora`, unique name, never executed |
 | Import | An import that would change a web entry's origin drops its stored login |
+| Embedding | The page is a child window of the Aurora window; the only extra data is the numeric id of Aurora's own window and pixel rectangles over the same stdin pipe, clamped by the helper. The page is hidden while the vault is locked, so an auto‑locked Aurora never shows a web session. All checks above run in the helper exactly as for the own window |
 
 ### Network and local system
 
@@ -132,7 +133,7 @@ recordings are only opened/deleted by plain file names, Markdown export titles a
   Key rotation requires a manual re-install (see `packaging/keys/README.md`).
 * **Web interfaces:** on macOS there is no certificate pinning (the system web view offers no hook) – use a
   trusted certificate or "ignore" explicitly. A web page can ask Aurora to open a link in the system browser or start
-  a download without a click. The single automatic submit is spent when the script arms itself, not on the click.
+  a download without a click. An embedded page is a native child window: keyboard shortcuts of Aurora (Ctrl+K …) do not work while the page has the keyboard focus. The single automatic submit is spent when the script arms itself, not on the click.
 * The server‑side `dangerous_command` check is easy to bypass (`ls; rm -rf /`) – it prevents accidents only.
 * Keyboard‑interactive auth answers every prompt with the stored password (OTP prompts fail).
 * Jump hosts need stored credentials (identity).

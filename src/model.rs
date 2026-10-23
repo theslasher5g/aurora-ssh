@@ -879,6 +879,8 @@ pub struct Settings {
     pub split_ratios: crate::ui::chrome::SplitRatios,
     /// Only install updates whose checksum file carries a valid release signature.
     pub signed_updates_only: bool,
+    /// Open web interfaces in their own window instead of inside the tab.
+    pub web_own_window: bool,
 }
 
 impl Default for Settings {
@@ -922,6 +924,7 @@ impl Default for Settings {
             transfer_verify: false,
             saved_views: Vec::new(),
             signed_updates_only: false,
+            web_own_window: false,
         }
     }
 }
