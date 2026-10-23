@@ -28,6 +28,7 @@ arboard = { version = "3", default-features = false }
 env_logger = "0.11"
 ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier", "gzip"] }
 sha2 = "0.10"
+ring = "0.17"
 sha1 = "0.11"
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
 sys-locale = "0.3"

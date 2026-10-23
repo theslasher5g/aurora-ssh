@@ -62,7 +62,9 @@ jobs:
 
       # Code signing (optional): set the repository secrets WINDOWS_CERT_PFX (base64 of a
       # .pfx code-signing certificate) and WINDOWS_CERT_PASSWORD. Without them the build
-      # stays unsigned and SmartScreen warns on first start.
+      # stays unsigned and SmartScreen warns on first start. Signed: Aurora.exe,
+      # aurora-rdp.exe, aurora-web.exe (inside the portable zip AND the installer) and the
+      # installer itself. See packaging/WINDOWS-SIGNING.md (SignPath / Azure Trusted Signing).
       - name: Package
         shell: pwsh
         env:
@@ -77,11 +79,20 @@ jobs:
               Where-Object { $_.FullName -match 'x64' } | Sort-Object FullName -Descending | Select-Object -First 1
             $sign = $true
           }
+          # RFC 3161 timestamp (/tr + /td sha256) keeps the signature valid after the
+          # certificate expires; a second timestamp server is tried if the first is down.
+          $timestamps = @("http://timestamp.digicert.com", "http://timestamp.sectigo.com")
           function Sign($file) {
             if (-not $sign) { return }
-            & $signtool.FullName sign /f "$env:RUNNER_TEMP\cert.pfx" /p $env:CERT_PASSWORD `
-              /fd sha256 /tr http://timestamp.digicert.com /td sha256 /d "Aurora" $file
-            if ($LASTEXITCODE -ne 0) { throw "signtool failed for $file" }
+            $ok = $false
+            foreach ($ts in $timestamps) {
+              & $signtool.FullName sign /f "$env:RUNNER_TEMP\cert.pfx" /p $env:CERT_PASSWORD `
+                /fd sha256 /tr $ts /td sha256 /d "Aurora" $file
+              if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            }
+            if (-not $ok) { throw "signtool failed for $file" }
+            & $signtool.FullName verify /pa /q $file
+            if ($LASTEXITCODE -ne 0) { throw "signature check failed for $file" }
           }
           New-Item -ItemType Directory -Force dist/Aurora | Out-Null
           Copy-Item target/release/aurora-term.exe dist/Aurora/Aurora.exe
@@ -146,12 +157,21 @@ jobs:
       - name: Package
         run: packaging/linux/build.sh "$VERSION" dist
 
+      # Optional detached GPG signature of the .deb (secrets DEB_SIGNING_KEY = armored
+      # private key, DEB_SIGNING_PASSPHRASE optional). Skipped without the key.
+      - name: Sign .deb
+        env:
+          DEB_SIGNING_KEY: ${{ secrets.DEB_SIGNING_KEY }}
+          DEB_SIGNING_PASSPHRASE: ${{ secrets.DEB_SIGNING_PASSPHRASE }}
+        run: packaging/linux/sign-deb.sh dist
+
       - uses: actions/upload-artifact@v4
         with:
           name: linux
           path: |
             dist/*.deb
             dist/*.tar.gz
+            dist/*.asc
 
   macos:
     needs: version
@@ -183,7 +203,19 @@ jobs:
             cargo build --release --locked --target $t --manifest-path crates/aurora-web/Cargo.toml
           done
 
+      # Optional Developer ID signing + notarization; every secret is optional, without
+      # them the app is ad-hoc signed as before. See packaging/macos/SIGNING.md.
       - name: Package
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
         run: packaging/macos/build.sh "$VERSION" dist
 
       - uses: actions/upload-artifact@v4
@@ -196,9 +228,15 @@ jobs:
     needs: [version, windows, linux, macos]
     if: ${{ !cancelled() && needs.windows.result == 'success' && needs.linux.result == 'success' }}
     runs-on: ubuntu-22.04
+    # id-token: write lets cosign sign keylessly with this workflow's OIDC identity.
+    permissions:
+      contents: write
+      id-token: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -210,6 +248,24 @@ jobs:
           cd dist
           sha256sum *.exe *.zip *.deb *.tar.gz $(ls *.dmg 2>/dev/null) > SHA256SUMS.txt
           cat SHA256SUMS.txt
+
+      # Release signature (optional): with the secret RELEASE_SIGNING_KEY (Ed25519 private
+      # key, PEM) SHA256SUMS.txt.sig is created; the app verifies it against the public key
+      # compiled in (assets/release-signing-key.txt). See packaging/keys/README.md.
+      - name: Sign checksums (Ed25519)
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: packaging/scripts/sign-release.sh dist
+
+      # Keyless Sigstore signature, no secret needed: proves SHA256SUMS.txt was produced
+      # by THIS repository's workflow (certificate identity in the bundle). Extra proof for
+      # people who verify with cosign; the app does not depend on it, so a Sigstore outage
+      # must not block the release.
+      - uses: sigstore/cosign-installer@v3.7.0
+        continue-on-error: true
+      - name: Sign checksums (cosign keyless)
+        continue-on-error: true
+        run: cosign sign-blob --yes --bundle dist/SHA256SUMS.txt.cosign.bundle dist/SHA256SUMS.txt
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -231,7 +287,7 @@ jobs:
             | | `aurora-${{ env.VERSION }}-linux-x86_64.tar.gz` | unpack, `./install.sh` (to `~/.local`) or `./aurora` |
             | macOS 11+ (Apple Silicon & Intel) | `Aurora-${{ env.VERSION }}-macos-universal.dmg` | open, drag Aurora to Applications |
 
-            Aurora checks for new versions on start and can update itself (Settings → Updates; downloads are verified against `SHA256SUMS.txt`).
+            Aurora checks for new versions on start and can update itself (Settings → Updates; downloads are verified against `SHA256SUMS.txt`, whose signature `SHA256SUMS.txt.sig` is checked as well). Verify by hand: see [“Verify your download”](https://github.com/${{ github.repository }}/blob/v${{ env.VERSION }}/README.md#verify-your-download).
 
             **Windows:** without a code-signing certificate SmartScreen may ask on first start ("More info" → "Run anyway").
             **macOS:** the app is not notarized – on first start right-click Aurora → Open, or run `xattr -cr /Applications/Aurora.app`.
@@ -246,3 +302,6 @@ jobs:
             dist/*.deb
             dist/*.tar.gz
             dist/SHA256SUMS.txt
+            dist/SHA256SUMS.txt.sig
+            dist/SHA256SUMS.txt.cosign.bundle
+            dist/*.asc

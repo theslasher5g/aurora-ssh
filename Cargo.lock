@@ -260,6 +260,7 @@ dependencies = [
  "log",
  "portable-pty",
  "rand 0.8.8",
+ "ring",
  "russh",
  "russh-sftp",
  "rustls",

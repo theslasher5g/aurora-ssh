@@ -1,0 +1,5 @@
+# Aurora release signing key (Ed25519, public part).
+# One line: base64 of the 32 raw public-key bytes. Generate it with
+# packaging/keys/make-keypair.sh (see packaging/keys/README.md) and paste the
+# printed line below. While no key is set, signatures cannot be verified and
+# releases count as "not signed" in the updater.

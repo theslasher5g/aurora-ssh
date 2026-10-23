@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.10.0
+
+### Releases
+- **Signed releases:** the release workflow signs `SHA256SUMS.txt` with an Ed25519 key (secret `RELEASE_SIGNING_KEY`, public key
+  compiled into the app) and publishes `SHA256SUMS.txt.sig`; in addition a keyless Sigstore/cosign signature
+  (`SHA256SUMS.txt.cosign.bundle`) proves the file was built by this repository's workflow. Without the secrets
+  releases are unsigned as before. `packaging/keys/` has the key generator, a verify script and the README.
+- **The updater checks the signature** before it trusts the checksums: a release with a signature must verify
+  (otherwise the update is discarded); an unsigned release shows a notice and asks "Install anyway". New setting
+  *Only install signed updates* (off by default for now).
+- **macOS:** optional Developer ID signing (Hardened Runtime, helpers signed inside-out, entitlements file) and
+  notarization with stapling of app and .dmg, switched on by repository secrets; ad-hoc signing otherwise
+  (`packaging/macos/SIGNING.md`).
+- **Windows:** timestamp fallback server, signature verification after signing, documentation of the free options
+  SignPath Foundation and Azure Trusted Signing (`packaging/WINDOWS-SIGNING.md`).
+- **Linux:** optional detached GPG signature of the .deb (`.deb.asc`) and published public key.
+
 ## 0.9.2
 
 ### Look

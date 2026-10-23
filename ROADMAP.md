@@ -49,7 +49,6 @@ Released work is in the [CHANGELOG](CHANGELOG.md).
 | **Teams** | Shared entries and a shared vault with roles | large |
 | **Log alerts** | Notify when a followed log prints an error pattern while the session is in the background | small |
 | **Config diff** | Compare a config file between two hosts or two points in time | medium |
-| **Signed releases** | Sign the checksum file and notarize the macOS app so the update chain does not rely on the GitHub account alone | medium |
 
 ## ⚪ Open questions
 

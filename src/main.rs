@@ -20,6 +20,7 @@ mod themeimport_convert;
 mod themeimport_parse;
 mod ui;
 mod update;
+mod update_sig;
 mod whatsnew_data;
 
 fn main() -> eframe::Result {

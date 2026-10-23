@@ -48,7 +48,35 @@ Every [release](../../releases/latest) contains Windows, Linux and macOS:
 > - **Windows:** without a code‑signing certificate SmartScreen may ask once ("More info" → "Run anyway"). Web interface entries use the Microsoft Edge WebView2 runtime (part of Windows 11 and current Windows 10).
 > - **macOS:** the app is not notarized – on first start right‑click Aurora → *Open* (or `xattr -cr /Applications/Aurora.app`).
 > - **Linux:** needs glibc ≥ 2.35 and X11 or Wayland with OpenGL; web interface entries need WebKitGTK (`libwebkit2gtk-4.1-0`, installed with the `.deb`).
-> - Aurora checks for new versions on start and can update itself (downloads are verified against `SHA256SUMS.txt`). Language: *Settings → Sprache / Language*.
+> - Aurora checks for new versions on start and can update itself (downloads are verified against `SHA256SUMS.txt`, which is signed; see below). Language: *Settings → Sprache / Language*.
+
+### Verify your download
+
+Every release contains `SHA256SUMS.txt` (hashes of all files), `SHA256SUMS.txt.sig` (Ed25519 signature of that file) and
+`SHA256SUMS.txt.cosign.bundle` (keyless Sigstore proof that this repository's workflow built it). Releases made before
+signing was introduced have none of them. Put the files you downloaded into one folder:
+
+```bash
+# 1. the signature (public key: assets/release-signing-key.txt in this repository)
+packaging/keys/verify.sh ~/Downloads/aurora-release     # checks the signature and then the hashes
+
+# the same by hand (pub.pem = the public key as PEM, see packaging/keys/README.md)
+openssl pkeyutl -verify -pubin -inkey pub.pem -rawin -in SHA256SUMS.txt -sigfile SHA256SUMS.txt.sig
+sha256sum --ignore-missing -c SHA256SUMS.txt            # macOS: shasum -a 256 -c SHA256SUMS.txt
+
+# 2. optional: who built it (cosign)
+cosign verify-blob SHA256SUMS.txt --bundle SHA256SUMS.txt.cosign.bundle \
+  --certificate-identity-regexp '^https://github.com/theslasher5g/ssh-client/\.github/workflows/release\.yml@refs/.+' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+# 3. Linux .deb (if aurora_<version>_amd64.deb.asc is published)
+gpg --import aurora-release-gpg.asc && gpg --verify aurora_<version>_amd64.deb.asc aurora_<version>_amd64.deb
+```
+
+Windows PowerShell: `Get-FileHash .\Aurora-<version>-windows-x64-setup.exe -Algorithm SHA256` and compare with the line in
+`SHA256SUMS.txt`; signed Windows files show a publisher under *Properties → Digital Signatures*. Signed macOS builds pass
+`spctl --assess --type execute -vv /Applications/Aurora.app`. The in-app updater does the signature check itself
+(Settings → Updates → *Only install signed updates* refuses releases without a valid signature).
 
 ## 🚀 Quick start
 

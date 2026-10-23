@@ -54,7 +54,8 @@ Out of scope: someone who already controls your unlocked session or your operati
 | RDP | The TLS server key is pinned (TOFU) **before** any credentials are sent |
 | Proxmox | Pinned certificate fingerprint; API token or ticket in headers, never in URLs |
 | SSH certificates | Aurora as a small CA: principals are required, the key is ephemeral, the signature is bound to the session |
-| Updates | HTTPS only; the download is verified against the release's `SHA256SUMS.txt` or discarded. Redirects only to `https://`. Downloaded into a private, randomly named directory (0700) |
+| Updates | HTTPS only; the download is verified against the release's `SHA256SUMS.txt` or discarded. **`SHA256SUMS.txt` carries an Ed25519 signature** (`SHA256SUMS.txt.sig`, public key compiled into the app) that is verified before the checksums are trusted: a present signature must be valid (else hard fail), a missing one shows a notice and needs a click on *Install anyway* (setting *Only install signed updates* refuses it). Redirects only to `https://`. Downloaded into a private, randomly named directory (0700) |
+| Release provenance | Keyless Sigstore/cosign signature of the checksum file (`SHA256SUMS.txt.cosign.bundle`, identity = this repo's release workflow); optional GPG signature of the `.deb`; Windows Authenticode and macOS Developer ID + notarization when the certificates are configured. How to verify: README → *Verify your download*, `packaging/keys/README.md` |
 
 ### Content from remote systems is untrusted
 
@@ -118,9 +119,17 @@ recordings are only opened/deleted by plain file names, Markdown export titles a
 ## ⚠ Known limitations
 
 * The unlocked vault lives in memory (no zeroize); open sessions keep their credentials until closed.
-* **Supply chain:** the checksums come from the same GitHub release as the packages – they protect against
-  broken downloads and foreign redirects, not against a compromised GitHub account. Windows builds are only
-  signed when a certificate is configured; the macOS app is ad‑hoc signed, not notarized.
+* **Supply chain:** what is protected now: with a configured release key, someone who only controls the GitHub
+  release page (uploads other files, replaces `SHA256SUMS.txt`) cannot get an update past the app, because the
+  signature must match the compiled-in key. Not protected: (1) a compromised **signing key secret** or workflow
+  (an attacker who can run the release workflow can sign anything; the cosign identity then also looks
+  legitimate); (2) releases and builds from **before** signing was introduced and any release where no key was
+  configured: they are accepted after a confirmation unless *Only install signed updates* is on; (3) a user
+  who clicks *Install anyway*; (4) the **first** install from the download page, which is only as trustworthy as
+  the page (verify it by hand); (5) the cosign bundle and the `.deb` GPG signature are not checked by the app.
+  Windows builds are only Authenticode-signed and the macOS app only Developer ID signed/notarized when the
+  project has configured the certificates; otherwise SmartScreen / Gatekeeper warn and the macOS app is ad-hoc signed.
+  Key rotation requires a manual re-install (see `packaging/keys/README.md`).
 * **Web interfaces:** on macOS there is no certificate pinning (the system web view offers no hook) – use a
   trusted certificate or "ignore" explicitly. A web page can ask Aurora to open a link in the system browser or start
   a download without a click. The single automatic submit is spent when the script arms itself, not on the click.

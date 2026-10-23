@@ -10,6 +10,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use sha2::{Digest, Sha256};
 
 use crate::backend::Sink;
+use crate::update_sig::{self, Trust};
 
 pub const REPO: &str = "theslasher5g/ssh-client";
 
@@ -42,6 +43,28 @@ pub enum UpdateEvent {
     Progress(f32),
     /// Installed; `true` = Aurora should quit now (installer takes over / restarts it).
     Installed(Result<bool, String>),
+    /// The release has no (checkable) signature and the user has not yet agreed to install
+    /// it anyway. Nothing has been downloaded.
+    NeedsConfirm,
+}
+
+/// What to do with a checksum file given its signature state and the user's choices.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Decision {
+    Proceed,
+    /// Setting "only signed updates" is on.
+    Refuse,
+    /// Ask the user first.
+    Ask,
+}
+
+pub fn decide(trust: Trust, only_signed: bool, allow_unsigned: bool) -> Decision {
+    match trust {
+        Trust::Verified => Decision::Proceed,
+        _ if only_signed => Decision::Refuse,
+        _ if allow_unsigned => Decision::Proceed,
+        _ => Decision::Ask,
+    }
 }
 
 /// How this copy of Aurora was installed, which decides how to update it.
@@ -198,14 +221,25 @@ fn parse_release(json: &serde_json::Value) -> Option<Release> {
     })
 }
 
-pub fn install(release: Release, sink: Sink<UpdateEvent>) {
+/// `only_signed`: refuse releases without a valid signature; `allow_unsigned`: the user
+/// confirmed installing an unsigned release.
+pub fn install(release: Release, only_signed: bool, allow_unsigned: bool, sink: Sink<UpdateEvent>) {
     std::thread::spawn(move || {
-        let r = install_blocking(&release, &sink).map_err(|e| format!("{e:#}"));
-        sink.send(UpdateEvent::Installed(r));
+        match install_blocking(&release, only_signed, allow_unsigned, &sink) {
+            Ok(Some(quit)) => sink.send(UpdateEvent::Installed(Ok(quit))),
+            Ok(None) => sink.send(UpdateEvent::NeedsConfirm),
+            Err(e) => sink.send(UpdateEvent::Installed(Err(format!("{e:#}")))),
+        }
     });
 }
 
-fn install_blocking(release: &Release, sink: &Sink<UpdateEvent>) -> Result<bool> {
+/// `Ok(None)`: needs the user's confirmation for an unsigned release.
+fn install_blocking(
+    release: &Release,
+    only_signed: bool,
+    allow_unsigned: bool,
+    sink: &Sink<UpdateEvent>,
+) -> Result<Option<bool>> {
     let kind = InstallKind::detect();
     let suffix = kind
         .asset_suffix()
@@ -218,10 +252,32 @@ fn install_blocking(release: &Release, sink: &Sink<UpdateEvent>) -> Result<bool>
     let sums = release
         .assets
         .iter()
-        .find(|a| a.name.starts_with("SHA256SUMS"))
+        .find(|a| a.name == "SHA256SUMS.txt")
         .ok_or_else(|| anyhow!(t!("Release enthält keine Prüfsummen")))?;
 
-    let sums = String::from_utf8(download(&sums.url, None)?)?;
+    let sums_bytes = download(&sums.url, None)?;
+    // The signature is checked BEFORE the checksums are trusted (and before the big download).
+    let sig = match release
+        .assets
+        .iter()
+        .find(|a| a.name == "SHA256SUMS.txt.sig")
+    {
+        Some(a) => Some(download(&a.url, None)?),
+        None => None,
+    };
+    let trust = update_sig::check(
+        &sums_bytes,
+        sig.as_deref(),
+        update_sig::embedded_key().as_ref(),
+    )?;
+    match decide(trust, only_signed, allow_unsigned) {
+        Decision::Proceed => {}
+        Decision::Refuse => bail!(t!(
+            "Nicht signiert – Installation abgelehnt (Einstellung „Nur signierte Updates installieren“)"
+        )),
+        Decision::Ask => return Ok(None),
+    }
+    let sums = String::from_utf8(sums_bytes)?;
     let expected = expected_hash(&sums, &asset.name)
         .ok_or_else(|| anyhow!("{}", t!("keine Prüfsumme für {}", asset.name)))?;
     let data = download(&asset.url, Some(sink))?;
@@ -248,7 +304,7 @@ fn install_blocking(release: &Release, sink: &Sink<UpdateEvent>) -> Result<bool>
                 ])
                 .spawn()
                 .context(t!("Installer konnte nicht gestartet werden"))?;
-            Ok(true)
+            Ok(Some(true))
         }
         InstallKind::LinuxDeb => {
             let status = std::process::Command::new("pkexec")
@@ -259,7 +315,7 @@ fn install_blocking(release: &Release, sink: &Sink<UpdateEvent>) -> Result<bool>
             if !status.success() {
                 bail!("{}", t!("Installation abgebrochen ({})", status));
             }
-            Ok(false)
+            Ok(Some(false))
         }
         InstallKind::LinuxPortable(target) => {
             let status = std::process::Command::new("tar")
@@ -282,7 +338,7 @@ fn install_blocking(release: &Release, sink: &Sink<UpdateEvent>) -> Result<bool>
             if helper.exists() || unpacked.join("aurora-rdp").exists() {
                 replace_file(&unpacked.join("aurora-rdp"), &helper)?;
             }
-            Ok(false)
+            Ok(Some(false))
         }
         InstallKind::WindowsPortable | InstallKind::MacApp => unreachable!(),
     }
@@ -414,6 +470,20 @@ mod tests {
             Some("def456")
         );
         assert_eq!(expected_hash(sums, "other.zip"), None);
+    }
+
+    #[test]
+    fn signature_policy() {
+        use Decision::*;
+        // verified: always fine
+        assert_eq!(decide(Trust::Verified, true, false), Proceed);
+        // unsigned / no key: ask by default, refuse in strict mode, proceed after consent
+        for t in [Trust::NoSignature, Trust::NoKey] {
+            assert_eq!(decide(t, false, false), Ask);
+            assert_eq!(decide(t, false, true), Proceed);
+            assert_eq!(decide(t, true, false), Refuse);
+            assert_eq!(decide(t, true, true), Refuse);
+        }
     }
 
     #[test]

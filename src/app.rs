@@ -515,6 +515,8 @@ pub struct UpdateState {
     /// Installed in place; a restart activates it.
     pub installed: bool,
     pub message: Option<(String, Color32)>,
+    /// The release is not signed: waiting for the user's "install anyway".
+    pub confirm_unsigned: bool,
 }
 
 pub struct App {
@@ -2547,11 +2549,21 @@ impl App {
     }
 
     pub fn install_update(&mut self) {
+        self.install_update_with(false);
+    }
+
+    pub fn install_update_with(&mut self, allow_unsigned: bool) {
         if let Some(r) = self.update.latest.clone() {
             self.update.installing = true;
+            self.update.confirm_unsigned = false;
             self.update.progress = 0.0;
             self.update.message = None;
-            crate::update::install(r, self.update_sink.clone());
+            crate::update::install(
+                r,
+                self.lib.settings.signed_updates_only,
+                allow_unsigned,
+                self.update_sink.clone(),
+            );
         }
     }
 
@@ -2582,6 +2594,10 @@ impl App {
                     }
                 }
                 UpdateEvent::Progress(p) => self.update.progress = p,
+                UpdateEvent::NeedsConfirm => {
+                    self.update.installing = false;
+                    self.update.confirm_unsigned = true;
+                }
                 UpdateEvent::Installed(r) => {
                     self.update.installing = false;
                     match r {

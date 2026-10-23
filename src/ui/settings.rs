@@ -633,7 +633,9 @@ fn data(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
 fn updates(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
     caption(ui, "Updates");
     theme::settings_card(ui, |ui, rows| {
-        let help = if let Some((msg, _)) = &app.update.message {
+        let help = if app.update.confirm_unsigned {
+            t!("Dieses Release ist nicht signiert (oder diese Version kann die Signatur nicht prüfen). Nur die Prüfsumme aus demselben Release schützt den Download.").to_string()
+        } else if let Some((msg, _)) = &app.update.message {
             msg.clone()
         } else if let Some(rel) = app.update.latest.as_ref().filter(|_| !app.update.installed) {
             t!("Neue Version {} verfügbar.", rel.version_text())
@@ -646,7 +648,16 @@ fn updates(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
             Some(&help),
             |ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                if app.update.installed {
+                if app.update.confirm_unsigned {
+                    if theme::btn(ui, theme::Btn::Normal, None, t!("Trotzdem installieren"))
+                        .clicked()
+                    {
+                        app.install_update_with(true);
+                    }
+                    if theme::btn(ui, theme::Btn::Normal, None, t!("Abbrechen")).clicked() {
+                        app.update.confirm_unsigned = false;
+                    }
+                } else if app.update.installed {
                     if theme::btn(ui, theme::Btn::Primary, None, t!("Neu starten")).clicked() {
                         crate::update::restart();
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -691,6 +702,14 @@ fn updates(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
             Some(t!("Beim Start automatisch nach Updates suchen")),
             |ui| {
                 *changed |= theme::toggle(ui, &mut app.lib.settings.check_updates).changed();
+            },
+        );
+        rows.setting(
+            ui,
+            t!("Nur signierte Updates installieren"),
+            Some(t!("Updates ohne gültige Release-Signatur werden abgelehnt")),
+            |ui| {
+                *changed |= theme::toggle(ui, &mut app.lib.settings.signed_updates_only).changed();
             },
         );
     });

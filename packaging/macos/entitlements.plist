@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Used with codesign option "runtime" (Hardened Runtime, required for notarization).
+    Aurora is a native Rust app: no JIT (so no allow-jit / allow-unsigned-executable-memory),
+    it only loads Apple system libraries (so library validation stays ON), and the
+    aurora-web helper uses the system WKWebView which needs no extra entitlement.
+    Aurora is deliberately NOT sandboxed: it opens arbitrary network connections, spawns
+    the aurora-rdp/aurora-web helpers and reads ~/.ssh keys the user imports.
+    Add keys here only when a notarized build is proven to need them.
+  -->
+</dict>
+</plist>
