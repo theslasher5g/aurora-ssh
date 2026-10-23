@@ -398,6 +398,9 @@ pub struct Host {
     /// Web interface entries (`Protocol::Web`).
     #[serde(default)]
     pub web: WebSettings,
+    /// Windows hosts: facts and commands through WinRM (no SSH needed).
+    #[serde(default)]
+    pub winrm: crate::backend::winrm_types::WinrmSettings,
 }
 
 /// Per-host override of the global "reconnect automatically" switch.
@@ -454,6 +457,7 @@ impl Default for Host {
             credential_source: None,
             shell_integration: false,
             web: WebSettings::default(),
+            winrm: Default::default(),
         }
     }
 }
@@ -877,6 +881,10 @@ pub struct Settings {
     pub split_layout: crate::ui::chrome::SplitLayout,
     /// Dragged divider positions of the split view per layout and pane count.
     pub split_ratios: crate::ui::chrome::SplitRatios,
+    /// Tiny CPU/RAM graphs in the host list rows (needs a background SSH connection per
+    /// visible host, therefore off by default).
+    #[serde(default)]
+    pub host_sparklines: bool,
 }
 
 impl Default for Settings {
@@ -917,6 +925,7 @@ impl Default for Settings {
             transfer_limit_kbps: 0,
             split_layout: Default::default(),
             split_ratios: Default::default(),
+            host_sparklines: false,
             transfer_verify: false,
             saved_views: Vec::new(),
         }

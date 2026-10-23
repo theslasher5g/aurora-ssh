@@ -137,6 +137,18 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             "Inventar anzeigen",
             Action::Navigate(View::Inventory),
         ),
+        (
+            "CMD",
+            "Befehl auf mehreren Hosts ausführen…",
+            Action::Srv(crate::ui::multirun_ui::SrvAction::RunFilter(
+                app.search.clone(),
+            )),
+        ),
+        (
+            "CMD",
+            "Letzten Mehrfachlauf anzeigen",
+            Action::Srv(crate::ui::multirun_ui::SrvAction::ShowResults),
+        ),
         ("CMD", "Einstellungen", Action::Navigate(View::Settings)),
         ("CMD", "Tresor sperren", Action::Lock),
         ("CMD", "Was ist neu", Action::WhatsNew),

@@ -53,6 +53,7 @@ Out of scope: someone who already controls your unlocked session or your operati
 | Jump host | The target's key is verified exactly like a direct connection (own fingerprint per `host:port`) |
 | RDP | The TLS server key is pinned (TOFU) **before** any credentials are sent |
 | Proxmox | Pinned certificate fingerprint; API token or ticket in headers, never in URLs |
+| WinRM | HTTPS certificate pinned by SHA‑256 fingerprint (TOFU, same dialog as SSH/RDP, loud warning on change); NTLMv2 with MIC, no password on the wire; Basic only over HTTPS; plain HTTP (5985) only for NTLM and shown as unencrypted. Batch runs never open a dialog – an unconfirmed certificate is a failure |
 | SSH certificates | Aurora as a small CA: principals are required, the key is ephemeral, the signature is bound to the session |
 | Updates | HTTPS only; the download is verified against the release's `SHA256SUMS.txt` or discarded. Redirects only to `https://`. Downloaded into a private, randomly named directory (0700) |
 
@@ -66,6 +67,8 @@ Out of scope: someone who already controls your unlocked session or your operati
 | Containers | Names and options are shell‑quoted before they go into `docker`/`kubectl` on an SSH host; on this PC the CLI starts directly (no shell) and is only looked up in `PATH` |
 | Log viewer | Read‑only: `tail -F <quoted path>` or your own command, on its own channel; escape sequences are stripped; at most 20 000 lines are kept |
 | Server facts and info snippets | Read‑only commands on a separate channel; output is truncated, control characters stripped, shown as plain text only |
+| Run on many hosts | Confirmation with host count and command; hosts in a maintenance window are skipped unless you opt in; PROD hosts need an extra confirmation, a dangerous command (`rm -r`, `reboot`, `systemctl stop` … also inside chains, `sudo`, `xargs`, `sh -c`) on PROD needs the word typed. Placeholder values must be single‑line; values of secret‑looking placeholders (`password`, `token`, `key` …) are masked in the displayed command, the exports and every result. Output is capped (64 KB per host). `sudo` only as `sudo -n`; no password is ever stored or sent. Only stored credentials and already confirmed server keys/certificates are used |
+| Live host statistics | One persistent exec channel per watched host with a constant read‑only shell loop (`/proc`, `df`); only while the host is visible or its sheet is open (at most 10 hosts), the interval is a clamped integer; at most 64 KB of unexpected output is buffered |
 | Exports | Markdown and HTML escape all remote data (HTML carries a CSP, no scripts); CSV neutralises formulas; IP addresses can be masked |
 | Fonts | Font files are parsed and checked before they reach the renderer |
 

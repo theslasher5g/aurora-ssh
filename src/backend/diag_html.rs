@@ -224,7 +224,7 @@ fn line_html(l: &str) -> String {
 }
 
 /// Output as `<pre>` content; very long output keeps its head and tail.
-fn output_html(out: &str) -> String {
+pub(crate) fn output_html(out: &str) -> String {
     const MAX: usize = 1500;
     let lines: Vec<&str> = out.lines().collect();
     let mut s = String::new();
@@ -253,7 +253,7 @@ fn output_html(out: &str) -> String {
     s
 }
 
-fn size_label(n: usize) -> String {
+pub(crate) fn size_label(n: usize) -> String {
     if n >= 1024 * 1024 {
         format!("{:.1} MB", n as f64 / 1048576.0)
     } else if n >= 1024 {
@@ -263,7 +263,7 @@ fn size_label(n: usize) -> String {
     }
 }
 
-const CSS: &str = r#"
+pub(crate) const CSS: &str = r#"
 :root{--bg:#f6f7f9;--card:#fff;--ink:#1c1c1e;--dim:#6b6b73;--line:#e3e4e8;--accent:#e08600;--ok:#1f9d3a;--warn:#c27a00;--bad:#d63a32;--code:#f0f1f4}
 @media (prefers-color-scheme:dark){:root{--bg:#0e0e10;--card:#1a1a1d;--ink:#f5f5f7;--dim:#a1a1a6;--line:#2c2c2e;--accent:#ff9f0a;--ok:#32d74b;--warn:#ffb340;--bad:#ff6961;--code:#111113}}
 *{box-sizing:border-box}

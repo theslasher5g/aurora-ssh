@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.10.0
+
+### Servers
+- **Run on many hosts:** run a command or a saved snippet (with `{{placeholders}}`, asked once) on a
+  selection, a group or the result of a search/filter – in parallel (default 8 at a time, per-host
+  time limit, cancel). The result is a table (host, status ok / failed / timeout / unreachable /
+  skipped, exit code, duration, first lines of output); click a row for the full output; filter by
+  status and search in the results; *Run the failed ones again*; export as Markdown, CSV, JSON or a
+  printable HTML page. Entry points: *Run command…* in the selection bar and the host menu, the
+  group menu, the command palette. Safety: a confirmation lists the number of hosts and the command;
+  **PROD hosts need an extra confirmation, a dangerous command on PROD needs the word typed**; hosts in
+  a maintenance window are skipped unless you opt in; secret-looking placeholders are masked in
+  results and exports; optional `sudo -n`; output is capped.
+- **Live host statistics:** *Live-Statistik…* in the host menu opens CPU, RAM/swap, load, network
+  and disk graphs (10 minutes of history, sampled every 3 s over one SSH channel that closes with the
+  sheet). Optional tiny CPU/RAM graphs in the host list rows (Settings → *Mini-Graphen*, off by
+  default). Hosts without `/proc` (BSD, Windows OpenSSH) show "not supported".
+- **Windows without SSH through WinRM:** host form section *WinRM* for RDP hosts (HTTPS 5986 or HTTP
+  5985, NTLM or Basic over HTTPS, credentials from the host's identity, certificate pinned on first
+  use). *Update facts* in the inventory (and *Fakten per WinRM aktualisieren* in the host menu) collects
+  OS, uptime, disks, CPU, RAM, addresses, pending updates, services, listening ports and firewall
+  rules into the inventory; info snippets run as PowerShell; *Run on many hosts* works with PowerShell on
+  WinRM hosts. Implemented in Aurora itself (NTLMv2, WS-Management); **tested against a mock server
+  and the MS-NLMP test vectors, not against a real Windows machine yet**.
+
 ## 0.9.2
 
 ### Look

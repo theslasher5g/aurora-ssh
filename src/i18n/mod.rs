@@ -42,6 +42,7 @@ mod ui_v082_web;
 mod ui_v090_keys;
 mod ui_v091_diag;
 mod ui_v092_split;
+mod ui_v100_servers;
 mod ui_vnc;
 
 static ENGLISH: AtomicBool = AtomicBool::new(false);
@@ -84,6 +85,7 @@ const TABLES: &[&[(&str, &str)]] = &[
     ui_v090_keys::T,
     ui_v091_diag::T,
     ui_v092_split::T,
+    ui_v100_servers::T,
 ];
 
 /// "de", "en" or "" (follow the system: German for German locales, English otherwise).

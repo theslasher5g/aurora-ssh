@@ -50,7 +50,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     let typed_id = egui::Id::new("hostkey-typed");
     let mut typed: String = ctx.data(|d| d.get_temp(typed_id)).unwrap_or_default();
     let unlocked = !blocked || typed.trim() == hostname;
-    let ssh_key = !p.algorithm.starts_with("RDP");
+    let ssh_key = !p.algorithm.starts_with("RDP") && !p.algorithm.starts_with("WinRM");
 
     let mut answer: Option<(bool, bool)> = None; // (accept, remember)
     egui::Modal::new(egui::Id::new("hostkey"))
