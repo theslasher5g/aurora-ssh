@@ -30,6 +30,8 @@ name = "aurora-web"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "gdkx11",
+ "gtk",
  "serde",
  "serde_json",
  "sha2",
@@ -38,6 +40,7 @@ dependencies = [
  "webview2-com",
  "windows",
  "wry",
+ "x11-dl",
 ]
 
 [[package]]

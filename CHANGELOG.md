@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.10.0
+
+### Web interfaces
+- **The page now opens inside the Aurora tab** (like Royal TS / Devolutions RDM) instead of a
+  separate window. The `aurora-web` helper creates its web view as a **child window** of the
+  Aurora window (X11 window on Linux, `HWND` on Windows) and Aurora tells it the pixel rectangle of
+  the tab content whenever it changes: window resize, pane dividers of the split view (2-4 panes,
+  next to terminals), HiDPI scaling. Keyboard and clipboard work in the page (click into it;
+  it also takes the focus when the tab appears); a click anywhere in Aurora gives the keyboard back.
+- **Never on top of Aurora:** a native child window cannot be covered by egui, so the page is hidden
+  while another tab or pane is shown, while a menu, popup, dialog or the command palette overlaps
+  it, while the vault is locked or the window is minimized, and in popped-out windows. Closing
+  the tab closes the page. Profile isolation, auto-login, certificate pinning, origin rules and
+  downloads are unchanged (same helper protocol, same checks in the helper).
+- **Embedded or own window:** *Settings -> Web interfaces -> Display* (default: in the tab). Every web
+  tab has *Open in own window* / *Embed in the tab* (reopens the page), and *Details* shows the
+  address, certificate and pin. Where embedding is impossible - Wayland and macOS (no
+  cross-process child windows there) - or fails, the helper automatically uses its own window as before.
+
 ## 0.9.2
 
 ### Look

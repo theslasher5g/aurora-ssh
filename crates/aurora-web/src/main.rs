@@ -9,6 +9,7 @@
 //! overridden when the fingerprint matches the pin Aurora handed over (or the user
 //! confirmed it through `TrustCert`).
 
+mod embed;
 #[allow(dead_code)]
 mod proto;
 
@@ -352,119 +353,150 @@ fn main() {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy: EventLoopProxy<UserEvent> = event_loop.create_proxy();
 
-    let window = match WindowBuilder::new()
-        .with_title(&start.title)
-        .with_inner_size(LogicalSize::new(1280.0, 840.0))
-        .build(&event_loop)
-    {
-        Ok(w) => w,
-        Err(e) => fail(&format!("Fenster: {e}")),
-    };
+    let embed_parent = start.embed.as_ref().and_then(embed::parent);
 
     let mut context = WebContext::new(Some(profile));
 
-    let nav_state = state.clone();
-    let nav_extra = extra_hosts.clone();
-    let win_state = state.clone();
-    let win_extra = extra_hosts.clone();
-    let win_proxy = proxy.clone();
-
-    let load_proxy = proxy.clone();
-    let builder = WebViewBuilder::new_with_web_context(&mut context)
-        .with_url(base.to_url())
-        .with_devtools(cfg!(debug_assertions))
-        .with_navigation_handler(move |url| {
-            let base = nav_state.borrow().base.clone();
-            if navigation_allowed(&base, &nav_extra, &url) {
-                if url != "about:blank" {
-                    // A real page is being loaded: whatever error page was shown is gone.
-                    nav_state.borrow_mut().error_shown = false;
-                }
-                return true;
-            }
-            report_foreign(&url);
-            false
-        })
-        .with_new_window_req_handler(move |url, _features| {
-            let base = win_state.borrow().base.clone();
-            if navigation_allowed(&base, &win_extra, &url) && url != "about:blank" {
-                let _ = win_proxy.send_event(UserEvent::Load(url));
-            } else {
-                report_foreign(&url);
-            }
-            // Never a second window: same-origin targets load in this one.
-            NewWindowResponse::Deny
-        })
-        .with_document_title_changed_handler(|title| {
-            let title: String = title.chars().take(200).collect();
-            emit(&WebEvent::Title { title });
-        })
-        .with_on_page_load_handler(move |event, url| {
-            if !matches!(event, PageLoadEvent::Finished) {
-                return;
-            }
-            emit(&WebEvent::Loaded {
-                url: short_url(&url),
-            });
-            let _ = load_proxy.send_event(UserEvent::PageLoaded);
-        })
-        .with_download_started_handler(move |url, dest| {
-            let Some(dir) = download_dir.as_ref() else {
-                emit(&WebEvent::Blocked {
-                    url: short_url(&url),
+    // Everything the page callbacks need is cloned per call, so the builder can be made
+    // twice (embedded attempt, then the own-window fallback).
+    macro_rules! make_builder {
+        ($context:expr) => {{
+            let nav_state = state.clone();
+            let nav_extra = extra_hosts.clone();
+            let win_state = state.clone();
+            let win_extra = extra_hosts.clone();
+            let win_proxy = proxy.clone();
+            let load_proxy = proxy.clone();
+            let download_dir = download_dir.clone();
+            let builder = WebViewBuilder::new_with_web_context($context)
+                .with_url(base.to_url())
+                .with_devtools(cfg!(debug_assertions))
+                .with_navigation_handler(move |url| {
+                    let base = nav_state.borrow().base.clone();
+                    if navigation_allowed(&base, &nav_extra, &url) {
+                        if url != "about:blank" {
+                            // A real page is being loaded: whatever error page was shown is gone.
+                            nav_state.borrow_mut().error_shown = false;
+                        }
+                        return true;
+                    }
+                    report_foreign(&url);
+                    false
+                })
+                .with_new_window_req_handler(move |url, _features| {
+                    let base = win_state.borrow().base.clone();
+                    if navigation_allowed(&base, &win_extra, &url) && url != "about:blank" {
+                        let _ = win_proxy.send_event(UserEvent::Load(url));
+                    } else {
+                        report_foreign(&url);
+                    }
+                    // Never a second window: same-origin targets load in this one.
+                    NewWindowResponse::Deny
+                })
+                .with_document_title_changed_handler(|title| {
+                    let title: String = title.chars().take(200).collect();
+                    emit(&WebEvent::Title { title });
+                })
+                .with_on_page_load_handler(move |event, url| {
+                    if !matches!(event, PageLoadEvent::Finished) {
+                        return;
+                    }
+                    emit(&WebEvent::Loaded {
+                        url: short_url(&url),
+                    });
+                    let _ = load_proxy.send_event(UserEvent::PageLoaded);
+                })
+                .with_download_started_handler(move |url, dest| {
+                    let Some(dir) = download_dir.as_ref() else {
+                        emit(&WebEvent::Blocked {
+                            url: short_url(&url),
+                        });
+                        return false;
+                    };
+                    let name = safe_download_name(
+                        &dest
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                    );
+                    *dest = unique_path(dir, &name);
+                    true
+                })
+                .with_download_completed_handler(|url, path, ok| {
+                    let name = path
+                        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                        .unwrap_or_else(|| safe_download_name(&short_url(&url)));
+                    emit(&WebEvent::Download { name, ok });
                 });
-                return false;
+            #[cfg(target_os = "macos")]
+            let builder = {
+                use wry::WebViewBuilderExtDarwin;
+                builder.with_data_store_identifier(profile_id_bytes(&start.profile_id))
             };
-            let name = safe_download_name(
-                &dest
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-            );
-            *dest = unique_path(dir, &name);
-            true
-        })
-        .with_download_completed_handler(|url, path, ok| {
-            let name = path
-                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-                .unwrap_or_else(|| safe_download_name(&short_url(&url)));
-            emit(&WebEvent::Download { name, ok });
-        });
+            #[cfg(not(target_os = "macos"))]
+            let _ = profile_id_bytes;
+            builder
+        }};
+    }
 
-    #[cfg(target_os = "macos")]
-    let builder = {
-        use wry::WebViewBuilderExtDarwin;
-        builder.with_data_store_identifier(profile_id_bytes(&start.profile_id))
-    };
-    #[cfg(not(target_os = "macos"))]
-    let _ = profile_id_bytes;
-
-    #[cfg(target_os = "linux")]
-    let view = {
-        use tao::platform::unix::WindowExtUnix;
-        use wry::WebViewBuilderExtUnix;
-        let vbox = window
-            .default_vbox()
-            .unwrap_or_else(|| fail("Fenster ohne GTK-Container"));
-        builder.build_gtk(vbox)
-    };
-    #[cfg(not(target_os = "linux"))]
-    let view = builder.build(&window);
-
-    let view = match view {
-        Ok(v) => v,
-        Err(e) => fail(&format!(
-            "Webansicht: {e}{}",
-            if cfg!(windows) {
-                " (ist die Microsoft-Edge-WebView2-Laufzeit installiert?)"
-            } else {
-                ""
+    // Embedded: the page is a child window of Aurora's window. If the window system
+    // refuses (old WebView2, no X11 ...) the helper falls back to its own window.
+    let mut window: Option<tao::window::Window> = None;
+    let mut view: Option<WebView> = None;
+    let mut embedded_ctl: Option<embed::Embedded> = None;
+    if let Some(parent) = &embed_parent {
+        match embed::build(&event_loop, make_builder!(&mut context), parent) {
+            Ok((v, ctl)) => {
+                view = Some(v);
+                embedded_ctl = Some(ctl);
             }
-        )),
+            Err(e) => emit(&WebEvent::Error {
+                message: format!("Einbetten nicht möglich, eigenes Fenster: {e}"),
+            }),
+        }
+    }
+    let embedded = embedded_ctl.is_some();
+    if view.is_none() {
+        let w = match WindowBuilder::new()
+            .with_title(&start.title)
+            .with_inner_size(LogicalSize::new(1280.0, 840.0))
+            .build(&event_loop)
+        {
+            Ok(w) => w,
+            Err(e) => fail(&format!("Fenster: {e}")),
+        };
+        let builder = make_builder!(&mut context);
+        #[cfg(target_os = "linux")]
+        let built = {
+            use tao::platform::unix::WindowExtUnix;
+            use wry::WebViewBuilderExtUnix;
+            let vbox = w
+                .default_vbox()
+                .unwrap_or_else(|| fail("Fenster ohne GTK-Container"));
+            builder.build_gtk(vbox)
+        };
+        #[cfg(not(target_os = "linux"))]
+        let built = builder.build(&w);
+        view = Some(match built {
+            Ok(v) => v,
+            Err(e) => fail(&format!(
+                "Webansicht: {e}{}",
+                if cfg!(windows) {
+                    " (ist die Microsoft-Edge-WebView2-Laufzeit installiert?)"
+                } else {
+                    ""
+                }
+            )),
+        });
+        window = Some(w);
+    }
+    let Some(view) = view else {
+        fail("Webansicht konnte nicht erstellt werden")
     };
     install_tls_hook(&view, &state);
     emit(&WebEvent::Ready {
         engine: engine_name(),
+        embedded,
     });
 
     let autofill_state = state.clone();
@@ -517,8 +549,28 @@ fn main() {
             }
             Event::UserEvent(UserEvent::Cmd(cmd)) => match cmd {
                 WebCmd::Focus => {
-                    window.set_minimized(false);
-                    window.set_focus();
+                    if let Some(window) = &window {
+                        window.set_minimized(false);
+                        window.set_focus();
+                    } else if let Some(ctl) = &embedded_ctl {
+                        ctl.focus_page(&view);
+                    }
+                }
+                WebCmd::Bounds {
+                    x,
+                    y,
+                    w,
+                    h,
+                    visible,
+                } => {
+                    if let Some(ctl) = &embedded_ctl {
+                        ctl.place(&view, proto::sanitize_bounds(x, y, w, h), visible);
+                    }
+                }
+                WebCmd::Blur => {
+                    if let (Some(ctl), Some(parent)) = (&embedded_ctl, &embed_parent) {
+                        ctl.blur(&view, parent);
+                    }
                 }
                 WebCmd::Reload => {
                     let (err, home, pending) = {

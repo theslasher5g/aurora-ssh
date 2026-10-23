@@ -877,6 +877,8 @@ pub struct Settings {
     pub split_layout: crate::ui::chrome::SplitLayout,
     /// Dragged divider positions of the split view per layout and pane count.
     pub split_ratios: crate::ui::chrome::SplitRatios,
+    /// Open web interfaces in their own window instead of inside the tab.
+    pub web_own_window: bool,
 }
 
 impl Default for Settings {
@@ -919,6 +921,7 @@ impl Default for Settings {
             split_ratios: Default::default(),
             transfer_verify: false,
             saved_views: Vec::new(),
+            web_own_window: false,
         }
     }
 }

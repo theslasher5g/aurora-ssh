@@ -13,7 +13,7 @@ Released work is in the [CHANGELOG](CHANGELOG.md).
 
 | Item | What it gives you | Effort |
 |---|---|---|
-| **Web page inside the Aurora window** | Show a web interface entry in the tab itself (embedded view) instead of a separate window – the missing half of the Royal TS / RDM experience. The tab is already prepared for it | large |
+| **Embedded web page on macOS and Wayland** | The page already sits inside the tab on Windows and X11; there the helper still opens its own window. macOS needs the web view inside the Aurora process, Wayland a compositor-side embedding (and the Windows path needs a real-machine test) | large |
 | **Test on Windows & macOS** | The web helper, the WSL Docker fallback, key drag & drop and imports were only compiled there; real runs on Windows 10/11, Windows Server and macOS (Intel + Apple Silicon) | medium |
 | **Certificate pinning on macOS** | Pin self‑signed certificates in the system web view as on Windows and Linux (needs a native hook) | medium |
 | **Real exports for the importers** | Check the Royal TS / RDM / mRemoteNG parsers against real exports, read `.rtsz` archives, native file dialog | medium |
@@ -53,7 +53,7 @@ Released work is in the [CHANGELOG](CHANGELOG.md).
 
 ## ⚪ Open questions
 
-- Should web pages open **only** in the tab once embedding exists, or keep the separate window as an option?
+- None right now.
 
 ## ✅ Recently done
 

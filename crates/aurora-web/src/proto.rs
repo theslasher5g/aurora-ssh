@@ -524,6 +524,51 @@ pub struct WebStart {
     /// Downloads are saved here; empty = downloads are refused.
     #[serde(default)]
     pub download_dir: String,
+    /// Native window of Aurora to embed the page into (`None` = own window).
+    #[serde(default)]
+    pub embed: Option<EmbedParent>,
+}
+
+/// Kind of native parent window handle Aurora passes for embedding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParentKind {
+    /// X11 window id (Linux).
+    X11,
+    /// HWND (Windows).
+    Win32,
+}
+
+/// The window the helper creates its web view in as a child (Windows HWND / X11 window).
+/// Native handles are only valid across processes on these two systems; macOS (NSView
+/// pointers are per process) and Wayland (no foreign child surfaces) use the own window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmbedParent {
+    pub kind: ParentKind,
+    pub handle: u64,
+}
+
+/// Pixel rectangle inside the parent window (client area, physical pixels).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PixelRect {
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
+}
+
+/// Largest coordinate / size the helper passes to the window system.
+pub const MAX_PIXELS: i32 = 16_384;
+
+/// Clamps a rectangle from Aurora to sane values (a hostile or buggy value must not
+/// reach Xlib / Win32 unchecked): position within +-`MAX_PIXELS`, size 1..=`MAX_PIXELS`.
+pub fn sanitize_bounds(x: i32, y: i32, w: u32, h: u32) -> PixelRect {
+    PixelRect {
+        x: x.clamp(-MAX_PIXELS, MAX_PIXELS),
+        y: y.clamp(-MAX_PIXELS, MAX_PIXELS),
+        w: w.clamp(1, MAX_PIXELS as u32),
+        h: h.clamp(1, MAX_PIXELS as u32),
+    }
 }
 
 impl std::fmt::Debug for WebStart {
@@ -545,8 +590,20 @@ impl std::fmt::Debug for WebStart {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum WebCmd {
-    /// Raise the window.
+    /// Raise the window (embedded: give the page the keyboard focus).
     Focus,
+    /// Embedded: place the page at this rectangle of Aurora's window (physical pixels,
+    /// client area) and show or hide it. Hidden while a dialog, menu or another tab is
+    /// on top.
+    Bounds {
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+        visible: bool,
+    },
+    /// Embedded: give the keyboard focus back to Aurora's window.
+    Blur,
     Reload,
     /// Back to the entry URL.
     Home,
@@ -564,6 +621,10 @@ pub enum WebEvent {
     /// Window and web view exist.
     Ready {
         engine: String,
+        /// The page lives inside Aurora's window (`false` = own window, also when the
+        /// embedding was requested but is not possible here).
+        #[serde(default)]
+        embedded: bool,
     },
     Title {
         title: String,
@@ -667,6 +728,57 @@ pub fn short_url(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bounds_are_clamped() {
+        let r = sanitize_bounds(-99_999, 5, 0, 1_000_000);
+        assert_eq!((r.x, r.y, r.w, r.h), (-MAX_PIXELS, 5, 1, MAX_PIXELS as u32));
+        let r = sanitize_bounds(10, 20, 300, 200);
+        assert_eq!((r.x, r.y, r.w, r.h), (10, 20, 300, 200));
+    }
+
+    #[test]
+    fn embed_protocol_round_trips() {
+        let cmd =
+            parse_cmd(r#"{"t":"bounds","x":3,"y":4,"w":500,"h":300,"visible":true}"#).unwrap();
+        assert_eq!(
+            cmd,
+            WebCmd::Bounds {
+                x: 3,
+                y: 4,
+                w: 500,
+                h: 300,
+                visible: true
+            }
+        );
+        assert_eq!(parse_cmd(r#"{"t":"blur"}"#).unwrap(), WebCmd::Blur);
+        // Old Aurora without `embed` and old helper events without `embedded` still parse.
+        let start = parse_start(
+            r#"{"url":"https://a.lan/","title":"a","profile_dir":"/tmp/x","profile_id":"1"}"#,
+        )
+        .unwrap();
+        assert!(start.embed.is_none());
+        let start = parse_start(
+            r#"{"url":"https://a.lan/","title":"a","profile_dir":"/tmp/x","profile_id":"1",
+                "embed":{"kind":"x11","handle":4194305}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            start.embed,
+            Some(EmbedParent {
+                kind: ParentKind::X11,
+                handle: 4194305
+            })
+        );
+        let ev: WebEvent = serde_json::from_str(r#"{"ev":"ready","engine":"x"}"#).unwrap();
+        assert_eq!(
+            ev,
+            WebEvent::Ready {
+                engine: "x".into(),
+                embedded: false
+            }
+        );
+    }
+
     #[test]
     fn ipv6_hosts_are_canonical() {
         let u = parse_url("https://[FE80:0:0:0:0:0:0:1]/x").unwrap();
@@ -884,6 +996,7 @@ mod tests {
             submit: false,
             extra_hosts: vec![],
             download_dir: String::new(),
+            embed: None,
         };
         assert!(!format!("{s:?}").contains("hunter2"));
     }
