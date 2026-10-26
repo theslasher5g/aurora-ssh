@@ -481,13 +481,12 @@ fn norm_list(s: &str) -> String {
 }
 
 fn keys_of(c: &CiConfig) -> Vec<String> {
-    let mut v: Vec<String> = c
-        .sshkeys
-        .iter()
-        .map(|k| k.trim().to_string())
-        .filter(|k| !k.is_empty())
-        .collect();
-    v.dedup();
+    let mut v: Vec<String> = Vec::new();
+    for k in c.sshkeys.iter().map(|k| k.trim()).filter(|k| !k.is_empty()) {
+        if !v.iter().any(|x| x == k) {
+            v.push(k.to_string());
+        }
+    }
     v
 }
 

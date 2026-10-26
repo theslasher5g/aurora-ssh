@@ -302,7 +302,9 @@ async fn run_one(
             r.error = format!("{e:#}");
         }
         Ok(Ok(done)) => {
-            (r.output, r.truncated) = clean_output(&done.raw);
+            // Mask before the cap: a secret split by the cut would stay readable.
+            let masked = mask_secrets(&String::from_utf8_lossy(&done.raw), &opts.secrets);
+            (r.output, r.truncated) = clean_output(masked.as_bytes());
             r.truncated |= done.cut;
             r.exit = done.exit;
             if done.exit == Some(0) {

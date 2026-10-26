@@ -319,4 +319,8 @@ pub const T: &[(&str, &str)] = &[
         "… {} weitere Einträge – Filter benutzen",
         "… {} more entries – use the filter",
     ),
+    (
+        "Der Server hat keine gültige Aufgabe gestartet",
+        "The server did not start a valid task",
+    ),
 ];

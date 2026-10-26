@@ -71,7 +71,8 @@ pub fn secret_values(values: &[(String, String)]) -> Vec<String> {
 
 /// Words that only wrap another command.
 const WRAPPERS: &[&str] = &[
-    "sudo", "xargs", "env", "nohup", "time", "nice", "ionice", "exec", "command", "doas",
+    "sudo", "xargs", "env", "nohup", "time", "nice", "ionice", "exec", "command", "doas", "setsid",
+    "stdbuf", "timeout", "watch", "builtin",
 ];
 
 /// Splits a line into the commands it chains (`;`, `&&`, `||`, `|`, `&`, line breaks).
@@ -82,6 +83,23 @@ fn segments(line: &str) -> Vec<String> {
     let (mut sq, mut dq) = (false, false);
     while let Some(c) = chars.next() {
         match c {
+            // An escaped character never quotes or separates.
+            '\\' if !sq => {
+                cur.push(c);
+                if let Some(n) = chars.next() {
+                    cur.push(n);
+                }
+                continue;
+            }
+            // Command substitution runs a command of its own: `$(…)`, backticks.
+            '`' | '(' | ')' if !sq => {
+                out.push(std::mem::take(&mut cur));
+                continue;
+            }
+            '$' if !sq && chars.peek() == Some(&'(') => {
+                out.push(std::mem::take(&mut cur));
+                continue;
+            }
             '\'' if !dq => sq = !sq,
             '"' if !sq => dq = !dq,
             ';' | '\n' | '|' | '&' if !sq && !dq => {
@@ -130,6 +148,14 @@ pub fn dangerous(cmd: &str, powershell: bool) -> Option<&'static str> {
                     break;
                 }
             }
+            // `timeout 30 cmd`: the duration is not the command.
+            if wrapper == "timeout"
+                && words
+                    .first()
+                    .is_some_and(|w| w.starts_with(|c: char| c.is_ascii_digit()))
+            {
+                words.remove(0);
+            }
         }
         if words.is_empty() {
             continue;
@@ -138,10 +164,13 @@ pub fn dangerous(cmd: &str, powershell: bool) -> Option<&'static str> {
             return Some(w);
         }
         // `bash -c '…'`, `sh -c "…"`: look inside as well.
-        if matches!(words[0], "sh" | "bash" | "zsh" | "dash")
-            && let Some(pos) = seg.find(" -c ")
+        if matches!(words[0], "sh" | "bash" | "zsh" | "dash" | "ksh")
+            && let Some(i) = words
+                .iter()
+                .position(|w| w.starts_with('-') && !w.starts_with("--") && w.contains('c'))
         {
-            let inner = seg[pos + 4..].trim().trim_matches(['\'', '"']);
+            let inner = words[i + 1..].join(" ");
+            let inner = inner.trim().trim_matches(['\'', '"']);
             if let Some(w) = dangerous(inner, false) {
                 return Some(w);
             }
@@ -153,12 +182,23 @@ pub fn dangerous(cmd: &str, powershell: bool) -> Option<&'static str> {
 fn dangerous_powershell(cmd: &str) -> Option<&'static str> {
     let l = cmd.to_lowercase();
     let has = |w: &str| l.contains(w);
-    if (has("remove-item") || has("rm ") || has("del ") || has("rd "))
-        && (has("-recurse") || has("/s"))
-    {
+    // Whole words: `rm`, `del` & co. must not match inside other words or paths.
+    let words: Vec<&str> = l
+        .split(|c: char| c.is_whitespace() || matches!(c, ';' | '|' | '(' | ')' | '{' | '}'))
+        .filter(|w| !w.is_empty())
+        .collect();
+    let word = |w: &str| words.contains(&w);
+    let remover = ["remove-item", "rm", "ri", "del", "erase", "rd", "rmdir"]
+        .iter()
+        .any(|w| word(w));
+    // `-r`, `-re`, … `-recurse` (any unambiguous prefix) and cmd's `/s`.
+    let recursive = words
+        .iter()
+        .any(|w| (w.len() >= 2 && "-recurse".starts_with(w)) || *w == "/s");
+    if remover && recursive {
         return Some(t!("löscht rekursiv"));
     }
-    if has("stop-computer") || has("restart-computer") || has("shutdown") {
+    if has("stop-computer") || has("restart-computer") || word("shutdown") || word("shutdown.exe") {
         return Some(t!("fährt den Server herunter oder startet ihn neu"));
     }
     if has("format-volume") || has("clear-disk") || has("diskpart") || has("remove-partition") {
@@ -204,6 +244,20 @@ mod tests {
 
     fn v(k: &str, x: &str) -> (String, String) {
         (k.into(), x.into())
+    }
+
+    #[test]
+    fn evasions_are_seen() {
+        assert!(dangerous("echo \\\" ; rm -rf /", false).is_some());
+        assert!(dangerous("echo $(rm -rf /tmp/x)", false).is_some());
+        assert!(dangerous("echo `rm -rf /tmp/x`", false).is_some());
+        assert!(dangerous("bash -lc 'rm -rf /srv'", false).is_some());
+        assert!(dangerous("timeout 5 rm -rf /srv", false).is_some());
+        assert!(dangerous("echo hello; ls -la", false).is_none());
+        assert!(dangerous("rm -r x", true).is_some());
+        assert!(dangerous("ri -re x", true).is_some());
+        assert!(dangerous("Write-Host confirm -Recurse", true).is_none());
+        assert!(dangerous("Get-ChildItem C:/s", true).is_none());
     }
 
     #[test]

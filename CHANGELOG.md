@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.1
+
+### Fixes
+- **Multi-host run:** the danger check now also sees commands behind an escaped quote, inside `$(…)` and backticks, behind `bash -lc`, `timeout`, `setsid`, `stdbuf` and `watch`, and PowerShell short forms (`rm -r`, `ri -re`) without firing on harmless text. Secrets are masked before the output is cut. A second run cannot replace a running one.
+- **RDP drive sharing:** the directory-query wildcard matcher can no longer be stalled by a hostile pattern, and patterns sent with `/` (xrdp) work.
+- **Updater:** a release without a signature is refused once the app carries a signing key (a stripped signature is never installed).
+- **Proxmox Backup Server:** a missing `keep` field in the prune preview counts as keep, a start that returns no task is reported as an error, duplicate cloud-init SSH keys are removed wherever they sit in the list.
+- **Release workflow:** the version input is validated and passed through the environment (no script injection); default permissions are read-only. Release text no longer claims a signature file that is not published yet.
+
 ## 0.10.0
 
 ### Releases

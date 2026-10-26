@@ -1,5 +1,5 @@
 # Builds Windows, Linux and macOS packages and publishes them together in ONE release.
-#   tag v0.10.0 -> Windows installer + portable zip, .deb + portable tar.gz, SHA256SUMS.txt
+#   tag v0.10.1 -> Windows installer + portable zip, .deb + portable tar.gz, SHA256SUMS.txt
 # Either push the tag, or run the workflow manually (it then creates the tag itself).
 name: Release
 
@@ -11,7 +11,7 @@ on:
     inputs:
       version:
         description: Version (without v)
-        default: "0.10.0"
+        default: "0.10.1"
 
 permissions:
   contents: read
@@ -283,7 +283,7 @@ jobs:
           body: |
             **Aurora ${{ env.VERSION }}** – Windows, Linux and macOS
 
-            **New in 0.10.0:** web interfaces open inside the Aurora tab · run a command on many hosts, live host statistics, WinRM for Windows · Proxmox with customer separation, PBS file browser, prune/verify, batch migration, cloud-init · RDP drive sharing · big inventories (20k hosts), dynamic folders, customer focus · signed releases (Ed25519, optional macOS notarization). Full list: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/v${{ env.VERSION }}/CHANGELOG.md)
+            **New in 0.10.1:** review fixes - the multi-host run recognises more ways to hide dangerous commands (escaped quotes, `$(…)`, `bash -lc`, `timeout`, PowerShell short forms), secrets are masked before output is cut, only one multi-host run at a time, RDP drive sharing wildcard and path fixes, PBS prune preview and task errors, safer release workflow. 0.10.0 brought: web interfaces in the Aurora tab, multi-host commands, live host statistics, WinRM, Proxmox customers/PBS/cloud-init, RDP drive sharing, big inventories. Full list: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/v${{ env.VERSION }}/CHANGELOG.md)
 
             | System | File | Install |
             |---|---|---|
@@ -293,7 +293,7 @@ jobs:
             | | `aurora-${{ env.VERSION }}-linux-x86_64.tar.gz` | unpack, `./install.sh` (to `~/.local`) or `./aurora` |
             | macOS 11+ (Apple Silicon & Intel) | `Aurora-${{ env.VERSION }}-macos-universal.dmg` | open, drag Aurora to Applications |
 
-            Aurora checks for new versions on start and can update itself (Settings → Updates; downloads are verified against `SHA256SUMS.txt`, whose signature `SHA256SUMS.txt.sig` is checked as well). Verify by hand: see [“Verify your download”](https://github.com/${{ github.repository }}/blob/v${{ env.VERSION }}/README.md#verify-your-download).
+            Aurora checks for new versions on start and can update itself (Settings → Updates; downloads are verified against `SHA256SUMS.txt`, and, once release signing is set up, its signature `SHA256SUMS.txt.sig`). Verify by hand: see [“Verify your download”](https://github.com/${{ github.repository }}/blob/v${{ env.VERSION }}/README.md#verify-your-download).
 
             **Windows:** without a code-signing certificate SmartScreen may ask on first start ("More info" → "Run anyway").
             **macOS:** the app is not notarized – on first start right-click Aurora → Open, or run `xattr -cr /Applications/Aurora.app`.

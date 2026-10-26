@@ -269,7 +269,12 @@ pub fn parse_prune(data: &Value) -> Vec<PruneItem> {
         .filter_map(|i| {
             Some(PruneItem {
                 time: i["backup-time"].as_i64()?,
-                keep: i["keep"].as_bool().unwrap_or(num(&i["keep"]) != 0.0),
+                // A missing or odd `keep` counts as keep: never offer to delete on a guess.
+                keep: match &i["keep"] {
+                    Value::Bool(b) => *b,
+                    Value::Number(n) => n.as_f64().unwrap_or(1.0) != 0.0,
+                    _ => true,
+                },
                 protected: i["protected"]
                     .as_bool()
                     .unwrap_or(num(&i["protected"]) != 0.0),
@@ -720,7 +725,12 @@ pub fn spawn_task(
             }
         };
         if !valid_upid(&upid) {
-            update(&c, TaskUpdate::Done(Ok("OK".into())));
+            update(
+                &c,
+                TaskUpdate::Done(Err(
+                    t!("Der Server hat keine gültige Aufgabe gestartet").into()
+                )),
+            );
             return;
         }
         update(&c, TaskUpdate::Started(upid.clone()));
