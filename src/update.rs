@@ -61,6 +61,7 @@ pub enum Decision {
 pub fn decide(trust: Trust, only_signed: bool, allow_unsigned: bool) -> Decision {
     match trust {
         Trust::Verified => Decision::Proceed,
+        Trust::Stripped => Decision::Refuse,
         _ if only_signed => Decision::Refuse,
         _ if allow_unsigned => Decision::Proceed,
         _ => Decision::Ask,
@@ -483,6 +484,14 @@ mod tests {
             assert_eq!(decide(t, false, true), Proceed);
             assert_eq!(decide(t, true, false), Refuse);
             assert_eq!(decide(t, true, true), Refuse);
+        }
+    }
+
+    #[test]
+    fn stripped_signature_is_never_installed() {
+        use Decision::*;
+        for (only, allow) in [(false, false), (false, true), (true, false), (true, true)] {
+            assert_eq!(decide(Trust::Stripped, only, allow), Refuse);
         }
     }
 

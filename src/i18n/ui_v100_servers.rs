@@ -347,4 +347,8 @@ pub const T: &[(&str, &str)] = &[
         "Run a command on many hosts…",
     ),
     ("Letzten Mehrfachlauf anzeigen", "Show last multi-host run"),
+    (
+        "Ein Mehrfachlauf läuft noch – erst abbrechen oder abwarten",
+        "A multi-host run is still active – cancel it or wait",
+    ),
 ];

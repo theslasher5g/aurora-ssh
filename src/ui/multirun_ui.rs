@@ -313,6 +313,16 @@ fn make_job(app: &App, row: &Row, powershell: bool, ack_maint: bool) -> Job {
 }
 
 fn start_run(app: &mut App, ctx: &egui::Context, c: Confirm) {
+    // Dropping the handle of a running run would cancel it, and its events (indexed for
+    // the old host list) would land in the new run's results: wait for it instead.
+    if app.srv.multi.run.as_ref().is_some_and(|r| r.running) {
+        app.toast(
+            t!("Ein Mehrfachlauf läuft noch – erst abbrechen oder abwarten"),
+            theme::amber(),
+        );
+        app.srv.multi.confirm = Some(c);
+        return;
+    }
     let opts = Options {
         command: c.real.clone(),
         sudo: c.sudo && !c.powershell,

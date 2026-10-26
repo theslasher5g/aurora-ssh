@@ -222,7 +222,11 @@ fn wildcards() {
     assert!(wild_match("name.txt", "NAME.TXT"));
     assert!(!wild_match("name.txt", "name.txt2"));
     // Pathological patterns do not hang.
-    assert!(!wild_match(&"*a".repeat(40), &"a".repeat(40)));
+    assert!(wild_match(&"*a".repeat(40), &"a".repeat(40)));
+    let name = format!("{}b", "a".repeat(255));
+    assert!(!wild_match(&"*a".repeat(40), &name));
+    // The server may send either separator before the pattern.
+    assert!(wild_match("*.txt", "a.txt"));
 }
 
 // ------------------------------------------------------------ confinement

@@ -448,24 +448,35 @@ impl Stat {
 
 /// Windows directory-listing wildcards: `*`, `?` (and the DOS forms `<`, `>`), case-insensitive.
 pub fn wild_match(pattern: &str, name: &str) -> bool {
-    fn rec(p: &[char], n: &[char]) -> bool {
-        match p.first() {
-            None => n.is_empty(),
-            Some('*') | Some('<') => (0..=n.len()).any(|i| rec(&p[1..], &n[i..])),
-            Some('?') | Some('>') => !n.is_empty() && rec(&p[1..], &n[1..]),
-            Some(c) => n.first().is_some_and(|x| x == c) && rec(&p[1..], &n[1..]),
-        }
-    }
     if pattern.is_empty() || pattern == "*" || pattern == "*.*" {
         return true;
     }
     let p: Vec<char> = pattern.to_lowercase().chars().collect();
     let n: Vec<char> = name.to_lowercase().chars().collect();
-    // Bound the work a hostile pattern can cause.
-    if p.iter().filter(|c| matches!(c, '*' | '<')).count() > 8 {
-        return false;
+    // Iterative matching with one backtrack point: O(pattern * name), however many
+    // stars a hostile server sends.
+    let is_star = |c: char| matches!(c, '*' | '<');
+    let (mut pi, mut ni) = (0usize, 0usize);
+    let mut back: Option<(usize, usize)> = None;
+    while ni < n.len() {
+        if pi < p.len() && is_star(p[pi]) {
+            back = Some((pi + 1, ni));
+            pi += 1;
+        } else if pi < p.len() && (matches!(p[pi], '?' | '>') || p[pi] == n[ni]) {
+            pi += 1;
+            ni += 1;
+        } else if let Some((bp, bn)) = back {
+            back = Some((bp, bn + 1));
+            pi = bp;
+            ni = bn + 1;
+        } else {
+            return false;
+        }
     }
-    rec(&p, &n)
+    while pi < p.len() && is_star(p[pi]) {
+        pi += 1;
+    }
+    pi == p.len()
 }
 
 // -------------------------------------------------------------------- handles
@@ -1146,7 +1157,11 @@ impl DriveFs {
                 h.path.clone()
             };
             // The pattern is the last component of the path the server sends.
-            let pattern = pattern_path.rsplit('\\').next().unwrap_or("").to_string();
+            let pattern = pattern_path
+                .rsplit(['\\', '/'])
+                .next()
+                .unwrap_or("")
+                .to_string();
             let need = initial
                 || matches!(
                     self.handles.get(&io.file_id).map(|h| &h.kind),

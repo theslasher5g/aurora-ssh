@@ -17,6 +17,9 @@ pub enum Trust {
     NoSignature,
     /// The release has a signature but this build contains no public key to check it with.
     NoKey,
+    /// This build has a key but the release carries no signature: either stripped by an
+    /// attacker or a broken release. Never installed.
+    Stripped,
 }
 
 /// First non-comment line of the key file, decoded; `None` while no key is set.
@@ -61,7 +64,8 @@ pub fn verify(sums: &[u8], sig: &[u8], key: &[u8; 32]) -> Result<()> {
 /// (or a build without key) is reported so the caller can ask the user.
 pub fn check(sums: &[u8], sig: Option<&[u8]>, key: Option<&[u8; 32]>) -> Result<Trust> {
     match (sig, key) {
-        (None, _) => Ok(Trust::NoSignature),
+        (None, None) => Ok(Trust::NoSignature),
+        (None, Some(_)) => Ok(Trust::Stripped),
         (Some(_), None) => Ok(Trust::NoKey),
         (Some(sig), Some(key)) => verify(sums, sig, key).map(|()| Trust::Verified),
     }
@@ -135,7 +139,7 @@ mod tests {
     fn missing_signature_or_key() {
         assert_eq!(
             check(SUMS.as_bytes(), None, Some(&key())).unwrap(),
-            Trust::NoSignature
+            Trust::Stripped
         );
         assert_eq!(
             check(SUMS.as_bytes(), None, None).unwrap(),
