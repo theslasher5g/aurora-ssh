@@ -87,6 +87,33 @@
 - **Migrate a selection:** target node per server, live or powered-off only, optionally with local disks, one at a time or up to four in parallel; progress per guest, failures listed, "cancel rest".
 - **Cloud-init beyond `ipconfig0`:** all `ipconfigN`, DHCP/static helper with CIDR/gateway checks, nameserver, search domain, user, password (never shown, logged or stored; wiped after sending), SSH keys (also from the keychain), package upgrade, `cicustom`, regenerate the drive.
 - Not tested against a real Proxmox yet, only against mock servers.
+### RDP
+- **Share a folder as a drive (drive redirection):** a local folder shows up as a drive in the Windows
+  Explorer of the RDP session. Per host: *Share a drive*, the folder (type the path or drag a folder
+  onto the editor), a drive name and *Allow writing* (**read only by default**). The channel only
+  exists when the host has the option on; it applies from the next connection.
+- **Confined to the folder:** the session can only reach what is inside the shared folder – `..`,
+  UNC and drive-letter paths, device names (`CON`, `NUL`, `COM1` …), trailing dots/spaces and stream
+  syntax are refused, symbolic links and junctions are never followed (and hidden from listings),
+  names are matched case-insensitively like on Windows, files that are created never get the execute
+  bit, nothing is ever executed. Size limits for reads, writes, files and open handles.
+- **Always visible and revocable:** a badge on the remote screen and the session header show
+  "Laufwerk: <name> (nur lesen)"; clicking it shows traffic and blocked attempts and has *Disconnect
+  share* (and *Share folder again*) – the drive disappears from Explorer at once. Refused
+  requests (outside the folder, writes on a read-only share) are counted and reported.
+- Tested against a real xrdp server (listing, reading, writing, rename, delete, symlink and write
+  attempts, disconnecting and re-sharing while connected) and with unit tests; not yet against a
+  real Windows host.
+
+### Split view
+- **Narrow panes stay usable:** panes are at least 200 px wide and 130 px high (before 120 px); when
+  the window is too small for the chosen layout (e.g. four columns in a small window) Aurora shows
+  the arrangement that gives every pane room (a grid, or two panes stacked) until the window grows.
+- **One "…" menu in narrow pane headers:** below about 380 px the header keeps only *close*, the
+  title (shortened with …) and the menu; pop-out, full screen, the session tools and the whole
+  split menu are inside it (scrolls if the window is low).
+- **Keyboard focus follows the click at once:** a click into a split pane hands the focus to its
+  terminal before anything is drawn, so the first typed character reaches the pane you clicked.
 
 ## 0.9.2
 

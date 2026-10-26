@@ -43,6 +43,7 @@ mod ui_v090_keys;
 mod ui_v091_diag;
 mod ui_v092_split;
 mod ui_v100_pve;
+mod ui_v100_rdp;
 mod ui_v100_scale2;
 mod ui_v100_servers;
 mod ui_v100_signing;
@@ -94,6 +95,7 @@ const TABLES: &[&[(&str, &str)]] = &[
     ui_v100_servers::T,
     ui_v100_scale2::T,
     ui_v100_pve::T,
+    ui_v100_rdp::T,
 ];
 
 /// "de", "en" or "" (follow the system: German for German locales, English otherwise).

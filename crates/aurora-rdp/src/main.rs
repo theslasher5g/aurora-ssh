@@ -9,6 +9,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod drive;
 mod files;
 
 use std::collections::HashMap;
@@ -42,6 +43,18 @@ struct Connect {
     /// Previously trusted `SHA256:` fingerprint of the server's TLS public key.
     #[serde(default)]
     known_fingerprint: Option<String>,
+    /// Local folder to show as a drive in the session (off unless present).
+    #[serde(default)]
+    drive: Option<DriveCfg>,
+}
+
+#[derive(Deserialize, Debug, PartialEq, Clone)]
+struct DriveCfg {
+    path: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    writable: bool,
 }
 
 #[derive(Deserialize, Debug, PartialEq)]
@@ -85,6 +98,16 @@ enum Cmd {
     FetchFiles {
         dir: String,
     },
+    /// Show a local folder as a drive (the channel must have been enabled at connect).
+    DriveShare {
+        path: String,
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        writable: bool,
+    },
+    /// Remove the shared drive from the session.
+    DriveUnshare,
     CtrlAltDel,
     ReleaseAll,
     /// Answer to a certificate prompt.
@@ -105,6 +128,92 @@ mod tag {
     pub const CERT: u8 = 6;
     /// File transfer event, JSON with an `ev` field (see [`super::FileEv`]).
     pub const FILES: u8 = 7;
+    /// Drive share event, JSON with an `ev` field (see [`super::DriveEv`]).
+    pub const DRIVE: u8 = 8;
+}
+
+/// Drive redirection events for the UI (tag [`tag::DRIVE`]).
+#[derive(serde::Serialize, Debug, PartialEq)]
+#[serde(tag = "ev", rename_all = "snake_case")]
+enum DriveEv {
+    /// The share changed: `shared` false = no drive in the session.
+    State {
+        shared: bool,
+        name: String,
+        writable: bool,
+    },
+    /// Throttled counters; `denied` counts refused (suspicious or read-only) requests.
+    Activity {
+        read: u64,
+        written: u64,
+        denied: u64,
+        last_denied: String,
+    },
+    Error {
+        detail: String,
+    },
+}
+
+fn drive_event(out: &Out, ev: &DriveEv) {
+    if let Ok(j) = serde_json::to_vec(ev) {
+        send(out, tag::DRIVE, j);
+    }
+}
+
+fn drive_error(out: &Out, detail: &str) {
+    drive_event(
+        out,
+        &DriveEv::Error {
+            detail: detail.into(),
+        },
+    );
+}
+
+fn drive_unshared(out: &Out) {
+    drive_event(
+        out,
+        &DriveEv::State {
+            shared: false,
+            name: String::new(),
+            writable: false,
+        },
+    );
+}
+
+/// Opens the share and registers it; returns the announced device id and name.
+fn drive_start(
+    slot: &drive::SharedDrive,
+    next_id: &std::sync::atomic::AtomicU32,
+    cfg: &DriveCfg,
+    out: &Out,
+) -> Option<(u32, String)> {
+    let share = match drive::Share::new(std::path::Path::new(&cfg.path), cfg.writable) {
+        Ok(s) => s,
+        Err(e) => {
+            drive_error(out, &e);
+            return None;
+        }
+    };
+    let fallback = share
+        .root()
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("Aurora")
+        .to_string();
+    let name =
+        drive::sanitize_drive_name(&cfg.name, &drive::sanitize_drive_name(&fallback, "Aurora"));
+    let id = next_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let fs = drive::DriveFs::new(share, name.clone(), id);
+    drive_event(
+        out,
+        &DriveEv::State {
+            shared: true,
+            name: name.clone(),
+            writable: cfg.writable,
+        },
+    );
+    *slot.lock().unwrap() = Some(fs);
+    Some((id, name))
 }
 
 /// File transfer events for the UI (tag [`tag::FILES`]).
@@ -1028,6 +1137,12 @@ fn run(out: Out) -> anyhow::Result<()> {
     ))));
     let bridge_shared = shared.clone();
     let bridge_out = out.clone();
+    let drive_slot: drive::SharedDrive = Arc::new(Mutex::new(None));
+    let drive_ids = Arc::new(std::sync::atomic::AtomicU32::new(1));
+    let drive_enabled = connect.drive.is_some();
+    if let Some(cfg) = &connect.drive {
+        drive_start(&drive_slot, &drive_ids, cfg, &out);
+    }
     let mut builder = ConfigBuilder::new()
         .with_destination(Destination::from_parts(connect.host.clone(), connect.port))
         .with_username(connect.username)
@@ -1052,6 +1167,18 @@ fn run(out: Out) -> anyhow::Result<()> {
             })
                 as Box<dyn CliprdrBackend>))
         });
+    if drive_enabled {
+        // The channels only exist when the host asked for a drive: no share, no extra surface.
+        let slot = drive_slot.clone();
+        builder = builder
+            .with_static_channel(move |_props| Some(drive::make_channel(&slot, "Aurora")))
+            .with_static_channel(|_props| {
+                // Windows only talks RDPDR to clients that also announce RDPSND.
+                Some(ironrdp::rdpsnd::client::Rdpsnd::new(Box::new(
+                    ironrdp::rdpsnd::client::NoopRdpsndBackend,
+                )))
+            });
+    }
     if !connect.domain.is_empty() {
         builder = builder.with_domain(connect.domain);
     }
@@ -1073,8 +1200,41 @@ fn run(out: Out) -> anyhow::Result<()> {
     let worker = Worker::new(out.clone(), Some(input.clone()));
     let worker = std::thread::spawn(move || worker.run(jobs_rx));
 
+    // Throttled drive counters for the UI.
+    if drive_enabled {
+        let slot = drive_slot.clone();
+        let out = out.clone();
+        std::thread::spawn(move || {
+            let mut last = drive::Activity::default();
+            loop {
+                std::thread::sleep(Duration::from_millis(1000));
+                let now = match slot.lock() {
+                    Ok(g) => g.as_ref().map(|f| f.activity.clone()),
+                    Err(_) => None,
+                };
+                if let Some(a) = now
+                    && a != last
+                {
+                    let ev = DriveEv::Activity {
+                        read: a.read,
+                        written: a.written,
+                        denied: a.denied,
+                        last_denied: a.last_denied.clone(),
+                    };
+                    if let Ok(j) = serde_json::to_vec(&ev)
+                        && out.send((tag::DRIVE, j)).is_err()
+                    {
+                        return;
+                    }
+                    last = a;
+                }
+            }
+        });
+    }
+
     // stdin commands -> RDP input events
     let input_cmds = input.clone();
+    let cmd_drive = drive_enabled.then(|| (drive_slot.clone(), drive_ids.clone(), out.clone()));
     let shared_cmds = shared.clone();
     std::thread::spawn(move || {
         let mut db = Database::new();
@@ -1100,6 +1260,41 @@ fn run(out: Out) -> anyhow::Result<()> {
                     scale_factor: 100,
                     physical_size: None,
                 }),
+                Cmd::DriveShare {
+                    path,
+                    name,
+                    writable,
+                } => {
+                    if let Some((slot, ids, out)) = &cmd_drive {
+                        let cfg = DriveCfg {
+                            path: path.clone(),
+                            name: name.clone(),
+                            writable: *writable,
+                        };
+                        // A running share is replaced.
+                        let old = slot.lock().unwrap().take().map(|f| f.device_id());
+                        if let Some(id) = old {
+                            let _ = input_cmds.send(drive::remove_event(id));
+                        }
+                        match drive_start(slot, ids, &cfg, out) {
+                            Some((id, name)) => {
+                                let _ = input_cmds.send(drive::add_event(id, name));
+                            }
+                            None => drive_unshared(out),
+                        }
+                    }
+                    None
+                }
+                Cmd::DriveUnshare => {
+                    if let Some((slot, _, out)) = &cmd_drive {
+                        let old = slot.lock().unwrap().take().map(|f| f.device_id());
+                        if let Some(id) = old {
+                            let _ = input_cmds.send(drive::remove_event(id));
+                        }
+                        drive_unshared(out);
+                    }
+                    None
+                }
                 Cmd::ClipSet { text } => {
                     let mut s = shared_cmds.0.lock().unwrap();
                     s.local_text = Some(text.clone());

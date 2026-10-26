@@ -44,6 +44,7 @@ pub mod proxmox;
 pub mod pwmanager_pick;
 pub mod pwmanager_ui;
 pub mod rdp;
+pub mod rdp_drive;
 pub mod reconnect_auto;
 pub mod route;
 pub mod runbooks;

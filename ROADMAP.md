@@ -37,7 +37,7 @@ Released work is in the [CHANGELOG](CHANGELOG.md).
 - Migrate a whole selection at once; cloud‑init beyond `ipconfig0`.
 
 ### RDP
-- **Drive redirection** (`rdpdr`): show a local folder as a drive in Windows Explorer – needs a newer IronRDP with file‑system support.
+- **Drive redirection** (`rdpdr`) works against xrdp (read, write, rename, delete, re-share); still to test on a real Windows host (Explorer copy of big folders, change notifications are not implemented, xrdp shows the drive as `ignored` because IronRDP fills the short DOS name with a placeholder, free space on Windows hosts is a fixed value).
 - Manual tests with files > 4 GB, many small files and cancelling; xrdp needs its FUSE mount for pastes.
 
 ## 🔵 Ideas

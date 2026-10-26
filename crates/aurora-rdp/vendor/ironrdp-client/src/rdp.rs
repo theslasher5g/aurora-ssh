@@ -87,6 +87,18 @@ pub enum RdpInputEvent {
         channel_id: u32,
         messages: Vec<SvcMessage>,
     },
+    /// AURORA PATCH: run a closure against the active session (e.g. add or remove an RDPDR
+    /// device at runtime). The returned bytes are sent to the server.
+    WithStage(StageHook),
+}
+
+/// AURORA PATCH: closure run by [`RdpInputEvent::WithStage`].
+pub struct StageHook(pub Box<dyn FnOnce(&mut ironrdp_session::ActiveStage) -> SessionResult<Vec<u8>> + Send>);
+
+impl core::fmt::Debug for StageHook {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("StageHook")
+    }
 }
 
 // ── RdpClient ─────────────────────────────────────────────────────────────────
@@ -857,6 +869,15 @@ async fn active_session(
                         } else {
                             warn!("Clipboard event received, but Cliprdr is not available");
                             Vec::new()
+                        }
+                    }
+                    RdpInputEvent::WithStage(hook) => {
+                        // AURORA PATCH
+                        let frame = (hook.0)(&mut active_stage)?;
+                        if frame.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![ActiveStageOutput::ResponseFrame(frame)]
                         }
                     }
                     RdpInputEvent::SendDvcMessages { channel_id, messages } => {
