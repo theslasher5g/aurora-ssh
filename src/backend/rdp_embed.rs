@@ -23,6 +23,16 @@ pub struct RdpConnect {
     pub width: u16,
     pub height: u16,
     pub known_fingerprint: Option<String>,
+    /// Local folder to show as a drive in the session; `None` = no drive channel at all.
+    pub drive: Option<RdpDriveCfg>,
+}
+
+/// Drive redirection settings sent to the helper.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+pub struct RdpDriveCfg {
+    pub path: String,
+    pub name: String,
+    pub writable: bool,
 }
 
 /// Commands understood by the helper (one JSON object per line).
@@ -65,6 +75,14 @@ pub enum RdpCmd {
     FetchFiles {
         dir: String,
     },
+    /// Show a local folder as a drive (only if the session started with a drive channel).
+    DriveShare {
+        path: String,
+        name: String,
+        writable: bool,
+    },
+    /// Remove the drive from the session.
+    DriveUnshare,
     CtrlAltDel,
     ReleaseAll,
     Trust {
@@ -81,6 +99,7 @@ pub enum RdpEvent {
     Frame,
     ClipFromHost(String),
     Files(FileEv),
+    Drive(DriveEv),
     /// The server key is unknown or changed; answer with [`RdpCmd::Trust`].
     Cert {
         fingerprint: String,
@@ -114,6 +133,33 @@ pub enum FileEv {
     },
     Error {
         code: String,
+        #[serde(default)]
+        detail: String,
+    },
+}
+
+/// Drive redirection events of the helper (see `DriveEv` in `crates/aurora-rdp`).
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "ev", rename_all = "snake_case")]
+pub enum DriveEv {
+    State {
+        shared: bool,
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        writable: bool,
+    },
+    Activity {
+        #[serde(default)]
+        read: u64,
+        #[serde(default)]
+        written: u64,
+        #[serde(default)]
+        denied: u64,
+        #[serde(default)]
+        last_denied: String,
+    },
+    Error {
         #[serde(default)]
         detail: String,
     },
@@ -309,6 +355,11 @@ pub fn spawn(
                         events.send(RdpEvent::Files(ev));
                     }
                 }
+                8 => {
+                    if let Ok(ev) = serde_json::from_slice::<DriveEv>(&payload) {
+                        events.send(RdpEvent::Drive(ev));
+                    }
+                }
                 5 => {
                     let msg = text();
                     events.send(RdpEvent::Closed((!msg.is_empty()).then_some(msg)));
@@ -493,6 +544,31 @@ mod tests {
                 up: true,
                 done: 1,
                 total: 2
+            }
+        );
+        let j = serde_json::to_string(&RdpCmd::DriveShare {
+            path: "/tmp/x".into(),
+            name: "X".into(),
+            writable: false,
+        })
+        .unwrap();
+        assert_eq!(
+            j,
+            r#"{"t":"DriveShare","path":"/tmp/x","name":"X","writable":false}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&RdpCmd::DriveUnshare).unwrap(),
+            r#"{"t":"DriveUnshare"}"#
+        );
+        let ev: DriveEv =
+            serde_json::from_str(r#"{"ev":"state","shared":true,"name":"X","writable":false}"#)
+                .unwrap();
+        assert_eq!(
+            ev,
+            DriveEv::State {
+                shared: true,
+                name: "X".into(),
+                writable: false
             }
         );
         let ev: FileEv = serde_json::from_str(r#"{"ev":"saved","dir":"/d","files":3}"#).unwrap();

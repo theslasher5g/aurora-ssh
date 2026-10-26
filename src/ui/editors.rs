@@ -554,6 +554,7 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                         f.switch(ui, t!("Vollbild"), &mut h.rdp.fullscreen);
                         f.switch(ui, t!("Zwischenablage"), &mut h.rdp.clipboard);
                         f.switch(ui, "Multi-Monitor", &mut h.rdp.multimon);
+                        crate::ui::rdp_drive::settings_rows(ui, f, &mut h.rdp);
                     });
                 }
                 Protocol::Serial => {

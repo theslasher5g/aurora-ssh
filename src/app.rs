@@ -4995,6 +4995,29 @@ impl eframe::App for App {
                             layout,
                             &self.lib.settings.split_ratios,
                         );
+                        // A press into a pane hands the keyboard focus to its terminal at once
+                        // (before any pane is drawn this frame): keys that arrive in the same
+                        // frame as the click then reach the clicked pane, not the previous one.
+                        // Widgets that take focus themselves (search fields…) still win.
+                        let press_pos = ui.input(|i| {
+                            (i.pointer.primary_pressed() || i.pointer.secondary_pressed())
+                                .then(|| i.pointer.interact_pos())
+                                .flatten()
+                        });
+                        if let Some(pos) = press_pos
+                            && let Some((pid, _)) = ids
+                                .iter()
+                                .copied()
+                                .zip(rects.iter().copied())
+                                .find(|(_, r)| r.contains(pos))
+                            && !self.popped.contains(&pid)
+                            && self
+                                .tabs
+                                .iter()
+                                .any(|t| t.id == pid && matches!(t.kind, TabKind::Term(_)))
+                        {
+                            ui.memory_mut(|m| m.request_focus(egui::Id::new(("term", pid))));
+                        }
                         for (id, rect) in ids.iter().copied().zip(rects.iter().copied()) {
                             let mut child = ui.new_child(
                                 egui::UiBuilder::new()

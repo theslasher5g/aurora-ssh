@@ -165,6 +165,14 @@ pub struct RdpSettings {
     pub multimon: bool,
     /// OpenSSH port on the Windows host, used for file access (SFTP).
     pub sftp_port: u16,
+    /// Show a local folder as a drive in the session (drive redirection, off by default).
+    pub drive_enabled: bool,
+    /// The local folder to share.
+    pub drive_path: String,
+    /// Name of the drive in Explorer ("" = folder name).
+    pub drive_name: String,
+    /// Let the session change files in the folder (default: read only).
+    pub drive_write: bool,
 }
 
 impl Default for RdpSettings {
@@ -178,6 +186,10 @@ impl Default for RdpSettings {
             clipboard: true,
             multimon: false,
             sftp_port: 22,
+            drive_enabled: false,
+            drive_path: String::new(),
+            drive_name: String::new(),
+            drive_write: false,
         }
     }
 }

@@ -871,7 +871,12 @@ fn split_menu(ui: &mut egui::Ui, index: usize) {
     };
     let in_split = info.split.len() >= 2 && info.split.contains(&me);
     let resp = split_button(ui, in_split);
-    egui::Popup::menu(&resp).show(|ui| {
+    egui::Popup::menu(&resp).show(|ui| split_menu_items(ui, &info, me, in_split));
+}
+
+/// Body of the split menu (also used inside the "…" menu of narrow panes).
+fn split_menu_items(ui: &mut egui::Ui, info: &SplitInfo, me: u64, in_split: bool) {
+    {
         ui.set_min_width(220.0);
         let shown: Vec<u64> = if in_split {
             info.split.clone()
@@ -949,7 +954,7 @@ fn split_menu(ui: &mut egui::Ui, index: usize) {
                 ui.close();
             }
         }
-    });
+    }
 }
 
 /// "Anordnung" section of the split menus: one row per layout, ✔ on the current one.
@@ -1002,7 +1007,7 @@ fn paint_layout_icon(p: &egui::Painter, r: Rect, l: SplitLayout, col: Color32) {
     let big = Rect::from_min_size(Pos2::ZERO, Vec2::new(90.0, 70.0));
     let n = if l == SplitLayout::Auto { 3 } else { 4 };
     let k = Vec2::new(r.width() / big.width(), r.height() / big.height());
-    for q in split_rects_for(big, n, l, &SplitRatios::new()) {
+    for q in geometry(big, n, l, &SplitRatios::new(), false).0 {
         let q = Rect::from_min_max(
             r.min + Vec2::new(q.min.x * k.x, q.min.y * k.y),
             r.min + Vec2::new(q.max.x * k.x, q.max.y * k.y),
@@ -1060,7 +1065,9 @@ pub fn ratio_key(layout: SplitLayout, n: usize) -> String {
 }
 
 /// Panes closer than this to a window edge or each other are not allowed (px).
-const MIN_PANE: f32 = 120.0;
+const MIN_PANE_W: f32 = 200.0;
+/// Panes closer than this to a window edge or each other vertically (px).
+const MIN_PANE_H: f32 = 130.0;
 
 /// A draggable divider between panes.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1166,7 +1173,12 @@ fn place(
             b,
         } => {
             let len = if *side_by_side { r.width() } else { r.height() };
-            let lo = (MIN_PANE / len).min(0.45);
+            let lo = ((if *side_by_side {
+                MIN_PANE_W
+            } else {
+                MIN_PANE_H
+            }) / len)
+                .min(0.45);
             let ratio = ratios
                 .get(*idx)
                 .copied()
@@ -1207,6 +1219,42 @@ fn place(
     }
 }
 
+/// Does `layout` give every pane at least the minimum size in `r`?
+fn layout_fits(r: Rect, n: usize, layout: SplitLayout) -> bool {
+    let (w, h) = (r.width(), r.height());
+    let k = n as f32;
+    match layout {
+        SplitLayout::Columns => w >= k * MIN_PANE_W,
+        SplitLayout::Rows => h >= k * MIN_PANE_H,
+        SplitLayout::MainLeft => w >= 2.0 * MIN_PANE_W && h >= (k - 1.0) * MIN_PANE_H,
+        SplitLayout::MainTop => h >= 2.0 * MIN_PANE_H && w >= (k - 1.0) * MIN_PANE_W,
+        SplitLayout::Grid | SplitLayout::Auto => {
+            if n <= 2 {
+                w >= k * MIN_PANE_W
+            } else {
+                w >= 2.0 * MIN_PANE_W && h >= 2.0 * MIN_PANE_H
+            }
+        }
+    }
+}
+
+/// The layout actually used: the chosen one while its panes stay usable, otherwise the
+/// arrangement that gives every pane the most room (a grid, or two panes stacked).
+fn usable_layout(r: Rect, n: usize, layout: SplitLayout) -> SplitLayout {
+    if layout_fits(r, n, layout) {
+        return layout;
+    }
+    if n <= 2 {
+        // Side by side does not fit: stack them (and the other way round).
+        return if matches!(layout, SplitLayout::Rows) {
+            SplitLayout::Columns
+        } else {
+            SplitLayout::Rows
+        };
+    }
+    SplitLayout::Grid
+}
+
 /// Pane rectangles (in pane order) and the draggable dividers for `n` sessions.
 pub fn split_geometry(
     r: Rect,
@@ -1214,15 +1262,38 @@ pub fn split_geometry(
     layout: SplitLayout,
     saved: &SplitRatios,
 ) -> (Vec<Rect>, Vec<Divider>) {
+    geometry(r, n, layout, saved, true)
+}
+
+fn geometry(
+    r: Rect,
+    n: usize,
+    layout: SplitLayout,
+    saved: &SplitRatios,
+    fall_back: bool,
+) -> (Vec<Rect>, Vec<Divider>) {
     if n <= 1 {
         return (vec![r], Vec::new());
+    }
+    let mut panes = Vec::new();
+    let mut dividers = Vec::new();
+    let usable = if fall_back {
+        usable_layout(r, n, layout)
+    } else {
+        layout
+    };
+    if usable != layout {
+        // Too small for the chosen arrangement: show the fallback with equal panes and
+        // without dividers (the saved positions stay for when the window is larger).
+        place(&layout_tree(usable, n), r, &[], &mut panes, &mut dividers);
+        dividers.clear();
+        panes.sort_by_key(|(i, _)| *i);
+        return (panes.into_iter().map(|(_, r)| r).collect(), dividers);
     }
     let ratios = saved
         .get(&ratio_key(layout, n))
         .map(Vec::as_slice)
         .unwrap_or(&[]);
-    let mut panes = Vec::new();
-    let mut dividers = Vec::new();
     place(
         &layout_tree(layout, n),
         r,
@@ -1248,6 +1319,9 @@ pub fn ratio_at(d: &Divider, pos: Pos2) -> f32 {
     };
     ((p - from) / len.max(1.0)).clamp(0.05, 0.95)
 }
+
+/// Panes whose header is narrower than this use a single "…" menu.
+const COMPACT_HEADER: f32 = 380.0;
 
 /// Header above a session: close, port number, name and address, state dot; actions on
 /// the right. In full-screen mode it becomes the top bar with the session switcher.
@@ -1310,48 +1384,97 @@ pub fn session_header(
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
                 }
             }
+            // Very narrow panes: everything but "close" folds into one "…" menu.
+            let compact = ui.available_width() < COMPACT_HEADER;
+            let tiny = ui.available_width() < 260.0;
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                if let Some(me) = me {
-                    let popped = info.popped.contains(&me);
-                    let tip = if popped {
-                        t!("Zurück ins Hauptfenster")
-                    } else {
-                        t!("In eigenem Fenster öffnen")
-                    };
-                    if theme::icon_toggle(ui, Icon::External, tip, popped).clicked() {
-                        push_split_op(ui.ctx(), SplitOp::PopOut(me));
-                    }
-                    if !popped
-                        && theme::icon_btn(ui, Icon::Maximize, t!("Vollbild (F11)")).clicked()
-                    {
-                        push_split_op(ui.ctx(), SplitOp::Focus(Some(me)));
-                    }
-                }
-                split_menu(ui, index);
-                ui.add_space(6.0);
-                let (r, _) = ui.allocate_exact_size(Vec2::new(1.0, 18.0), Sense::hover());
-                ui.painter()
-                    .rect_filled(r, CornerRadius::ZERO, theme::line());
-                ui.add_space(6.0);
-                // Narrow panes: the session tools move into a "…" menu (one row), so the
-                // title keeps its room. The full width of the tools is remembered.
-                let tools_id = id.with("tools-width");
-                let tools_w: f32 = ui.ctx().data(|d| d.get_temp(tools_id)).unwrap_or(0.0);
-                if ui.available_width() < tools_w + 200.0 {
+                if compact {
                     let more = theme::icon_button(ui, "…", t!("Weitere Aktionen"));
-                    egui::Popup::menu(&more).id(id.with("tools")).show(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 2.0;
-                            right(ui);
-                        });
+                    egui::Popup::menu(&more).id(id.with("more")).show(|ui| {
+                        // Never taller than the window: long menus scroll.
+                        let max_h = (ui.ctx().content_rect().height() - 90.0).max(160.0);
+                        egui::ScrollArea::vertical()
+                            .max_height(max_h)
+                            .show(ui, |ui| {
+                                ui.set_min_width(220.0);
+                                ui.set_max_width(340.0);
+                                if let Some(me) = me {
+                                    let popped = info.popped.contains(&me);
+                                    let label = if popped {
+                                        t!("Zurück ins Hauptfenster")
+                                    } else {
+                                        t!("In eigenem Fenster öffnen")
+                                    };
+                                    if ui.button(label).clicked() {
+                                        push_split_op(ui.ctx(), SplitOp::PopOut(me));
+                                        ui.close();
+                                    }
+                                    if !popped && ui.button(t!("Vollbild (F11)")).clicked() {
+                                        push_split_op(ui.ctx(), SplitOp::Focus(Some(me)));
+                                        ui.close();
+                                    }
+                                    ui.separator();
+                                }
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 2.0;
+                                    right(ui);
+                                });
+                                if let Some(me) = me {
+                                    ui.separator();
+                                    ui.label(
+                                        RichText::new(t!("Split"))
+                                            .size(12.0)
+                                            .color(theme::text_dim()),
+                                    );
+                                    let in_split =
+                                        info.split.len() >= 2 && info.split.contains(&me);
+                                    split_menu_items(ui, &info, me, in_split);
+                                }
+                            });
                     });
                 } else {
-                    let before = ui.min_rect().width();
-                    right(ui);
-                    let w = ui.min_rect().width() - before;
-                    if (w - tools_w).abs() > 0.5 {
-                        ui.ctx().data_mut(|d| d.insert_temp(tools_id, w));
+                    if let Some(me) = me {
+                        let popped = info.popped.contains(&me);
+                        let tip = if popped {
+                            t!("Zurück ins Hauptfenster")
+                        } else {
+                            t!("In eigenem Fenster öffnen")
+                        };
+                        if theme::icon_toggle(ui, Icon::External, tip, popped).clicked() {
+                            push_split_op(ui.ctx(), SplitOp::PopOut(me));
+                        }
+                        if !popped
+                            && theme::icon_btn(ui, Icon::Maximize, t!("Vollbild (F11)")).clicked()
+                        {
+                            push_split_op(ui.ctx(), SplitOp::Focus(Some(me)));
+                        }
+                    }
+                    split_menu(ui, index);
+                    ui.add_space(6.0);
+                    let (r, _) = ui.allocate_exact_size(Vec2::new(1.0, 18.0), Sense::hover());
+                    ui.painter()
+                        .rect_filled(r, CornerRadius::ZERO, theme::line());
+                    ui.add_space(6.0);
+                    // Narrow panes: the session tools move into a "…" menu (one row), so the
+                    // title keeps its room. The full width of the tools is remembered.
+                    let tools_id = id.with("tools-width");
+                    let tools_w: f32 = ui.ctx().data(|d| d.get_temp(tools_id)).unwrap_or(0.0);
+                    if ui.available_width() < tools_w + 200.0 {
+                        let more = theme::icon_button(ui, "…", t!("Weitere Aktionen"));
+                        egui::Popup::menu(&more).id(id.with("tools")).show(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 2.0;
+                                right(ui);
+                            });
+                        });
+                    } else {
+                        let before = ui.min_rect().width();
+                        right(ui);
+                        let w = ui.min_rect().width() - before;
+                        if (w - tools_w).abs() > 0.5 {
+                            ui.ctx().data_mut(|d| d.insert_temp(tools_id, w));
+                        }
                     }
                 }
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -1381,11 +1504,13 @@ pub fn session_header(
                             push_split_op(ui.ctx(), SplitOp::Close(me));
                         }
                     }
-                    ui.label(
-                        RichText::new(format!("{index:02}"))
-                            .font(theme::mono_medium(12.0))
-                            .color(theme::accent()),
-                    );
+                    if !tiny {
+                        ui.label(
+                            RichText::new(format!("{index:02}"))
+                                .font(theme::mono_medium(12.0))
+                                .color(theme::accent()),
+                        );
+                    }
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 0.0;
                         ui.horizontal(|ui| {
@@ -1608,7 +1733,7 @@ mod tests {
         // Never smaller than the minimum pane.
         saved.insert(ratio_key(SplitLayout::Columns, 2), vec![0.01]);
         let (r3, _) = split_geometry(area, 2, SplitLayout::Columns, &saved);
-        assert!(r3[0].width() >= 110.0);
+        assert!(r3[0].width() >= 190.0);
         // 0.0 means "not moved": equal division.
         saved.insert(ratio_key(SplitLayout::Columns, 2), vec![0.0]);
         let (r4, _) = split_geometry(area, 2, SplitLayout::Columns, &saved);
@@ -1620,6 +1745,44 @@ mod tests {
         // The grid has three dividers (one shared vertical position for both rows).
         let (_, g) = split_geometry(area, 4, SplitLayout::Grid, &SplitRatios::new());
         assert_eq!(g.len(), 3);
+    }
+
+    #[test]
+    fn narrow_areas_fall_back_to_usable_layouts() {
+        use super::{MIN_PANE_H, MIN_PANE_W, SplitLayout, SplitRatios, split_geometry};
+        use egui::{Pos2, Rect, pos2};
+        let none = SplitRatios::new();
+        // 640 x 460 (the 720 x 480 window): four columns would be 160 px wide each.
+        let small = Rect::from_min_max(Pos2::ZERO, pos2(640.0, 460.0));
+        for layout in SplitLayout::ALL {
+            for n in 2..=4usize {
+                let (r, d) = split_geometry(small, n, layout, &none);
+                assert_eq!(r.len(), n);
+                for (i, a) in r.iter().enumerate() {
+                    assert!(
+                        a.width() >= MIN_PANE_W - 10.0 && a.height() >= MIN_PANE_H - 10.0,
+                        "{layout:?} {n} pane {i}: {:?}",
+                        a.size()
+                    );
+                    for b in &r[i + 1..] {
+                        assert!(!a.intersects(*b), "{layout:?} {n} overlap");
+                    }
+                }
+                if d.is_empty() {
+                    continue;
+                }
+                // Dividers exist only where the chosen layout fits.
+                assert!(d.len() < 4);
+            }
+        }
+        // Four columns do not fit: a grid with no dividers.
+        let (r, d) = split_geometry(small, 4, SplitLayout::Columns, &none);
+        assert!(d.is_empty() && r[0].width() > 250.0 && r[0].height() < 260.0);
+        // Plenty of room: the chosen layout stays.
+        let big = Rect::from_min_max(Pos2::ZERO, pos2(1400.0, 800.0));
+        let (r, d) = split_geometry(big, 4, SplitLayout::Columns, &none);
+        assert_eq!(d.len(), 3);
+        assert!(r[0].height() > 700.0);
     }
 
     #[test]
@@ -1662,14 +1825,14 @@ mod tests {
     fn drop_in_stacked_layout_uses_the_stacked_slots() {
         use super::{SplitLayout, SplitRatios, drop_order};
         use egui::{Pos2, Rect, pos2};
-        let area = Rect::from_min_max(Pos2::ZERO, pos2(100.0, 100.0));
+        let area = Rect::from_min_max(Pos2::ZERO, pos2(1000.0, 1000.0));
         // One pane shown, stacked: the upper half is slot 0, the lower half slot 1.
         assert_eq!(
             drop_order(
                 area,
                 &[1],
                 7,
-                pos2(50.0, 20.0),
+                pos2(500.0, 200.0),
                 SplitLayout::Rows,
                 &SplitRatios::new()
             ),
@@ -1680,7 +1843,7 @@ mod tests {
                 area,
                 &[1],
                 7,
-                pos2(50.0, 80.0),
+                pos2(500.0, 800.0),
                 SplitLayout::Rows,
                 &SplitRatios::new()
             ),
@@ -1692,7 +1855,7 @@ mod tests {
                 area,
                 &[1, 2, 3],
                 3,
-                pos2(50.0, 10.0),
+                pos2(500.0, 100.0),
                 SplitLayout::Rows,
                 &SplitRatios::new()
             ),
@@ -1704,14 +1867,14 @@ mod tests {
     fn drop_positions() {
         use super::{SplitLayout, SplitRatios, drop_order};
         use egui::{Pos2, Rect, pos2};
-        let area = Rect::from_min_max(Pos2::ZERO, pos2(100.0, 100.0));
+        let area = Rect::from_min_max(Pos2::ZERO, pos2(1000.0, 1000.0));
         let at = |x, y| pos2(x, y);
         assert_eq!(
             drop_order(
                 area,
                 &[],
                 7,
-                at(50.0, 50.0),
+                at(500.0, 500.0),
                 SplitLayout::Auto,
                 &SplitRatios::new()
             ),
@@ -1722,7 +1885,7 @@ mod tests {
                 area,
                 &[1],
                 7,
-                at(20.0, 50.0),
+                at(200.0, 500.0),
                 SplitLayout::Auto,
                 &SplitRatios::new()
             ),
@@ -1733,7 +1896,7 @@ mod tests {
                 area,
                 &[1],
                 7,
-                at(80.0, 50.0),
+                at(800.0, 500.0),
                 SplitLayout::Auto,
                 &SplitRatios::new()
             ),
@@ -1745,7 +1908,7 @@ mod tests {
                 area,
                 &[1, 2],
                 7,
-                at(80.0, 20.0),
+                at(800.0, 200.0),
                 SplitLayout::Auto,
                 &SplitRatios::new()
             ),
@@ -1756,7 +1919,7 @@ mod tests {
                 area,
                 &[1, 2],
                 7,
-                at(80.0, 80.0),
+                at(800.0, 800.0),
                 SplitLayout::Auto,
                 &SplitRatios::new()
             ),
@@ -1768,7 +1931,7 @@ mod tests {
                 area,
                 &[1, 2, 3],
                 3,
-                at(20.0, 50.0),
+                at(200.0, 500.0),
                 SplitLayout::Auto,
                 &SplitRatios::new()
             ),
@@ -1780,7 +1943,7 @@ mod tests {
                 area,
                 &[1, 2, 3, 4],
                 7,
-                at(20.0, 80.0),
+                at(200.0, 800.0),
                 SplitLayout::Auto,
                 &SplitRatios::new()
             ),
@@ -1791,7 +1954,7 @@ mod tests {
                 area,
                 &[1],
                 7,
-                at(150.0, 50.0),
+                at(1500.0, 500.0),
                 SplitLayout::Auto,
                 &SplitRatios::new()
             ),

@@ -8,7 +8,7 @@ description = "RDP-Hilfsprozess für Aurora (IronRDP), streamt Bildbereiche übe
 [workspace]
 
 [dependencies]
-ironrdp = { version = "0.17", features = ["client", "client-clipboard", "rustls", "cliprdr", "input", "pdu", "core"] }
+ironrdp = { version = "0.17", features = ["client", "client-clipboard", "rustls", "cliprdr", "rdpdr", "rdpsnd", "input", "pdu", "core", "svc"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -16,6 +16,9 @@ anyhow = "1"
 sha2 = "0.10"
 base64 = "0.22"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # Local fixes: padded RDP6/RLE bitmaps, unknown IO PDUs (see vendor/*/AURORA PATCH).
 [patch.crates-io]

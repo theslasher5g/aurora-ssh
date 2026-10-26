@@ -109,7 +109,7 @@ Every [release](../../releases/latest) contains Windows, Linux and macOS:
 | **Split screen** | Up to **4 sessions side by side** (terminal, files, RDP mixed) – drag a port from the rail into the window (a preview shows where it lands), the split menu or right-click. Double-click a header to maximize, "type into all panes", × ends a session |
 | **Full screen & windows** | **Full screen** (`F11`) hides everything but the session, with a session switcher in the top bar · **open a session in its own window** (and bring it back with the same button) |
 | **Tunnels & jump host** | Port forwardings per host as switches in the list (status LED, optionally open the browser); "connect via" another SSH host (ProxyJump) – used for terminal, files and tunnels |
-| **RDP** | Inside the tab (IronRDP): follows the window size, **clipboard in both directions** (automatic + "copy from host"/"send to host" buttons), **Ctrl+Alt+Del**, Windows key, type the clipboard as keystrokes (for login screens/consoles). **Drop files onto the session** to copy them to Windows (clipboard channel, no SFTP needed) and **save files copied on the host**. **PowerShell snippets** run on the Windows host from the session header. Optionally in the system client (mstsc, FreeRDP, Remmina) |
+| **RDP** | Inside the tab (IronRDP): follows the window size, **clipboard in both directions** (automatic + "copy from host"/"send to host" buttons), **Ctrl+Alt+Del**, Windows key, type the clipboard as keystrokes (for login screens/consoles). **Drop files onto the session** to copy them to Windows (clipboard channel, no SFTP needed) and **save files copied on the host**. **PowerShell snippets** run on the Windows host from the session header. **Share a local folder as a drive** (read only by default, confined to the folder, revocable from the session). Optionally in the system client (mstsc, FreeRDP, Remmina) |
 | **VNC** | Inside the tab (own RFB client: ZRLE, CopyRect, Raw, resize, VNC password): fit or 1:1, Ctrl+Alt+Del, clipboard in both directions, type the clipboard as keystrokes, view-only mode |
 | **Web interfaces** | Host type *Web interface*: firewall, switch, NAS, Proxmox, iDRAC/iLO web UIs next to your SSH/RDP hosts, in their own window (WebView2 / WKWebView / WebKitGTK) with an **own cookie profile per entry**. **Vendor templates** (pfSense, OPNsense, FortiGate, Sophos, UniFi, MikroTik, Synology, TrueNAS, Proxmox VE/PBS, iDRAC, iLO …), **self-signed certificates pinned by SHA-256 fingerprint** (asks on first use, warns when it changes), optional **auto-login** from the keychain or password manager, links to other sites open in your browser |
 | **Telnet** | For switches, routers and old devices: option negotiation (echo, window size, terminal type) and optional auto-login with the stored user and password |
@@ -225,7 +225,7 @@ cargo test
 The RDP component is a separate crate (`crates/aurora-rdp`) because IronRDP pins crypto
 pre-releases that clash with russh. It runs as a helper process next to `aurora` and streams only
 changed screen regions. Two small fixes to IronRDP live in `crates/aurora-rdp/vendor`
-(marked `AURORA PATCH`).
+(marked `AURORA PATCH`; one lets the helper add or remove an RDPDR drive in a running session).
 
 Releases: start the "Release" workflow under *Actions* (version input) or push a tag `v<version>` –
 GitHub Actions builds Windows, Linux and macOS and publishes everything in one release including

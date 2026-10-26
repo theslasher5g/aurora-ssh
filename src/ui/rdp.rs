@@ -131,6 +131,8 @@ pub struct RdpView {
     remote_files: bool,
     transfer: Option<Transfer>,
     steps: VecDeque<(Instant, Step)>,
+    /// Drive redirection of this session (see `rdp_drive`).
+    pub drive: crate::ui::rdp_drive::DriveState,
 }
 
 /// What the tab wants the app to do.
@@ -168,6 +170,7 @@ impl RdpView {
             remote_files: false,
             transfer: None,
             steps: VecDeque::new(),
+            drive: Default::default(),
         }
     }
 
@@ -333,6 +336,10 @@ impl RdpView {
             width: size.0,
             height: size.1,
             known_fingerprint: self.known_fingerprint.clone(),
+            drive: {
+                self.drive = crate::ui::rdp_drive::DriveState::from_settings(&launch.settings);
+                self.drive.connect_cfg()
+            },
         };
         match rdp_embed::spawn(connect, sink, self.fb.clone()) {
             Ok(h) => {
@@ -412,6 +419,7 @@ impl RdpView {
                     }
                 }
                 RdpEvent::Files(ev) => file_events.push(ev),
+                RdpEvent::Drive(ev) => self.drive.apply(ev, toasts),
                 RdpEvent::Closed(err) => closed = Some(err),
             }
         }
@@ -670,6 +678,7 @@ impl RdpView {
                 {
                     action = RdpAction::OpenExternal;
                 }
+                self.drive.header(ui);
                 if matches!(self.state, ConnState::Closed(_)) {
                     if theme::icon_button(ui, "⟳", t!("Neu verbinden")).clicked() {
                         self.reconnect();
@@ -838,6 +847,9 @@ impl RdpView {
                     Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                     Color32::WHITE,
                 );
+                if let Some(cmd) = self.drive.badge(ui, area, connected) {
+                    self.send(cmd);
+                }
                 if !connected {
                     ui.painter().rect_filled(
                         area,
