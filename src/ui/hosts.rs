@@ -398,6 +398,22 @@ fn selection_bar(app: &App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 {
                     actions.push(Action::ConnectMany(ids.clone()));
                 }
+                if theme::btn(
+                    ui,
+                    theme::Btn::Small,
+                    Some(Icon::Terminal),
+                    t!("Befehl ausführen…"),
+                )
+                .on_hover_text(t!(
+                    "Einen Befehl oder ein Snippet auf allen gewählten Hosts ausführen"
+                ))
+                .clicked()
+                {
+                    actions.push(Action::Srv(crate::ui::multirun_ui::SrvAction::Run(
+                        ids.clone(),
+                        t!("Auswahl ({} Hosts)", n),
+                    )));
+                }
                 let r = theme::btn(ui, theme::Btn::Small, None, t!("In Gruppe"));
                 egui::Popup::menu(&r).show(|ui| {
                     if ui.button(t!("Ohne Gruppe")).clicked() {
@@ -802,6 +818,14 @@ pub(crate) fn host_row(
     } else {
         rect.right() - 16.0
     };
+    // Tiny CPU/RAM graphs (setting) take room left of the meta column.
+    let spark_w = if show_actions {
+        0.0
+    } else {
+        crate::ui::hoststats_ui::row_spark_width(app, h, rect.width())
+    };
+    let spark_right = text_right;
+    let text_right = text_right - spark_w;
     let name_max = if compact {
         ((text_right - col_name) * 0.5).max(60.0)
     } else {
@@ -1117,6 +1141,17 @@ pub(crate) fn host_row(
     }
 
     if !show_actions {
+        if spark_w > 0.0 {
+            crate::ui::hoststats_ui::row_spark(
+                app,
+                &p,
+                h,
+                Rect::from_min_max(
+                    Pos2::new(text_right + 8.0, cy - 10.0),
+                    Pos2::new(spark_right - 2.0, cy + 10.0),
+                ),
+            );
+        }
         // Meta: latency and last use.
         if slot > 0.0 {
             if let Some(text) = &wol_pill {
@@ -1355,6 +1390,39 @@ pub(crate) fn host_menu(
             .clicked()
     {
         actions.push(Action::Ops(OpsAction::Diag(h.id)));
+        ui.close();
+    }
+    if matches!(h.protocol, Protocol::Ssh | Protocol::Rdp)
+        && ui
+            .button(t!("Befehl ausführen…"))
+            .on_hover_text(t!(
+                "Befehl oder Snippet auf diesem Host (und weiteren) ausführen"
+            ))
+            .clicked()
+    {
+        use crate::ui::multirun_ui::SrvAction;
+        let ids = if app.selected_hosts.contains(&h.id) && app.selected_hosts.len() > 1 {
+            app.selected_hosts.iter().copied().collect()
+        } else {
+            vec![h.id]
+        };
+        let title = t!("Auswahl ({} Hosts)", ids.len());
+        actions.push(Action::Srv(SrvAction::Run(ids, title)));
+        ui.close();
+    }
+    if h.protocol == Protocol::Ssh
+        && ui
+            .button(t!("Live-Statistik…"))
+            .on_hover_text(t!("CPU, RAM, Last, Netzwerk und Datenträger live"))
+            .clicked()
+    {
+        actions.push(Action::Srv(crate::ui::multirun_ui::SrvAction::Stats(h.id)));
+        ui.close();
+    }
+    if crate::ui::winrm_ui::usable(h) && ui.button(t!("Fakten per WinRM aktualisieren")).clicked() {
+        actions.push(Action::Srv(
+            crate::ui::multirun_ui::SrvAction::WinrmRefresh(vec![h.id]),
+        ));
         ui.close();
     }
     maintenance_menu(ui, maint, Target::Host(h.id), actions);

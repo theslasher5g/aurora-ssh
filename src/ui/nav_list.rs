@@ -634,6 +634,17 @@ fn group_menu(
         actions.push(Action::OpenGroup(gid));
         ui.close();
     }
+    if openable.1 > 0
+        && ui
+            .button(t!("Befehl auf allen Hosts ausführen…"))
+            .on_hover_text(t!("Befehl oder Snippet parallel auf der Gruppe ausführen"))
+            .clicked()
+    {
+        actions.push(Action::Srv(crate::ui::multirun_ui::SrvAction::RunGroup(
+            gid,
+        )));
+        ui.close();
+    }
     if ui.button(t!("Host hinzufügen")).clicked() {
         actions.push(Action::NewHost(Some(gid)));
         ui.close();

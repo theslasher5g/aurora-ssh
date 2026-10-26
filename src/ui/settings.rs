@@ -96,6 +96,16 @@ fn appearance(app: &mut App, ui: &mut egui::Ui, changed: &mut bool) {
                 *changed |= theme::toggle(ui, &mut app.lib.settings.reachability).changed();
             },
         );
+        rows.setting(
+            ui,
+            t!("Mini-Graphen in der Hostliste"),
+            Some(t!(
+                "CPU und RAM der sichtbaren SSH-Hosts live zeigen (pro Host eine Hintergrundverbindung)"
+            )),
+            |ui| {
+                *changed |= theme::toggle(ui, &mut app.lib.settings.host_sparklines).changed();
+            },
+        );
     });
 }
 

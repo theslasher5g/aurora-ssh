@@ -172,6 +172,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 if resp.double_clicked() {
                     actions.push(Action::RunSnippet(s.id, false));
                 }
+                resp.context_menu(|ui| {
+                    if ui.button(t!("Auf mehreren Hosts ausführen…")).clicked() {
+                        actions.push(Action::Srv(crate::ui::multirun_ui::SrvAction::RunSnippet(
+                            s.id,
+                            app.selected_hosts.iter().copied().collect(),
+                        )));
+                        ui.close();
+                    }
+                });
             }
         });
     });

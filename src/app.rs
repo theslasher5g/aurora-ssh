@@ -648,6 +648,8 @@ pub struct App {
     pub xfer: crate::ui::xfer::XferUi,
     /// Built-in editor: dialogs that belong to no single tab.
     pub editx: crate::ui::edit::EditGlobal,
+    /// Run on many hosts, live host statistics, WinRM.
+    pub srv: crate::ui::multirun_ui::ServerUi,
 }
 
 /// UI intents collected while drawing and applied afterwards.
@@ -755,6 +757,8 @@ pub enum Action {
     Inv(crate::ui::inventory_page::InvAction),
     /// Scope, saved views, expansion, table settings of the host list.
     Nav(crate::ui::nav_state::NavAction),
+    /// Run on many hosts, live host statistics, WinRM.
+    Srv(crate::ui::multirun_ui::SrvAction),
 }
 
 impl App {
@@ -876,6 +880,7 @@ impl App {
             inv: Default::default(),
             xfer: crate::ui::xfer::XferUi::new(&cc.egui_ctx),
             editx: Default::default(),
+            srv: Default::default(),
         }
     }
 
@@ -3348,6 +3353,7 @@ impl App {
             Action::Ops(a) => crate::ui::ops::apply(self, a, ctx),
             Action::Ctr(a) => crate::ui::containers_page::apply(self, a, ctx),
             Action::Inv(a) => crate::ui::inventory_page::apply(self, a, ctx),
+            Action::Srv(a) => crate::ui::multirun_ui::apply(self, a, ctx),
             Action::OpenGroup(gid) => {
                 let hosts: Vec<Host> = self
                     .lib
@@ -5186,6 +5192,7 @@ impl App {
         crate::ui::portscan::show(self, &ctx, &mut actions);
         crate::ui::net::show(self, &ctx, &mut actions);
         crate::ui::ops::show(self, &ctx, &mut actions);
+        crate::ui::multirun_ui::show(self, &ctx);
         crate::ui::import_ui::show(self, &ctx);
         crate::ui::containers_page::sheets(self, &ctx);
         crate::ui::xfer::windows(self, &ctx);

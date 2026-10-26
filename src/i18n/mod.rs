@@ -42,6 +42,7 @@ mod ui_v082_web;
 mod ui_v090_keys;
 mod ui_v091_diag;
 mod ui_v092_split;
+mod ui_v100_servers;
 mod ui_v100_signing;
 mod ui_v100_webembed;
 mod ui_vnc;
@@ -88,6 +89,7 @@ const TABLES: &[&[(&str, &str)]] = &[
     ui_v092_split::T,
     ui_v100_signing::T,
     ui_v100_webembed::T,
+    ui_v100_servers::T,
 ];
 
 /// "de", "en" or "" (follow the system: German for German locales, English otherwise).

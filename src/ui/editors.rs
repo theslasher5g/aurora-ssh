@@ -555,6 +555,7 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                         f.switch(ui, t!("Zwischenablage"), &mut h.rdp.clipboard);
                         f.switch(ui, "Multi-Monitor", &mut h.rdp.multimon);
                     });
+                    crate::ui::winrm_ui::form(ui, h);
                 }
                 Protocol::Serial => {
                     theme::form_caption(ui, t!("Serielle Schnittstelle"));

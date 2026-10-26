@@ -165,6 +165,8 @@ fn fill(app: &mut App, ctx: &egui::Context) {
 }
 
 fn start_refresh(app: &mut App, ctx: &egui::Context, ids: Vec<Uuid>) {
+    // Windows hosts without SSH: facts through WinRM.
+    crate::ui::winrm_ui::start(app, ctx, &ids);
     if app.inv.run.as_ref().is_some_and(Run::active) {
         return;
     }
