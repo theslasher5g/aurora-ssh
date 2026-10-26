@@ -1,5 +1,5 @@
 # Builds Windows, Linux and macOS packages and publishes them together in ONE release.
-#   tag v0.9.2 -> Windows installer + portable zip, .deb + portable tar.gz, SHA256SUMS.txt
+#   tag v0.10.0 -> Windows installer + portable zip, .deb + portable tar.gz, SHA256SUMS.txt
 # Either push the tag, or run the workflow manually (it then creates the tag itself).
 name: Release
 
@@ -11,7 +11,7 @@ on:
     inputs:
       version:
         description: Version (without v)
-        default: "0.9.2"
+        default: "0.10.0"
 
 permissions:
   contents: write
@@ -277,7 +277,7 @@ jobs:
           body: |
             **Aurora ${{ env.VERSION }}** – Windows, Linux and macOS
 
-            **New in 0.9.2:** split view with free layouts (stacked, one large + rest, grid), panes moved and resized by dragging · new Aurora logo (dark/light, follows the theme) · HTML report in diagnostics bundles · sudo without password for key-only hosts · MIT license. Full list: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/v${{ env.VERSION }}/CHANGELOG.md)
+            **New in 0.10.0:** web interfaces open inside the Aurora tab · run a command on many hosts, live host statistics, WinRM for Windows · Proxmox with customer separation, PBS file browser, prune/verify, batch migration, cloud-init · RDP drive sharing · big inventories (20k hosts), dynamic folders, customer focus · signed releases (Ed25519, optional macOS notarization). Full list: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/v${{ env.VERSION }}/CHANGELOG.md)
 
             | System | File | Install |
             |---|---|---|
