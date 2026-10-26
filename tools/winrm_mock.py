@@ -187,14 +187,14 @@ class H(BaseHTTPRequestHandler):
                 sys.stderr.write('[mock] NTLM authentication OK\n')
         if ARGS.unencrypted_only is False and False: pass
         text = body.decode('utf-8', 'replace')
-        action = re.search(r'<a:Action[^>]*>([^<]+)</a:Action>', text)
+        action = re.search(r'<a:Action[^>]{0,200}>([^<]{1,500})</a:Action>', text)
         action = action.group(1) if action else ''
         sys.stderr.write(f'[mock] {action.rsplit("/", 1)[-1]}\n')
         LOG.append(action)
         if action.endswith('/transfer/Create'):
             sid = str(uuid.uuid4()).upper(); SHELLS[sid] = {}
             return self.reply(200, env(f'<rsp:Shell><rsp:ShellId>{sid}</rsp:ShellId></rsp:Shell>'))
-        sel = re.search(r'Name="ShellId">([^<]+)<', text)
+        sel = re.search(r'Name="ShellId">([^<]{1,100})<', text)
         sid = sel.group(1) if sel else ''
         if sid not in SHELLS: return self.reply(500, fault(2150858843, 'The shell was not found'))
         if action.endswith('/shell/Command'):
@@ -246,6 +246,7 @@ def main():
     srv = ThreadingHTTPServer(('127.0.0.1', ARGS.port), H)
     if ARGS.tls:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         ctx.load_cert_chain(*ARGS.tls)
         srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
     print(f'mock WinRM on 127.0.0.1:{ARGS.port} user={ARGS.user} tls={bool(ARGS.tls)} basic={ARGS.basic}', flush=True)
