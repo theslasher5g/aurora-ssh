@@ -5,6 +5,7 @@
 use std::collections::BTreeSet;
 
 use super::*;
+use crate::backend::proxmox::MigrateSpec;
 
 /// Batch jobs running at the same time.
 const PARALLEL: usize = 3;
@@ -159,6 +160,10 @@ pub fn menu_entries(
             actions.push(Action::Pve(PveAction::OpenGuest(r.clone(), 2)));
             ui.close();
         }
+        if g.kind == Kind::Qemu && ui.button(t!("Cloud-Init…")).clicked() {
+            actions.push(super::pve2::act(super::pve2::Act::CloudInit(r.clone())));
+            ui.close();
+        }
     }
     if !ext.nodes.is_empty() {
         ui.menu_button(t!("Migrieren nach"), |ui| {
@@ -311,6 +316,21 @@ pub fn select(app: &mut App, g: &GuestRef, mode: u8) {
     if live_guest(app, g.server, g.vmid).is_none_or(|x| x.template) {
         return;
     }
+    // The selection never spans customers: batch actions stay inside one.
+    if let Some(first) = app.pve.ext.sel.set.first().copied()
+        && !app.pve.ext.sel.set.contains(&(g.server, g.vmid))
+        && !super::pve2::same_customer(app, first.0, g.server)
+    {
+        let who = super::pve2::cust_of(app, super::pve2::server_group(app, first.0)).name;
+        app.toast(
+            t!(
+                "Die Auswahl bleibt bei einem Kunden ({}) – erst aufheben",
+                who
+            ),
+            theme::amber(),
+        );
+        return;
+    }
     let key = (g.server, g.vmid);
     let sel = &mut app.pve.ext.sel;
     if mode == 2
@@ -327,7 +347,7 @@ pub fn select(app: &mut App, g: &GuestRef, mode: u8) {
                 sel.set.push(k);
             }
         }
-        // Templates may sit in the range.
+        // Templates may sit in the range, and rows of other customers do not count.
         let pve = &app.pve;
         let keep: Vec<(Uuid, u32)> = pve
             .ext
@@ -335,6 +355,7 @@ pub fn select(app: &mut App, g: &GuestRef, mode: u8) {
             .set
             .iter()
             .copied()
+            .filter(|(s, _)| super::pve2::same_customer(app, *s, key.0))
             .filter(|(s, v)| {
                 pve.live
                     .get(s)
@@ -432,13 +453,27 @@ pub fn selection_bar(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>
         return;
     }
     let running = progress.as_ref().is_some_and(|(d, t, _)| d < t);
+    // Batch actions only ever touch one customer; say which.
+    let who = app
+        .pve
+        .ext
+        .sel
+        .set
+        .first()
+        .map(|(s, _)| super::pve2::cust_of(app, super::pve2::server_group(app, *s)))
+        .filter(|c| c.id.is_some())
+        .map(|c| c.name);
+    let suffix = who
+        .as_ref()
+        .map(|w| format!(" ({})", t!("Kunde: {}", w)))
+        .unwrap_or_default();
     egui::Frame::NONE
         .fill(theme::accent_soft())
         .corner_radius(CornerRadius::same(14))
         .inner_margin(egui::Margin::symmetric(16, 10))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 if n > 0 {
                     ui.label(
@@ -446,6 +481,13 @@ pub fn selection_bar(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>
                             .font(theme::semibold(14.0))
                             .color(theme::text()),
                     );
+                    if let Some(w) = &who {
+                        ui.label(
+                            RichText::new(format!("· {w}"))
+                                .font(theme::medium(13.0))
+                                .color(theme::text_dim()),
+                        );
+                    }
                     ui.add_space(8.0);
                     ui.add_enabled_ui(!running, |ui| {
                         if theme::btn(ui, theme::Btn::SmallPrimary, Some(Icon::Play), t!("Start"))
@@ -455,13 +497,16 @@ pub fn selection_bar(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>
                         }
                         if theme::btn(ui, theme::Btn::Small, None, t!("Herunterfahren")).clicked() {
                             actions.push(Action::Confirm(
-                                t!("{} ausgewählte Gäste sauber herunterfahren?", n),
+                                format!(
+                                    "{}{suffix}",
+                                    t!("{} ausgewählte Gäste sauber herunterfahren?", n)
+                                ),
                                 Box::new(ext_action(GuestAction::BatchPower(Power::Shutdown))),
                             ));
                         }
                         if theme::btn(ui, theme::Btn::Small, None, t!("Neustart")).clicked() {
                             actions.push(Action::Confirm(
-                                t!("{} ausgewählte Gäste neu starten?", n),
+                                format!("{}{suffix}", t!("{} ausgewählte Gäste neu starten?", n)),
                                 Box::new(ext_action(GuestAction::BatchPower(Power::Reboot))),
                             ));
                         }
@@ -478,6 +523,9 @@ pub fn selection_bar(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>
                         {
                             actions.push(ext_action(GuestAction::BatchForm(1)));
                         }
+                        if theme::btn(ui, theme::Btn::Small, None, t!("Migrieren…")).clicked() {
+                            actions.push(super::pve2::act(super::pve2::Act::MigrateSelected));
+                        }
                     });
                     if theme::btn(ui, theme::Btn::Link, None, t!("Auswahl aufheben"))
                         .on_hover_text("Esc")
@@ -487,21 +535,19 @@ pub fn selection_bar(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>
                     }
                 }
                 if let Some((done, total, label)) = &progress {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if theme::btn(ui, theme::Btn::Link, None, t!("Ergebnis anzeigen")).clicked()
-                            && let Some(b) = app.pve.ext.batch.as_mut()
-                        {
-                            b.visible = true;
-                        }
-                        ui.label(
-                            RichText::new(t!("{}: {} von {}", label, done, total))
-                                .size(13.0)
-                                .color(theme::text_dim()),
-                        );
-                        if done < total {
-                            ui.add(egui::Spinner::new().size(14.0));
-                        }
-                    });
+                    if done < total {
+                        ui.add(egui::Spinner::new().size(14.0));
+                    }
+                    ui.label(
+                        RichText::new(t!("{}: {} von {}", label, done, total))
+                            .size(13.0)
+                            .color(theme::text_dim()),
+                    );
+                    if theme::btn(ui, theme::Btn::Link, None, t!("Ergebnis anzeigen")).clicked()
+                        && let Some(b) = app.pve.ext.batch.as_mut()
+                    {
+                        b.visible = true;
+                    }
                 }
             });
         });
@@ -523,6 +569,10 @@ pub struct Batch {
     label: String,
     pub items: Vec<BatchItem>,
     visible: bool,
+    /// Jobs running at the same time.
+    parallel: usize,
+    /// Customer the batch belongs to (empty = none / mixed servers without one).
+    customer: String,
 }
 
 fn batch_running(app: &App) -> bool {
@@ -534,6 +584,10 @@ fn batch_running(app: &App) -> bool {
 }
 
 fn start_batch(app: &mut App, label: String, items: Vec<BatchItem>) {
+    start_batch_with(app, label, items, PARALLEL);
+}
+
+fn start_batch_with(app: &mut App, label: String, items: Vec<BatchItem>, parallel: usize) {
     if batch_running(app) {
         app.toast(t!("Es läuft schon eine Sammelaktion"), theme::amber());
         return;
@@ -541,10 +595,18 @@ fn start_batch(app: &mut App, label: String, items: Vec<BatchItem>) {
     if items.is_empty() {
         return;
     }
+    let customer = items
+        .first()
+        .map(|i| super::pve2::cust_of(app, super::pve2::server_group(app, i.g.server)))
+        .filter(|c| c.id.is_some())
+        .map(|c| c.name)
+        .unwrap_or_default();
     app.pve.ext.batch = Some(Batch {
         label,
         items,
         visible: true,
+        parallel: parallel.max(1),
+        customer,
     });
     pump(app);
 }
@@ -583,6 +645,75 @@ pub fn run_power(app: &mut App, p: Power) {
     start_batch(app, label.to_string(), items);
 }
 
+/// Migrates many guests: `run` are started (at most `parallel` at a time), `skipped`
+/// are listed with their reason.
+pub fn start_migrations(
+    app: &mut App,
+    run: Vec<(GuestRef, MigrateSpec)>,
+    skipped: Vec<(GuestRef, String)>,
+    parallel: usize,
+) {
+    let mut items: Vec<BatchItem> = run
+        .into_iter()
+        .map(|(g, spec)| BatchItem {
+            g,
+            op: Op::Ext(Box::new(ExtOp::Migrate(spec))),
+            task: None,
+            result: None,
+            skipped: false,
+        })
+        .collect();
+    items.extend(skipped.into_iter().map(|(g, why)| BatchItem {
+        g,
+        op: Op::Ext(Box::new(ExtOp::Power(Power::Start))),
+        task: None,
+        result: Some(Ok(why)),
+        skipped: true,
+    }));
+    start_batch_with(app, t!("Migration").to_string(), items, parallel);
+}
+
+/// Cancels what has not started yet; running tasks finish.
+pub fn cancel_rest(app: &mut App) {
+    let Some(b) = app.pve.ext.batch.as_mut() else {
+        return;
+    };
+    let mut n = 0;
+    for i in b
+        .items
+        .iter_mut()
+        .filter(|i| i.task.is_none() && i.result.is_none())
+    {
+        i.result = Some(Err(t!("abgebrochen – nicht gestartet").to_string()));
+        n += 1;
+    }
+    if n > 0 {
+        app.toast(
+            t!("{} noch nicht gestartete Aufgaben abgebrochen", n),
+            theme::amber(),
+        );
+    }
+}
+
+/// Selected guests as `(server, vmid)`.
+pub fn selection(pve: &PveState) -> Vec<(Uuid, u32)> {
+    pve.ext.sel.set.clone()
+}
+
+pub fn set_selection(pve: &mut PveState, keys: Vec<(Uuid, u32)>) {
+    pve.ext.sel.set = keys;
+}
+
+/// Row order of a view that does not go through [`row_ext`] (for Shift ranges).
+pub fn set_row_order(pve: &mut PveState, order: Vec<(Uuid, u32)>) {
+    pve.ext.sel.drawing = order;
+}
+
+/// Selected guests with their live data.
+pub fn selected_guests(app: &App) -> Vec<(GuestRef, Guest)> {
+    selected(app)
+}
+
 /// Starts queued jobs while fewer than [`PARALLEL`] run.
 pub fn pump(app: &mut App) {
     let Some(b) = app.pve.ext.batch.as_mut() else {
@@ -608,7 +739,7 @@ pub fn pump(app: &mut App) {
         .enumerate()
         .filter(|(_, i)| i.task.is_none() && i.result.is_none())
         .map(|(i, _)| i)
-        .take(PARALLEL.saturating_sub(running))
+        .take(b.parallel.saturating_sub(running))
         .collect();
     for i in next {
         let Some((g, op)) = app
@@ -688,7 +819,22 @@ pub fn result_sheet(app: &mut App, ctx: &egui::Context) {
     };
     let done = b.items.iter().filter(|i| i.result.is_some()).count();
     let total = b.items.len();
-    let title = t!("Sammelaktion: {}", b.label);
+    let failed = b
+        .items
+        .iter()
+        .filter(|i| matches!(i.result, Some(Err(_))))
+        .count();
+    let queued = b
+        .items
+        .iter()
+        .filter(|i| i.task.is_none() && i.result.is_none())
+        .count();
+    let cancel_rest = std::cell::Cell::new(false);
+    let title = if b.customer.is_empty() {
+        t!("Sammelaktion: {}", b.label)
+    } else {
+        t!("Sammelaktion: {} ({})", b.label, b.customer)
+    };
     let (close, dismissed) = theme::sheet(
         ctx,
         egui::Id::new("pve-batch-result"),
@@ -703,6 +849,9 @@ pub fn result_sheet(app: &mut App, ctx: &egui::Context) {
                 ui.label(
                     RichText::new(t!("{} von {} fertig", done, total)).color(theme::text_dim()),
                 );
+                if failed > 0 {
+                    ui.label(RichText::new(t!("{} fehlgeschlagen", failed)).color(theme::red()));
+                }
             });
             group(ui, |ui| {
                 for (n, it) in b.items.iter().enumerate() {
@@ -763,8 +912,29 @@ pub fn result_sheet(app: &mut App, ctx: &egui::Context) {
                 }
             });
         },
-        |ui, _| theme::btn(ui, theme::Btn::Normal, None, t!("Schließen")).clicked(),
+        |ui, _| {
+            let close = theme::btn(ui, theme::Btn::Normal, None, t!("Schließen")).clicked();
+            if queued > 0
+                && theme::btn(
+                    ui,
+                    theme::Btn::Small,
+                    None,
+                    &t!("Rest abbrechen ({})", queued),
+                )
+                .on_hover_text(t!(
+                    "Noch nicht gestartete Aufgaben verwerfen; laufende enden normal"
+                ))
+                .clicked()
+            {
+                cancel_rest.set(true);
+            }
+            close
+        },
     );
+    if cancel_rest.get() {
+        self::cancel_rest(app);
+        return;
+    }
     if close || dismissed {
         if done == total {
             app.pve.ext.batch = None;

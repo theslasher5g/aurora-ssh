@@ -74,17 +74,6 @@ pub fn pve_ok(lib: &Library, set: &Option<HashSet<Uuid>>, s: &PveServer) -> bool
         .any(|g| g.name == saved_group && set.contains(&g.id))
 }
 
-/// Servers of the current focus (all of them without a focus).
-pub fn pve_servers(app: &App) -> Vec<PveServer> {
-    let set = current(app);
-    app.lib
-        .pve_servers
-        .iter()
-        .filter(|s| pve_ok(&app.lib, &set, s))
-        .cloned()
-        .collect()
-}
-
 /// Key groups of the focus: those assigned to a customer inside it; with
 /// `with_unassigned` also the ones that belong to no customer.
 pub fn key_group_ok(set: &Option<HashSet<Uuid>>, g: &KeyGroup, with_unassigned: bool) -> bool {

@@ -19,7 +19,8 @@ mod hw;
 
 pub use batch::{
     RowExt, menu_entries, more_button_with, more_open, node_heading_hook, row_background, row_ext,
-    row_hook, selection_bar, template_actions,
+    row_hook, selected_guests, selection, selection_bar, set_row_order, set_selection,
+    start_migrations, template_actions,
 };
 pub use clone::save_and_connect;
 pub use graphs::paint_spark;
@@ -297,6 +298,7 @@ fn op_label(op: &Op) -> String {
             ExtOp::Clone(c) => t!("Klon als {}", c.newid),
             ExtOp::Migrate(m) => t!("Migration nach {}", m.target),
             ExtOp::Hardware(_) => t!("Hardware ändern").to_string(),
+            ExtOp::CloudInit(_) => t!("Cloud-Init ändern").to_string(),
         },
     }
 }

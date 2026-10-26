@@ -36,6 +36,9 @@ pub use guest_ops::*;
 /// Cluster-wide views (tasks, storage, alerts), node shells and Proxmox Backup Server.
 #[path = "proxmox_cluster.rs"]
 pub mod cluster;
+/// Customers, guest queries, migration planning, cloud-init, PBS browse/prune.
+#[path = "pve2_mod.rs"]
+pub mod pve2;
 
 // ------------------------------------------------------------------ data
 
