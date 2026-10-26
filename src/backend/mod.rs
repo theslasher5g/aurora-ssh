@@ -7,6 +7,7 @@ pub mod containers_parse;
 pub mod containers_run;
 pub mod diag;
 pub mod diag_html;
+pub mod dyn_source;
 pub mod hostkey_check;
 pub mod inventory_collect;
 pub mod inventory_detail;

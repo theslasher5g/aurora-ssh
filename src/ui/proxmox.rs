@@ -334,7 +334,7 @@ fn conn_with(s: &PveServer, secret: String, session: Option<Session>) -> Conn {
     }
 }
 
-fn refresh(app: &mut App, id: Uuid) {
+pub(crate) fn refresh(app: &mut App, id: Uuid) {
     let Some(s) = app.lib.pve_servers.iter().find(|s| s.id == id).cloned() else {
         return;
     };
@@ -985,9 +985,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     }
     ui.ctx().request_repaint_after(Duration::from_secs(1));
 
-    let total: usize = app
-        .lib
-        .pve_servers
+    let scoped = crate::ui::nav2_scope::pve_servers(app);
+    let total: usize = scoped
         .iter()
         .filter_map(|s| app.pve.live.get(&s.id).and_then(|l| l.snap.as_ref()))
         .map(|s| {
@@ -999,12 +998,16 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         .sum();
     // Title, page switch and controls; wraps into rows on narrow windows.
     let mut switch_actions = Vec::new();
+    let mut chip_actions = Vec::new();
     let mut search = std::mem::take(&mut app.pve.search);
     let app_ref = &*app;
     theme::page_header(
         ui,
         "pve",
-        |ui| theme::page_title(ui, "Proxmox", Some(total)),
+        |ui| {
+            theme::page_title(ui, "Proxmox", Some(total));
+            crate::ui::nav_list::scope_chip(app_ref, ui, &mut chip_actions);
+        },
         |ui| cluster::page_switch(app_ref, ui, &mut switch_actions),
         |ui, bar| {
             let label = if bar.compact { "" } else { t!("Server") };
@@ -1038,6 +1041,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     );
     app.pve.search = search;
     actions.append(&mut switch_actions);
+    actions.append(&mut chip_actions);
     ui.add_space(18.0);
 
     if cluster::show_page(app, ui, actions) {
@@ -1081,7 +1085,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     ui.add_space(14.0);
     guest::selection_bar(app, ui, actions);
 
-    let servers = app.lib.pve_servers.clone();
+    let servers = crate::ui::nav2_scope::pve_servers(app);
+    if servers.is_empty() {
+        crate::ui::nav2_scope::empty_hint(ui, app, t!("keinen Proxmox-Server"), actions);
+        return;
+    }
     let query = app.pve.search.trim().to_string();
     egui::ScrollArea::vertical()
         .id_salt("pve-page")

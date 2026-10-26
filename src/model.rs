@@ -398,6 +398,9 @@ pub struct Host {
     /// Web interface entries (`Protocol::Web`).
     #[serde(default)]
     pub web: WebSettings,
+    /// Set on entries a dynamic folder generated (Proxmox, list); see `nav2_dyn`.
+    #[serde(default)]
+    pub dynamic: Option<crate::nav2_dyn::DynMark>,
 }
 
 /// Per-host override of the global "reconnect automatically" switch.
@@ -454,6 +457,7 @@ impl Default for Host {
             credential_source: None,
             shell_integration: false,
             web: WebSettings::default(),
+            dynamic: None,
         }
     }
 }
@@ -705,6 +709,9 @@ pub struct KeyGroup {
     pub name: String,
     pub color: [u8; 3],
     pub collapsed: bool,
+    /// Customer (host group) this key group belongs to: the customer focus shows only
+    /// the key groups of that customer.
+    pub customer: Option<Uuid>,
 }
 
 impl Default for KeyGroup {
@@ -714,6 +721,7 @@ impl Default for KeyGroup {
             name: String::new(),
             color: [139, 92, 246],
             collapsed: false,
+            customer: None,
         }
     }
 }

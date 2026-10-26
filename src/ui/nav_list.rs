@@ -39,7 +39,12 @@ pub fn paint_badge(p: &egui::Painter, rect: Rect, text: &str, color: Color32) {
 
 /// "Kunde A  ✕" in the header: the whole app shows only this group.
 pub fn scope_chip(app: &App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-    let Some(g) = app.lib.nav.scope.and_then(|s| app.lib.group(s)) else {
+    scope_chip_lib(&app.lib, ui, actions);
+}
+
+/// [`scope_chip`] for callers that only hold the library (disjoint borrows of `App`).
+pub fn scope_chip_lib(lib: &crate::model::Library, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+    let Some(g) = lib.nav.scope.and_then(|s| lib.group(s)) else {
         return;
     };
     let color = theme::rgb(g.color);
@@ -60,7 +65,7 @@ pub fn scope_chip(app: &App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     paint_badge(
         p,
         Rect::from_min_size(rect.left_top() + Vec2::new(5.0, 4.0), Vec2::splat(20.0)),
-        &nav_state::badge_text(&app.lib, g),
+        &nav_state::badge_text(lib, g),
         color,
     );
     let t = theme::truncated(p, g.name.clone(), font, theme::text(), 200.0);
@@ -372,6 +377,13 @@ fn breadcrumb(
 
 // ---------------------------------------------------------------- group header
 
+/// Drag payload of a group header (reorder among siblings); hosts drag a plain `Uuid`.
+#[derive(Clone, Copy)]
+struct GroupDrag {
+    id: Uuid,
+    parent: Option<Uuid>,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn group_header(
     app: &App,
@@ -391,8 +403,32 @@ fn group_header(
         Pos2::new(rect.left() + depth as f32 * 20.0, rect.bottom() - 36.0),
         rect.right_bottom(),
     );
-    let resp = ui.interact(head, ui.id().with(("grp", g.id)), Sense::click());
-    let drop_hot = resp.dnd_hover_payload::<Uuid>().is_some();
+    let resp = ui.interact(head, ui.id().with(("grp", g.id)), Sense::click_and_drag());
+    resp.dnd_set_drag_payload(GroupDrag {
+        id: g.id,
+        parent: g.parent_id,
+    });
+    let drop_hot =
+        resp.dnd_hover_payload::<Uuid>().is_some() && crate::ui::nav2_dyn::accepts_hosts(lib, g.id);
+    // Another group of the same parent is dragged over this header: insertion line.
+    let mut gd_line: Option<(f32, bool)> = None;
+    if let Some(gd) = resp.dnd_hover_payload::<GroupDrag>()
+        && gd.id != g.id
+        && gd.parent == g.parent_id
+        && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+    {
+        let after = pos.y > head.center().y;
+        gd_line = Some((if after { head.bottom() } else { head.top() }, after));
+    }
+    if let Some(gd) = resp.dnd_release_payload::<GroupDrag>()
+        && gd.id != g.id
+        && gd.parent == g.parent_id
+    {
+        let after = ui
+            .input(|i| i.pointer.interact_pos())
+            .is_some_and(|p| p.y > head.center().y);
+        actions.push(Action::Nav(NavAction::DropGroup(gd.id, g.id, after)));
+    }
     if let Some(id) = resp.dnd_release_payload::<Uuid>() {
         let ids = if app.selected_hosts.contains(&id) {
             app.selected_hosts.iter().copied().collect()
@@ -403,6 +439,12 @@ fn group_header(
     }
     let p = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     let cy = head.center().y;
+    if let Some((y, _)) = gd_line {
+        p.line_segment(
+            [Pos2::new(head.left(), y), Pos2::new(head.right(), y)],
+            Stroke::new(2.5, theme::accent()),
+        );
+    }
     if drop_hot {
         p.rect_filled(head, CornerRadius::same(8), theme::accent_soft());
     } else if at_cursor {
@@ -454,6 +496,9 @@ fn group_header(
             Color32::from_rgb(255, 214, 10),
         );
         tx += 20.0;
+    }
+    if let Some(f) = lib.nav.dynamic.get(&g.id) {
+        tx = crate::ui::nav2_dyn::group_badge(&p, f, tx, cy, right_limit);
     }
     let total = c.shown.total[node];
     let roll = c.shown.roll[node];
@@ -542,7 +587,9 @@ fn group_header(
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
         links.spacing_mut().item_spacing.x = 4.0;
-        if theme::btn(&mut links, theme::Btn::Link, None, "+ Host").clicked() {
+        if !lib.nav.dynamic.contains_key(&g.id)
+            && theme::btn(&mut links, theme::Btn::Link, None, "+ Host").clicked()
+        {
             actions.push(Action::NewHost(Some(g.id)));
             clicked_link = true;
         }
@@ -577,8 +624,27 @@ fn app_open_count(app: &App, group: Uuid) -> (usize, usize) {
     (n, all.len())
 }
 
-#[allow(clippy::too_many_arguments)]
+/// The menu scrolls when the window is too small for all entries (720x480).
 fn group_menu(
+    app: &App,
+    ui: &mut egui::Ui,
+    node: usize,
+    gid: Uuid,
+    total: u32,
+    maint: Option<&crate::ui::maintenance::Maintenance>,
+    actions: &mut Vec<Action>,
+) {
+    let max_h = (ui.ctx().content_rect().height() - 24.0).max(160.0);
+    egui::ScrollArea::vertical()
+        .max_height(max_h)
+        .auto_shrink([true, true])
+        .show(ui, |ui| {
+            group_menu_body(app, ui, node, gid, total, maint, actions)
+        });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn group_menu_body(
     app: &App,
     ui: &mut egui::Ui,
     _node: usize,
@@ -590,9 +656,37 @@ fn group_menu(
     let lib = &app.lib;
     let Some(g) = lib.group(gid) else { return };
     let openable = app_open_count(app, gid);
-    if ui.button(t!("Nur diese Gruppe anzeigen")).clicked() {
+    let dynf = lib.nav.dynamic.get(&gid);
+    let is_rule = dynf.is_some_and(|f| matches!(f.source, crate::nav2_dyn::DynSource::Rule { .. }));
+    if !is_rule && ui.button(t!("Nur diese Gruppe anzeigen")).clicked() {
         actions.push(Action::Nav(NavAction::Scope(Some(gid))));
         ui.close();
+    }
+    if dynf.is_some() && ui.button(t!("Jetzt abgleichen")).clicked() {
+        actions.push(Action::DynRefresh(gid));
+        ui.close();
+    }
+    let (can_up, can_down) = (
+        crate::ui::nav_state::can_move_group(lib, gid, -1),
+        crate::ui::nav_state::can_move_group(lib, gid, 1),
+    );
+    if can_up || can_down {
+        ui.menu_button(t!("Reihenfolge"), |ui| {
+            if ui
+                .add_enabled(can_up, egui::Button::new(t!("Nach oben verschieben")))
+                .clicked()
+            {
+                actions.push(Action::Nav(NavAction::MoveGroup(gid, -1)));
+                ui.close();
+            }
+            if ui
+                .add_enabled(can_down, egui::Button::new(t!("Nach unten verschieben")))
+                .clicked()
+            {
+                actions.push(Action::Nav(NavAction::MoveGroup(gid, 1)));
+                ui.close();
+            }
+        });
     }
     if ui.button(t!("Alle Untergruppen aufklappen")).clicked() {
         actions.push(Action::Nav(NavAction::Reveal(gid)));
@@ -634,7 +728,7 @@ fn group_menu(
         actions.push(Action::OpenGroup(gid));
         ui.close();
     }
-    if ui.button(t!("Host hinzufügen")).clicked() {
+    if dynf.is_none() && ui.button(t!("Host hinzufügen")).clicked() {
         actions.push(Action::NewHost(Some(gid)));
         ui.close();
     }
@@ -719,7 +813,7 @@ fn group_menu(
 
 // ---------------------------------------------------------------- keyboard
 
-fn modal_or_popup(ctx: &egui::Context) -> bool {
+pub(crate) fn modal_or_popup(ctx: &egui::Context) -> bool {
     ctx.memory(|m| m.top_modal_layer().is_some())
         || egui::Popup::is_any_open(ctx)
         || ctx.memory(|m| m.focused().is_some())
@@ -939,7 +1033,7 @@ pub fn body(
         }
         let live_set = live;
         if mode == ViewMode::Table {
-            crate::ui::nav_table::show(app_ref, &cache, ui, actions);
+            crate::ui::nav_table::show(app_ref, &cache, ui, &mut cursor, &mut scroll_to, actions);
         } else {
             let (moved, scrolled) = keys(app_ref, &cache, ui, cursor, actions);
             cursor = moved;

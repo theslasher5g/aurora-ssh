@@ -239,41 +239,53 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         title,
         |ui| {
             let h = &mut ed.host;
+            // Entries a dynamic folder generated keep name, address, protocol and group.
+            let locked = h.dynamic.is_some();
+            if locked {
+                crate::ui::nav2_dyn::locked_notice(ui, lib, h);
+            }
             // Protocol as a segmented control over the full width.
             let labels: Vec<&str> = Protocol::ALL.iter().map(|p| p.label()).collect();
             let cur = Protocol::ALL
                 .iter()
                 .position(|p| *p == h.protocol)
                 .unwrap_or(0);
-            if let Some(i) = theme::segmented(ui, &labels, cur) {
-                let p = Protocol::ALL[i];
-                if h.protocol != p {
-                    if h.port == h.protocol.default_port() {
-                        h.port = p.default_port();
+            ui.add_enabled_ui(!locked, |ui| {
+                if let Some(i) = theme::segmented(ui, &labels, cur) {
+                    let p = Protocol::ALL[i];
+                    if h.protocol != p {
+                        if h.port == h.protocol.default_port() {
+                            h.port = p.default_port();
+                        }
+                        h.protocol = p;
                     }
-                    h.protocol = p;
                 }
-            }
+            });
             ui.add_space(14.0);
             theme::form(ui, 92.0, |ui, f| {
                 f.field(ui, t!("Name"), |ui| {
-                    field_text(ui, &mut h.label, t!("z.B. web-01"));
+                    ui.add_enabled_ui(!locked, |ui| {
+                        field_text(ui, &mut h.label, t!("z.B. web-01"));
+                    });
                 });
                 if h.protocol.is_network() {
                     if h.protocol == Protocol::Web {
                         crate::ui::web::address_rows(ui, f, h, &mut ed.tags_text);
                     } else {
                         f.field(ui, t!("Adresse"), |ui| {
-                            let w = ui.available_width() - 86.0;
-                            ui.add(
-                                egui::TextEdit::singleline(&mut h.hostname)
-                                    .hint_text(
-                                        RichText::new(t!("host oder IP")).color(theme::text_dim()),
-                                    )
-                                    .desired_width(w),
-                            );
-                            ui.label(RichText::new(":").color(theme::text_dim()));
-                            ui.add(egui::DragValue::new(&mut h.port).range(1..=65535));
+                            ui.add_enabled_ui(!locked, |ui| {
+                                let w = ui.available_width() - 86.0;
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut h.hostname)
+                                        .hint_text(
+                                            RichText::new(t!("host oder IP"))
+                                                .color(theme::text_dim()),
+                                        )
+                                        .desired_width(w),
+                                );
+                                ui.label(RichText::new(":").color(theme::text_dim()));
+                                ui.add(egui::DragValue::new(&mut h.port).range(1..=65535));
+                            });
                         });
                     }
                     if h.protocol != Protocol::Vnc {
@@ -317,7 +329,9 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
                     }
                 }
                 f.field(ui, t!("Gruppe"), |ui| {
-                    group_combo(ui, "host-group", &mut h.group_id, &groups, None, lib);
+                    ui.add_enabled_ui(!locked, |ui| {
+                        group_combo(ui, "host-group", &mut h.group_id, &groups, None, lib);
+                    });
                 });
             });
             ui.add_space(14.0);
@@ -724,7 +738,11 @@ fn host_editor(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
             .filter(|t| !t.is_empty())
             .collect();
         match app.lib.hosts.iter_mut().find(|h| h.id == ed.host.id) {
-            Some(h) => *h = ed.host,
+            Some(h) => {
+                // What the source generated cannot be edited by hand.
+                crate::ui::nav2_dyn::keep_generated(h, &mut ed.host);
+                *h = ed.host
+            }
             None => app.lib.hosts.push(ed.host),
         }
         app.save_library();
@@ -872,6 +890,8 @@ fn group_editor(app: &mut App, ctx: &egui::Context) {
         t!("Gruppe bearbeiten")
     };
     let lib = &app.lib;
+    let dynst = &mut app.nav.dynst;
+    let mut dyn_out = None;
     let ((s_, c_), dismissed) = theme::sheet(
         ctx,
         egui::Id::new("group-editor"),
@@ -920,12 +940,17 @@ fn group_editor(app: &mut App, ctx: &egui::Context) {
                     env_picker(ui, &mut g.env, t!("keine"))
                 });
             });
-            !g.name.trim().is_empty()
+            let out = crate::ui::nav2_dyn::editor_section(ui, dynst, g.id, *is_new, lib);
+            let ok = out.valid;
+            dyn_out = Some(out);
+            ok && !g.name.trim().is_empty()
         },
         save_cancel,
     );
     let save = s_;
     let cancel = c_ || dismissed;
+    let dyn_group = app.group_editor.as_ref().map(|(g, _)| g.id);
+    let dyn_refresh = dyn_out.is_some_and(|o| o.refresh);
     if cancel {
         app.group_editor = None;
     } else if save && let Some((g, _)) = app.group_editor.take() {
@@ -935,6 +960,7 @@ fn group_editor(app: &mut App, ctx: &egui::Context) {
         }
         app.save_library();
     }
+    crate::ui::nav2_dyn::after_editor(app, ctx, dyn_group, save, cancel, dyn_refresh);
 }
 
 fn identity_editor(app: &mut App, ctx: &egui::Context) {

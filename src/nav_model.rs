@@ -20,6 +20,8 @@ pub struct GroupMeta {
     pub letter: String,
     /// Pinned to the top of the list and the sidebar.
     pub favorite: bool,
+    /// Manual position among the siblings (`None` = by name); see `nav2_order`.
+    pub rank: Option<u32>,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
@@ -200,6 +202,8 @@ pub struct NavData {
     /// List or table, per scope (`scope_key`).
     pub modes: HashMap<String, ViewMode>,
     pub table: TableCfg,
+    /// Dynamic folders: group → source and last sync (see `nav2_dyn`).
+    pub dynamic: HashMap<Uuid, crate::nav2_dyn::DynFolder>,
 }
 
 /// Key of a scope in `NavData::modes` (empty = everything).
@@ -233,6 +237,18 @@ impl NavData {
         }
     }
 
+    /// Stores the manual positions of a sibling list (first = top).
+    pub fn set_ranks(&mut self, ranks: &[(Uuid, u32)]) {
+        for (g, r) in ranks {
+            let m = self.groups.entry(*g).or_default();
+            m.rank = Some(*r);
+        }
+    }
+
+    pub fn rank(&self, g: Uuid) -> Option<u32> {
+        self.groups.get(&g).and_then(|m| m.rank)
+    }
+
     pub fn mode(&self, scope: Option<Uuid>) -> ViewMode {
         self.modes
             .get(&scope_key(scope))
@@ -258,6 +274,7 @@ impl NavData {
     /// Forgets everything about groups that no longer exist.
     pub fn prune(&mut self, exists: impl Fn(Uuid) -> bool) {
         self.groups.retain(|g, _| exists(*g));
+        self.dynamic.retain(|g, _| exists(*g));
         self.recent_groups.retain(|g| exists(*g));
         self.modes
             .retain(|k, _| k.is_empty() || Uuid::parse_str(k).is_ok_and(&exists));

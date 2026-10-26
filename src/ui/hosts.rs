@@ -842,11 +842,16 @@ pub(crate) fn host_row(
         }
         nx = r.right() + 8.0;
     } else {
+        let gone = h.dynamic.as_ref().is_some_and(|d| d.gone);
         let name_galley = theme::truncated(
             &p,
             h.display_name(),
             theme::semibold(15.0),
-            theme::text(),
+            if gone {
+                theme::text_dim()
+            } else {
+                theme::text()
+            },
             name_max,
         );
         let name_w = name_galley.size().x;
@@ -891,6 +896,8 @@ pub(crate) fn host_row(
             .on_hover_text(h.notes.trim());
         nx += 20.0;
     }
+    // Entries a dynamic folder generated carry a small badge.
+    nx = crate::ui::nav2_dyn::host_badge(&p, ui, &app.lib, h, nx, y1, text_right);
 
     // Search results: where the host lives (customer / site).
     if let Some(path) = path

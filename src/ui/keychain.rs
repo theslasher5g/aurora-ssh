@@ -16,6 +16,8 @@ use crate::ui::{empty_list, row_buttons};
 pub struct KeysUi {
     /// Group being created (`true`) or edited.
     pub group_editor: Option<(KeyGroup, bool)>,
+    /// With a customer focus: also show key groups that belong to no customer.
+    pub show_unassigned: bool,
 }
 
 /// Changes to key groups, applied after the frame (`Action::KeyGroup`).
@@ -166,6 +168,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     crate::ui::keyimport::drop_zone(app, ui.ctx());
     crate::ui::keyimport::scan_sheet(app, ui.ctx());
     let count = app.keychain.identities.len();
+    let mut chip_actions = Vec::new();
     theme::page_header(
         ui,
         "keys",
@@ -204,8 +207,28 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             }
         },
     );
+    if app.lib.nav.scope.is_some() {
+        ui.add_space(8.0);
+        ui.horizontal(|ui| crate::ui::nav_list::scope_chip_lib(&app.lib, ui, &mut chip_actions));
+    }
+    actions.append(&mut chip_actions);
     ui.add_space(18.0);
     group_editor(app, ui.ctx());
+    // Customer focus: only the key groups of that customer (and optionally the rest).
+    let scope_set = crate::ui::nav2_scope::current(app);
+    if scope_set.is_some() {
+        ui.horizontal(|ui| {
+            ui.checkbox(
+                &mut app.keys_ui.show_unassigned,
+                t!("Auch Gruppen ohne Kunde zeigen"),
+            )
+            .on_hover_text(t!(
+                "Schlüsselgruppen lassen sich im Gruppen-Editor einem Kunden zuordnen"
+            ));
+        });
+        ui.add_space(8.0);
+    }
+    let with_unassigned = app.keys_ui.show_unassigned;
 
     if count == 0 && app.keychain.groups.is_empty() {
         if empty_list(
@@ -230,6 +253,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         .keychain
         .grouped()
         .into_iter()
+        .filter(|(g, _)| match g {
+            Some(g) => crate::ui::nav2_scope::key_group_ok(&scope_set, g, with_unassigned),
+            None => scope_set.is_none() || with_unassigned,
+        })
         .map(|(g, idents)| {
             let total = idents.len();
             let rows = idents
@@ -265,9 +292,16 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         .keychain
         .groups
         .iter()
+        .filter(|g| crate::ui::nav2_scope::key_group_ok(&scope_set, g, with_unassigned))
         .map(|g| (g.id, g.name.clone(), g.color))
         .collect();
     let dragging = egui::DragAndDrop::has_payload_of_type::<KeyDrag>(ui.ctx());
+    let customers: std::collections::HashMap<Uuid, String> = app
+        .lib
+        .groups
+        .iter()
+        .map(|g| (g.id, g.name.clone()))
+        .collect();
 
     let mut toast = None;
     egui::ScrollArea::vertical()
@@ -304,7 +338,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         }
                         ui.add_space(if first { 4.0 } else { 22.0 });
                         first = false;
-                        group_header(ui, g, *total, rows.len(), searching, actions);
+                        let customer = g.customer.and_then(|c| customers.get(&c).cloned());
+                        group_header(ui, customer.as_deref(), g, *total, rows.len(), searching, actions);
                         if g.collapsed && !searching {
                             continue;
                         }
@@ -342,6 +377,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
 /// Chevron, colour square, name and count; drop target for key rows.
 fn group_header(
     ui: &mut egui::Ui,
+    customer: Option<&str>,
     g: &KeyGroup,
     total: usize,
     shown: usize,
@@ -397,6 +433,15 @@ fn group_header(
         FontId::proportional(13.0),
         theme::text_dim(),
     );
+    if let Some(c) = customer {
+        p.text(
+            Pos2::new(rect.left() + 40.0 + w + 60.0, cy),
+            egui::Align2::LEFT_CENTER,
+            format!("· {c}"),
+            FontId::proportional(12.5),
+            theme::text_dim(),
+        );
+    }
     let mut links = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(Rect::from_min_max(
@@ -743,6 +788,7 @@ fn group_editor(app: &mut App, ctx: &egui::Context) {
         t!("Gruppe bearbeiten")
     };
     let mut enter = false;
+    let lib = &app.lib;
     let ((save, cancel), dismissed) = theme::sheet(
         ctx,
         egui::Id::new("key-group-editor"),
@@ -763,6 +809,14 @@ fn group_editor(app: &mut App, ctx: &egui::Context) {
                     if let Some(c) = c {
                         g.color = c;
                     }
+                });
+                f.field(ui, t!("Kunde"), |ui| {
+                    crate::ui::nav2_scope::customer_combo(
+                        ui,
+                        "key-group-customer",
+                        &mut g.customer,
+                        lib,
+                    );
                 });
             });
             !g.name.trim().is_empty()

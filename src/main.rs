@@ -9,6 +9,8 @@ mod backend;
 mod history;
 mod keygen;
 mod model;
+mod nav2_dyn;
+mod nav2_order;
 mod nav_model;
 mod nav_perf;
 mod nav_query;

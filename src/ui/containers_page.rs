@@ -543,14 +543,21 @@ struct Entry {
 fn entries(app: &App, st: &CtrState) -> Vec<Entry> {
     let mut out = Vec::new();
     let has = |key: HostKey| st.hosts.get(&key).is_some_and(|l| !l.tools().is_empty());
-    if has(None) {
+    // Customer focus: only that customer's hosts (this PC belongs to none).
+    let scope = crate::ui::nav2_scope::current(app);
+    if has(None) && scope.is_none() {
         out.push(Entry {
             key: None,
             name: t!("Dieser PC").to_string(),
             env: Env::None,
         });
     }
-    for h in app.lib.hosts.iter().filter(|h| h.protocol == Protocol::Ssh) {
+    for h in app
+        .lib
+        .hosts
+        .iter()
+        .filter(|h| h.protocol == Protocol::Ssh && crate::ui::nav2_scope::host_ok(&scope, h))
+    {
         let marked = app.lib.ctr.marked.contains(&h.id);
         if app.lib.ctr.hidden.contains(&h.id) {
             continue;
@@ -620,10 +627,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     {
         let app_ref = &*app;
         let mut search = std::mem::take(&mut st.search);
+        let mut chip_actions = Vec::new();
         theme::page_header(
             ui,
             "ctr",
-            |ui| theme::page_title(ui, t!("Container"), Some(total)),
+            |ui| {
+                theme::page_title(ui, t!("Container"), Some(total));
+                crate::ui::nav_list::scope_chip(app_ref, ui, &mut chip_actions);
+            },
             |_| {},
             |ui, bar| {
                 if theme::icon_btn(ui, Icon::Refresh, t!("Jetzt aktualisieren")).clicked() {
@@ -667,9 +678,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             |_, _| {},
         );
         st.only_running = only;
+        actions.append(&mut chip_actions);
         ui.add_space(12.0);
 
-        if list.is_empty() {
+        if list.is_empty() && app_ref.lib.nav.scope.is_some() {
+            crate::ui::nav2_scope::empty_hint(ui, app_ref, t!("keine Container-Hosts"), actions);
+        } else if list.is_empty() {
             empty_state(ui, probing > 0);
         }
         let query = st.search.trim().to_lowercase();
@@ -721,11 +735,12 @@ fn hosts_menu(app: &App, ui: &mut egui::Ui, compact: bool, actions: &mut Vec<Act
         .on_hover_text(t!("Welche SSH-Hosts auf dieser Seite erscheinen"));
     egui::Popup::menu(&r).show(|ui| {
         ui.set_min_width(260.0);
+        let scope = crate::ui::nav2_scope::current(app);
         let ssh: Vec<&Host> = app
             .lib
             .hosts
             .iter()
-            .filter(|h| h.protocol == Protocol::Ssh)
+            .filter(|h| h.protocol == Protocol::Ssh && crate::ui::nav2_scope::host_ok(&scope, h))
             .collect();
         if ssh.is_empty() {
             ui.label(RichText::new(t!("Keine SSH-Hosts gespeichert")).color(theme::text_dim()));

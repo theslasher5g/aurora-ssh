@@ -80,6 +80,7 @@ Every [release](../../releases/latest) contains Windows, Linux and macOS:
 |---|---|
 | **Host list** | Nested groups with colour and icon, tags, favourites, environment labels (PROD / STAGING / TEST / DEV), notes, reachability LEDs, OS / uptime / disk / updates at a glance |
 | **Large inventories** | Customer → site → host tree with counts and status roll‑up, **focus on one customer**, search language, saved views, table view, keyboard navigation |
+| **Dynamic folders** | A group can take its hosts from a **Proxmox server** (VMs/CTs kept in sync), a **search rule** (`type:switch customer/*`, a smart folder) or a **CSV/URL list**; generated entries are badged and not hand-editable. Plus manual group order (drag or *Move up/down*), table keyboard navigation, and the customer focus on the Proxmox, keychain, container and certificate pages |
 | **Server inventory** | Table with OS, kernel, uptime, disk, updates and warnings; per‑host detail view (services, firewall rules, listening ports, your own info snippets); **system documentation export** to Markdown, printable HTML, JSON and CSV |
 | **Migration** | Import from mRemoteNG, Royal TS, Remote Desktop Manager, CSV and `~/.ssh/config` with preview, conflict handling and report |
 | **Keychain** | Passwords and SSH keys in coloured groups, key import by **drag & drop**, Ed25519 generator, SSH certificates (Aurora as a small CA), password managers as credential source |
