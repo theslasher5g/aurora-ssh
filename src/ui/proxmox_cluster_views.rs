@@ -12,6 +12,7 @@ use crate::app::{Action, App};
 use crate::backend::proxmox::cluster::{Level, Overview, TaskInfo, TaskState};
 use crate::model::PveServer;
 use crate::theme;
+use crate::ui::proxmox::pve2;
 
 fn no_servers(ui: &mut egui::Ui) {
     ui.add_space(20.0);
@@ -21,9 +22,16 @@ fn no_servers(ui: &mut egui::Ui) {
     );
 }
 
-fn server_heading(ui: &mut egui::Ui, s: &PveServer, right: &str, color: Color32) {
+fn server_heading(
+    ui: &mut egui::Ui,
+    s: &PveServer,
+    cust: &pve2::Cust,
+    right: &str,
+    color: Color32,
+) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 12.0;
+        pve2::customer_tag(ui, cust);
         ui.label(RichText::new(s.display_name()).font(theme::semibold(16.0)));
         if !right.is_empty() {
             ui.label(RichText::new(right).size(13.0).color(color));
@@ -50,7 +58,7 @@ pub fn overview(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         no_servers(ui);
         return;
     }
-    let servers = app.lib.pve_servers.clone();
+    let servers = pve2::visible_pve(app);
     egui::ScrollArea::vertical()
         .id_salt("pve-overview")
         .auto_shrink([false, false])
@@ -60,6 +68,7 @@ pub fn overview(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 if i > 0 {
                     ui.add_space(22.0);
                 }
+                let cust = pve2::cust_of(app, s.group);
                 let data = app.pve.cluster.servers.get(&s.id);
                 let loading = data.is_some_and(|d| d.overview_loading);
                 match data.and_then(|d| d.overview.as_ref()) {
@@ -67,6 +76,7 @@ pub fn overview(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         server_heading(
                             ui,
                             s,
+                            &cust,
                             if s.tls_pin.is_empty() {
                                 t!("Zertifikat noch nicht bestätigt")
                             } else if loading {
@@ -78,13 +88,13 @@ pub fn overview(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         );
                     }
                     Some(Err(e)) => {
-                        server_heading(ui, s, "", theme::text_dim());
+                        server_heading(ui, s, &cust, "", theme::text_dim());
                         ui.add_space(6.0);
                         notice(ui, theme::red(), e);
                     }
                     Some(Ok(ov)) => {
                         let ov = ov.clone();
-                        overview_card(ui, s, &ov, actions);
+                        overview_card(ui, s, &cust, &ov, actions);
                     }
                 }
             }
@@ -92,10 +102,17 @@ pub fn overview(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         });
 }
 
-fn overview_card(ui: &mut egui::Ui, s: &PveServer, ov: &Overview, actions: &mut Vec<Action>) {
+fn overview_card(
+    ui: &mut egui::Ui,
+    s: &PveServer,
+    cust: &pve2::Cust,
+    ov: &Overview,
+    actions: &mut Vec<Action>,
+) {
     let online = ov.nodes.iter().filter(|n| n.online).count();
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
+        pve2::customer_tag(ui, cust);
         ui.label(RichText::new(s.display_name()).font(theme::semibold(16.0)));
         if let Some(c) = &ov.cluster {
             ui.label(
@@ -437,7 +454,7 @@ pub fn tasks(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         }
     });
     ui.add_space(14.0);
-    let servers = app.lib.pve_servers.clone();
+    let servers = pve2::visible_pve(app);
     let filter = app.pve.cluster.task_filter;
     let now = chrono::Utc::now().timestamp();
     egui::ScrollArea::vertical()
@@ -449,6 +466,7 @@ pub fn tasks(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 if i > 0 {
                     ui.add_space(22.0);
                 }
+                let cust = pve2::cust_of(app, s.group);
                 let data = app.pve.cluster.servers.get(&s.id);
                 let loading = data.is_some_and(|d| d.tasks_loading);
                 let list = match data.and_then(|d| d.tasks.as_ref()) {
@@ -456,6 +474,7 @@ pub fn tasks(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         server_heading(
                             ui,
                             s,
+                            &cust,
                             if s.tls_pin.is_empty() {
                                 t!("Zertifikat noch nicht bestätigt")
                             } else if loading {
@@ -468,7 +487,7 @@ pub fn tasks(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                         continue;
                     }
                     Some(Err(e)) => {
-                        server_heading(ui, s, "", theme::text_dim());
+                        server_heading(ui, s, &cust, "", theme::text_dim());
                         ui.add_space(6.0);
                         notice(ui, theme::red(), e);
                         continue;
@@ -480,6 +499,7 @@ pub fn tasks(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 server_heading(
                     ui,
                     s,
+                    &cust,
                     &t!("{} laufend · {} fehlgeschlagen", running, failed),
                     theme::text_dim(),
                 );
@@ -669,8 +689,7 @@ pub fn log_sheet(app: &mut App, ctx: &egui::Context) {
         .cluster
         .log
         .as_ref()
-        .and_then(|l| app.lib.pve_servers.iter().find(|s| s.id == l.server))
-        .map(|s| s.display_name().to_string())
+        .map(|l| pve2::pve_label(app, l.server))
         .unwrap_or_default();
     let Some(l) = app.pve.cluster.log.as_mut() else {
         return;
@@ -985,6 +1004,8 @@ pub fn alerts_sheet(app: &mut App, ctx: &egui::Context) {
         return;
     }
     let mut clear = false;
+    let shown: std::collections::HashSet<Uuid> =
+        pve2::visible_pve(app).iter().map(|s| s.id).collect();
     let st = &mut app.pve.cluster;
     let (close, dismissed) = theme::sheet(
         ctx,
@@ -1001,7 +1022,7 @@ pub fn alerts_sheet(app: &mut App, ctx: &egui::Context) {
                 );
                 return;
             }
-            for a in &st.alerts {
+            for a in st.alerts.iter().filter(|a| shown.contains(&a.server)) {
                 let color = match a.kind {
                     crate::backend::proxmox::cluster::AlertKind::GuestDown
                     | crate::backend::proxmox::cluster::AlertKind::NodeOffline => theme::red(),

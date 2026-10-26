@@ -25,7 +25,7 @@ use crate::model::PveServer;
 use crate::theme;
 
 #[path = "proxmox_cluster_pbs.rs"]
-mod pbs;
+pub(crate) mod pbs;
 #[path = "proxmox_cluster_views.rs"]
 mod views;
 
@@ -338,9 +338,8 @@ fn raise(app: &mut App, server: Uuid, hits: Vec<cl::AlertHit>) {
     if hits.is_empty() {
         return;
     }
-    let name = server_of(app, server)
-        .map(|s| s.display_name().to_string())
-        .unwrap_or_default();
+    // "Kunde · Server": alerts of different customers never look alike.
+    let name = super::pve2::pve_label(app, server);
     for h in hits {
         let color = match h.kind {
             AlertKind::GuestDown | AlertKind::NodeOffline => theme::red(),

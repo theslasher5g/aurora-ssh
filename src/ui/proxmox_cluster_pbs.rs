@@ -90,7 +90,7 @@ impl PbsState {
         self.gens.clear();
     }
 
-    fn epoch(&self, server: Uuid) -> Epoch {
+    pub(crate) fn epoch(&self, server: Uuid) -> Epoch {
         self.gens.get(&server).copied().unwrap_or(self.base)
     }
 
@@ -134,7 +134,7 @@ fn conn_with(s: &PbsServer, secret: String, session: Option<Session>) -> Conn {
     }
 }
 
-fn conn(app: &App, s: &PbsServer) -> Conn {
+pub(crate) fn conn(app: &App, s: &PbsServer) -> Conn {
     conn_with(
         s,
         app.keychain
@@ -151,7 +151,7 @@ fn conn(app: &App, s: &PbsServer) -> Conn {
     )
 }
 
-fn server(app: &App, id: Uuid) -> Option<PbsServer> {
+pub(crate) fn server(app: &App, id: Uuid) -> Option<PbsServer> {
     app.lib.pbs_servers.iter().find(|s| s.id == id).cloned()
 }
 
@@ -183,7 +183,7 @@ pub fn refresh_all(app: &mut App) {
     }
 }
 
-fn load_snapshots(app: &mut App) {
+pub(crate) fn load_snapshots(app: &mut App) {
     let Some(v) = app.pve.cluster.pbs.snaps.as_ref() else {
         return;
     };
@@ -425,11 +425,14 @@ pub fn page(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         ui,
         "pbs-head",
         |ui| {
-            ui.label(
-                RichText::new(t!(
-                    "Proxmox Backup Server: Datastores, Snapshots und Prune-Vorschau (nur lesend)."
-                ))
-                .color(theme::text_dim()),
+            ui.add(
+                egui::Label::new(
+                    RichText::new(t!(
+                        "Proxmox Backup Server: Datastores, Snapshots, Dateien, Prune, Verify und Garbage Collection."
+                    ))
+                    .color(theme::text_dim()),
+                )
+                .truncate(),
             );
         },
         |ui, _| {
@@ -471,7 +474,13 @@ pub fn page(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         });
         return;
     }
-    let servers = app.lib.pbs_servers.clone();
+    let servers = super::super::pve2::visible_pbs(app);
+    if servers.is_empty() {
+        ui.label(
+            RichText::new(t!("Keine Backup-Server für diese Auswahl")).color(theme::text_dim()),
+        );
+        return;
+    }
     egui::ScrollArea::vertical()
         .id_salt("pbs-page")
         .auto_shrink([false, false])
@@ -492,6 +501,7 @@ fn server_section(app: &mut App, ui: &mut egui::Ui, s: &PbsServer, actions: &mut
     let error = live.and_then(|l| l.error.clone());
     let loading = live.is_some_and(|l| l.loading);
     let stores = live.and_then(|l| l.stores.clone());
+    let cust = super::super::pve2::cust_of(app, s.group);
     let resp = ui
         .horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 12.0;
@@ -501,6 +511,7 @@ fn server_section(app: &mut App, ui: &mut egui::Ui, s: &PbsServer, actions: &mut
                 (None, Some(_)) => theme::led(ui.painter(), r.center(), theme::green(), true),
                 _ => theme::led(ui.painter(), r.center(), theme::off_color(), false),
             }
+            super::super::pve2::customer_tag(ui, &cust);
             ui.label(RichText::new(s.display_name()).font(theme::semibold(16.0)));
             let addr = if s.port == 8007 {
                 s.host.trim().to_string()
@@ -705,6 +716,8 @@ fn snapshots_sheet(app: &mut App, ctx: &egui::Context) {
     };
     let mut todo: Option<PbsAction> = None;
     let mut reload = false;
+    let mut p2acts: Vec<super::super::pve2::Act> = Vec::new();
+    let p2 = &app.pve.p2;
     let title = format!("{} · {}", server_name, v.store);
     let (close, dismissed) = theme::sheet(
         ctx,
@@ -732,6 +745,7 @@ fn snapshots_sheet(app: &mut App, ctx: &egui::Context) {
                     keep_field(ui, "yearly", &mut v.keep.yearly);
                 });
             }
+            super::super::pve2::pbs_ui::store_bar(ui, p2, v.server, &v.store, &mut p2acts);
             let list = match &v.list {
                 None => {
                     ui.horizontal(|ui| {
@@ -795,6 +809,14 @@ fn snapshots_sheet(app: &mut App, ctx: &egui::Context) {
                                 Some(theme::amber()),
                             );
                         }
+                        super::super::pve2::pbs_ui::group_buttons(
+                            ui,
+                            v.server,
+                            &v.store,
+                            btype,
+                            bid,
+                            &mut p2acts,
+                        );
                         resp.clicked() || name.clicked()
                     })
                     .inner;
@@ -811,7 +833,7 @@ fn snapshots_sheet(app: &mut App, ctx: &egui::Context) {
                 theme::form(ui, 110.0, |ui, f| {
                     for (i, s) in snaps.iter().enumerate() {
                         f.full(ui, |ui| {
-                            ui.horizontal(|ui| {
+                            ui.horizontal_wrapped(|ui| {
                                 ui.spacing_mut().item_spacing.x = 10.0;
                                 ui.label(theme::mono(
                                     chrono::DateTime::from_timestamp(s.time, 0)
@@ -856,62 +878,57 @@ fn snapshots_sheet(app: &mut App, ctx: &egui::Context) {
                                             .color(theme::text_dim()),
                                     );
                                 }
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        ui.spacing_mut().item_spacing.x = 2.0;
-                                        let archives: Vec<&str> = s
-                                            .files
-                                            .iter()
-                                            .filter(|f| !pb::valid_blob_name(&f.name))
-                                            .map(|f| f.name.as_str())
-                                            .collect();
-                                        if !archives.is_empty() {
-                                            theme::tag(ui, &t!("{} Archive", archives.len()), None)
-                                                .on_hover_text(archives.join("\n"));
-                                        }
-                                        for file in s
-                                            .files
-                                            .iter()
-                                            .rev()
-                                            .filter(|f| pb::valid_blob_name(&f.name))
-                                        {
-                                            let label = file
-                                                .name
-                                                .strip_suffix(".blob")
-                                                .unwrap_or(&file.name);
-                                            let text = if file.encrypted {
-                                                format!("🔒 {label}")
-                                            } else {
-                                                label.to_string()
-                                            };
-                                            if v.downloading.as_deref() == Some(&file.name) {
-                                                ui.spinner();
-                                            }
-                                            let r = ui
-                                                .add_enabled_ui(v.downloading.is_none(), |ui| {
-                                                    theme::btn(
-                                                        ui,
-                                                        theme::Btn::Link,
-                                                        Some(Icon::Download),
-                                                        &text,
-                                                    )
-                                                })
-                                                .inner
-                                                .on_hover_text(t!(
-                                                    "{} anzeigen und speichern",
-                                                    file.name
-                                                ));
-                                            if r.clicked() {
-                                                todo = Some(PbsAction::Download(
-                                                    v.server,
-                                                    v.store.clone(),
-                                                    Box::new((*s).clone()),
-                                                    file.name.clone(),
-                                                ));
-                                            }
-                                        }
-                                    },
+                            });
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                let archives: Vec<&str> = s
+                                    .files
+                                    .iter()
+                                    .filter(|f| !pb::valid_blob_name(&f.name))
+                                    .map(|f| f.name.as_str())
+                                    .collect();
+                                if !archives.is_empty() {
+                                    theme::tag(ui, &t!("{} Archive", archives.len()), None)
+                                        .on_hover_text(archives.join("\n"));
+                                }
+                                for file in s.files.iter().filter(|f| pb::valid_blob_name(&f.name))
+                                {
+                                    let label =
+                                        file.name.strip_suffix(".blob").unwrap_or(&file.name);
+                                    let text = if file.encrypted {
+                                        format!("🔒 {label}")
+                                    } else {
+                                        label.to_string()
+                                    };
+                                    if v.downloading.as_deref() == Some(&file.name) {
+                                        ui.spinner();
+                                    }
+                                    let r = ui
+                                        .add_enabled_ui(v.downloading.is_none(), |ui| {
+                                            theme::btn(
+                                                ui,
+                                                theme::Btn::Link,
+                                                Some(Icon::Download),
+                                                &text,
+                                            )
+                                        })
+                                        .inner
+                                        .on_hover_text(t!("{} anzeigen und speichern", file.name));
+                                    if r.clicked() {
+                                        todo = Some(PbsAction::Download(
+                                            v.server,
+                                            v.store.clone(),
+                                            Box::new((*s).clone()),
+                                            file.name.clone(),
+                                        ));
+                                    }
+                                }
+                                super::super::pve2::pbs_ui::snapshot_buttons(
+                                    ui,
+                                    v.server,
+                                    &v.store,
+                                    s,
+                                    &mut p2acts,
                                 );
                             });
                         });
@@ -929,7 +946,7 @@ fn snapshots_sheet(app: &mut App, ctx: &egui::Context) {
                         theme::green()
                     },
                     &t!(
-                        "Mit diesen Einstellungen würde ein Prune {} Snapshots entfernen. Aurora löscht nichts – Prune-Jobs richtest du im Backup-Server ein.",
+                        "Mit diesen Einstellungen würde ein Prune {} Snapshots entfernen. Diese Vorschau löscht nichts – mit „Prune…“ prüft der Server die Regeln und löscht nach Bestätigung.",
                         total_remove
                     ),
                 );
@@ -946,6 +963,9 @@ fn snapshots_sheet(app: &mut App, ctx: &egui::Context) {
             close
         },
     );
+    for a in p2acts {
+        super::super::pve2::apply(app, a, ctx);
+    }
     if let Some(a) = todo {
         apply(app, a, ctx);
         return;
@@ -1092,6 +1112,7 @@ fn blob_sheet(app: &mut App, ctx: &egui::Context) {
 }
 
 fn editor(app: &mut App, ctx: &egui::Context) {
+    let customers = super::super::pve2::group_choices(app);
     let Some(ed) = app.pve.cluster.pbs.editor.as_mut() else {
         return;
     };
@@ -1125,6 +1146,9 @@ fn editor(app: &mut App, ctx: &egui::Context) {
                     );
                     ui.label(RichText::new(":").color(theme::text_dim()));
                     ui.add(egui::DragValue::new(&mut s.port).range(1..=65535));
+                });
+                f.field(ui, t!("Kunde"), |ui| {
+                    super::super::pve2::group_picker(ui, &customers, &mut s.group);
                 });
             });
             theme::form_caption(ui, t!("Anmeldung"));

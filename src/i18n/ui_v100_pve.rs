@@ -1,0 +1,322 @@
+//! English texts for the German source strings (see `super::tr`): Proxmox customers,
+//! PBS browser / prune / verify, multi-migrate, cloud-init.
+
+pub const T: &[(&str, &str)] = &[
+    ("1 (nacheinander)", "1 (one after another)"),
+    (
+        "Adresse muss die Form 10.0.0.5/24 haben (mit Präfix)",
+        "Address must look like 10.0.0.5/24 (with prefix)",
+    ),
+    ("Alle Kunden", "All customers"),
+    (
+        "Alle Snapshots von „{}“ prüfen ({} Snapshots in {} Gruppen, Server {})? Das liest viele Daten und kann lange dauern.",
+        "Verify all snapshots of “{}” ({} snapshots in {} groups, server {})? This reads a lot of data and can take long.",
+    ),
+    (
+        "Auch kürzlich verifizierte Snapshots erneut prüfen",
+        "Also re-verify recently verified snapshots",
+    ),
+    ("Aufgaben ({})", "Tasks ({})"),
+    ("Aus dem Schlüsselbund hinzufügen…", "Add from keychain…"),
+    ("Auswahl migrieren", "Migrate selection"),
+    ("Auswahl migrieren · {}", "Migrate selection · {}"),
+    ("Backup-Server-Aufgaben", "Backup server tasks"),
+    (
+        "Benutzername: Kleinbuchstaben, Ziffern, _ und - (max. 32)",
+        "User name: lower case letters, digits, _ and - (max. 32)",
+    ),
+    ("Cloud-Init ändern", "Change cloud-init"),
+    ("Cloud-Init…", "Cloud-init…"),
+    ("DNS", "DNS"),
+    (
+        "Das Passwort wird nie angezeigt oder gespeichert und nach dem Senden verworfen. SSH-Keys sind sicherer.",
+        "The password is never shown or stored and is discarded after sending. SSH keys are safer.",
+    ),
+    ("Datei herunterladen", "Download file"),
+    (
+        "Datei ist größer als das Limit ({} Bytes)",
+        "File is larger than the limit ({} bytes)",
+    ),
+    ("Dateien…", "Files…"),
+    (
+        "Die Auswahl bleibt bei einem Kunden ({}) – erst aufheben",
+        "The selection stays within one customer ({}) – clear it first",
+    ),
+    (
+        "Die Optionen haben sich geändert – Vorschau neu berechnen.",
+        "The options changed – recalculate the preview.",
+    ),
+    (
+        "Diese VM hat kein Cloud-Init-Laufwerk – die Werte greifen erst, wenn eines hinzugefügt ist (Hardware).",
+        "This VM has no cloud-init drive – the values only take effect once one is added (hardware).",
+    ),
+    (
+        "Download ist größer als das Limit ({} Bytes)",
+        "Download is larger than the limit ({} bytes)",
+    ),
+    (
+        "Download überschreitet das Limit ({} Bytes)",
+        "Download exceeds the limit ({} bytes)",
+    ),
+    (
+        "Download „{}“ fehlgeschlagen: {}",
+        "Download “{}” failed: {}",
+    ),
+    (
+        "Einzelne Dateien kommen unverändert, Ordner als Archiv. Es wird nie eine vorhandene Datei überschrieben.",
+        "Single files arrive unchanged, folders as an archive. An existing file is never overwritten.",
+    ),
+    ("Erst Gäste auswählen", "Select guests first"),
+    ("Erweitert", "Advanced"),
+    (
+        "Format: user=local:snippets/datei.yaml (auch network=, meta=, vendor=)",
+        "Format: user=local:snippets/file.yaml (also network=, meta=, vendor=)",
+    ),
+    ("GC: {}", "GC: {}"),
+    (
+        "Garbage Collection auf „{}“ (Server {}) starten? Nicht mehr referenzierte Chunks werden gelöscht; das dauert und belastet den Speicher.",
+        "Start garbage collection on “{}” (server {})? Unreferenced chunks are deleted; this takes a while and loads the storage.",
+    ),
+    ("Garbage Collection starten?", "Start garbage collection?"),
+    ("Garbage Collection {}", "Garbage collection {}"),
+    ("Garbage Collection…", "Garbage collection…"),
+    (
+        "Gateway darf nicht die eigene Adresse sein",
+        "Gateway must not be the address itself",
+    ),
+    (
+        "Gateway hat die falsche Adressfamilie",
+        "Gateway has the wrong address family",
+    ),
+    (
+        "Gateway ist keine IP-Adresse",
+        "Gateway is not an IP address",
+    ),
+    (
+        "Gateway liegt nicht im Subnetz der Adresse",
+        "Gateway is outside the address's subnet",
+    ),
+    ("Gleichzeitig", "At a time"),
+    (
+        "Gruppe {}/{} prüfen ({} Snapshots, Server {})?",
+        "Verify group {}/{} ({} snapshots, server {})?",
+    ),
+    ("Größenlimit", "Size limit"),
+    ("Hardlink", "Hard link"),
+    ("Herunterladen", "Download"),
+    ("In diesem Ordner filtern", "Filter this folder"),
+    (
+        "Inhalt der .pxar-Archive durchsuchen und Dateien herunterladen",
+        "Browse the content of the .pxar archives and download files",
+    ),
+    ("Ja, jetzt löschen", "Yes, delete now"),
+    ("Ja, migrieren", "Yes, migrate"),
+    ("Keine Aufgaben", "No tasks"),
+    (
+        "Keine Backup-Server für diese Auswahl",
+        "No backup servers for this selection",
+    ),
+    ("Keine Gäste gefunden", "No guests found"),
+    (
+        "Keine Proxmox-Server für diese Auswahl",
+        "No Proxmox servers for this selection",
+    ),
+    ("Kunde", "Customer"),
+    ("Kunde: {}", "Customer: {}"),
+    (
+        "Kurzes Passwort (unter 8 Zeichen)",
+        "Short password (under 8 characters)",
+    ),
+    (
+        "Laufende Gäste werden übersprungen – es wird nichts heruntergefahren.",
+        "Running guests are skipped – nothing is shut down.",
+    ),
+    (
+        "Laufende VMs wandern live, laufende Container werden dafür kurz neu gestartet.",
+        "Running VMs migrate live, running containers are restarted briefly for it.",
+    ),
+    ("Laufwerk neu erzeugen", "Regenerate drive"),
+    ("Leer", "Empty"),
+    ("Laden", "Get"),
+    ("Link", "Link"),
+    ("Live / Neustart", "Live / restart"),
+    ("Log anzeigen", "Show log"),
+    ("Log ausblenden", "Hide log"),
+    (
+        "Lokale Datenträger mitnehmen (VMs)",
+        "Take local disks along (VMs)",
+    ),
+    ("Manuell", "Manual"),
+    (
+        "Mehr als 3 Nameserver werden ignoriert",
+        "More than 3 name servers are ignored",
+    ),
+    ("Migrieren…", "Migrate…"),
+    (
+        "Mindestens eine keep-Regel muss größer als 0 sein.",
+        "At least one keep rule must be greater than 0.",
+    ),
+    (
+        "Mit diesen Einstellungen würde ein Prune {} Snapshots entfernen. Diese Vorschau löscht nichts – mit „Prune…“ prüft der Server die Regeln und löscht nach Bestätigung.",
+        "With these settings a prune would remove {} snapshots. This preview deletes nothing – “Prune…” lets the server check the rules and deletes after confirmation.",
+    ),
+    ("Nameserver", "Name servers"),
+    (
+        "Nameserver müssen IP-Adressen sein",
+        "Name servers must be IP addresses",
+    ),
+    ("Nichts geändert", "Nothing changed"),
+    (
+        "Noch nicht gestartete Aufgaben verwerfen; laufende enden normal",
+        "Discard tasks that have not started; running ones finish normally",
+    ),
+    (
+        "Nur Dateien und Ordner lassen sich herunterladen",
+        "Only files and folders can be downloaded",
+    ),
+    ("Nur ausgeschaltete", "Powered-off only"),
+    (
+        "Nur die Server dieses Kunden anzeigen",
+        "Show only this customer's servers",
+    ),
+    ("Ohne Kunde", "No customer"),
+    ("Ordner als", "Folders as"),
+    (
+        "Ordner als Archiv herunterladen",
+        "Download folder as an archive",
+    ),
+    ("Pakete aktualisieren", "Upgrade packages"),
+    (
+        "Passwort enthält ungültige Zeichen",
+        "Password contains invalid characters",
+    ),
+    (
+        "Proxmox Backup Server: Datastores, Snapshots, Dateien, Prune, Verify und Garbage Collection.",
+        "Proxmox Backup Server: datastores, snapshots, files, prune, verify and garbage collection.",
+    ),
+    ("Prune", "Prune"),
+    ("Prune ausführen…", "Run prune…"),
+    ("Prune läuft…", "Prune running…"),
+    (
+        "Prune: {} Snapshots gelöscht",
+        "Prune: {} snapshots deleted",
+    ),
+    ("Prune…", "Prune…"),
+    ("Rest abbrechen ({})", "Cancel rest ({})"),
+    (
+        "SSH-Key {} ist kein öffentlicher OpenSSH-Schlüssel",
+        "SSH key {} is not an OpenSSH public key",
+    ),
+    (
+        "SSH-Schlüssel (öffentlich, einer pro Zeile)",
+        "SSH keys (public, one per line)",
+    ),
+    ("Sammelaktion: {} ({})", "Batch action: {} ({})"),
+    ("Schnittstelle hinzufügen", "Add interface"),
+    (
+        "Snapshot {}/{} vom {} prüfen (Server {})?",
+        "Verify snapshot {}/{} from {} (server {})?",
+    ),
+    ("Snapshots und Backups…", "Snapshots and backups…"),
+    ("Spezialdatei", "Special file"),
+    ("Suchdomäne", "Search domain"),
+    (
+        "Suchdomäne ist kein gültiger DNS-Name",
+        "Search domain is not a valid DNS name",
+    ),
+    (
+        "Suche: kunde/server/name · type:vm · is:running · #tag · vmid:100 · node:pve1 · ip:10.1.",
+        "Search: customer/server/name · type:vm · is:running · #tag · vmid:100 · node:pve1 · ip:10.1.",
+    ),
+    (
+        "Suche: kunde/server/name, is:running, #tag",
+        "Search: customer/server/name, is:running, #tag",
+    ),
+    ("VMID", "VMID"),
+    ("Verify starten?", "Start verify?"),
+    ("Verify {}", "Verify {}"),
+    ("Verify {}/{}", "Verify {}/{}"),
+    ("Verify…", "Verify…"),
+    ("Vorschau vom Server", "Preview from server"),
+    ("Vorschau wird berechnet…", "Calculating preview…"),
+    ("Ziel-Node nicht online", "Target node not online"),
+    ("Ziel-Node wählen…", "Choose target node…"),
+    ("Zielordner", "Target folder"),
+    (
+        "Zielordner „{}“ existiert nicht",
+        "Target folder “{}” does not exist",
+    ),
+    ("Zugang", "Access"),
+    ("abgebrochen – nicht gestartet", "cancelled – not started"),
+    ("ganzer Datastore", "whole datastore"),
+    (
+        "gesetzt – leer lassen = unverändert",
+        "set – leave empty = unchanged",
+    ),
+    ("kein Ziel-Node gewählt", "no target node chosen"),
+    ("keine IPv4-Adresse", "not an IPv4 address"),
+    ("keine IPv6-Adresse", "not an IPv6 address"),
+    (
+        "liegt schon auf dem Ziel-Node",
+        "already on the target node",
+    ),
+    ("live", "live"),
+    (
+        "läuft – im Offline-Modus übersprungen",
+        "running – skipped in offline mode",
+    ),
+    ("nicht gesetzt", "not set"),
+    ("startet…", "starting…"),
+    ("ungültige Adresse", "invalid address"),
+    ("{} Gruppen mit Fehler", "{} groups with errors"),
+    (
+        "{} Gruppen, {} Snapshots. Erst die Vorschau vom Server (nichts wird gelöscht), dann bestätigt ausführen.",
+        "{} groups, {} snapshots. First the preview from the server (nothing is deleted), then run it with confirmation.",
+    ),
+    (
+        "{} Gäste auf {} Server(n). Pro Server wählst du den Ziel-Node; gestartet wird erst nach einer Bestätigung.",
+        "{} guests on {} server(s). Choose the target node per server; nothing starts before you confirm.",
+    ),
+    (
+        "{} Gäste jetzt migrieren, {} übersprungen? Bis zu {} laufen gleichzeitig.",
+        "Migrate {} guests now, {} skipped? Up to {} run at the same time.",
+    ),
+    (
+        "{} Server · {} von {} Gästen laufen",
+        "{} servers · {} of {} guests running",
+    ),
+    (
+        "{} Snapshots gelöscht, {} behalten, {} Gruppen betroffen",
+        "{} snapshots deleted, {} kept, {} groups affected",
+    ),
+    (
+        "{} Snapshots in {} Gruppen von „{}“ endgültig löschen? Das lässt sich nicht rückgängig machen.",
+        "Permanently delete {} snapshots in {} groups of “{}”? This cannot be undone.",
+    ),
+    (
+        "{} Snapshots würden gelöscht, {} bleiben, {} Gruppen betroffen",
+        "{} snapshots would be deleted, {} kept, {} groups affected",
+    ),
+    ("{} ausstehend", "{} pending"),
+    ("{} behalten · {} löschen", "{} keep · {} delete"),
+    ("{} fehlgeschlagen", "{} failed"),
+    ("{} fehlgeschlagen: {}", "{} failed: {}"),
+    ("{} freigegeben", "{} freed"),
+    (
+        "{} noch nicht gestartete Aufgaben abgebrochen",
+        "{} tasks that had not started cancelled",
+    ),
+    (
+        "{} werden migriert ({} live, {} Container mit Neustart), {} übersprungen",
+        "{} will be migrated ({} live, {} containers with restart), {} skipped",
+    ),
+    (
+        "„Neu erzeugen“ schreibt das Cloud-Init-Laufwerk sofort neu (sonst beim nächsten Start).",
+        "“Regenerate” rewrites the cloud-init drive immediately (otherwise at the next start).",
+    ),
+    ("„{}“ gespeichert: {} ({})", "“{}” saved: {} ({})"),
+    (
+        "… {} weitere Einträge – Filter benutzen",
+        "… {} more entries – use the filter",
+    ),
+];

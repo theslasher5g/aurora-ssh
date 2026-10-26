@@ -403,6 +403,9 @@ pub struct MigrateSpec {
     /// The guest runs: live migration (VM) or restart migration (CT).
     pub running: bool,
     pub storage: Option<String>,
+    /// Take local disks along (`with-local-disks`, VMs only; set implicitly with a
+    /// target storage).
+    pub local_disks: bool,
 }
 
 fn migrate_request(g: &GuestId, s: &MigrateSpec) -> Option<(Method, String, Form)> {
@@ -421,6 +424,8 @@ fn migrate_request(g: &GuestId, s: &MigrateSpec) -> Option<(Method, String, Form
                     return None;
                 }
                 form.push(f("targetstorage", st.clone()));
+                form.push(f("with-local-disks", "1"));
+            } else if s.local_disks {
                 form.push(f("with-local-disks", "1"));
             }
         }
@@ -694,6 +699,8 @@ pub enum ExtOp {
     Clone(CloneSpec),
     Migrate(MigrateSpec),
     Hardware(HwChange),
+    /// Cloud-init settings of a VM (`pve2::ci`), optionally regenerating the drive.
+    CloudInit(Box<super::pve2::ci::CiApply>),
 }
 
 /// Results of the loaders below.
@@ -994,6 +1001,20 @@ fn ext_requests(g: &GuestId, op: &ExtOp) -> Option<Vec<(Method, String, Form)>> 
             v
         }
         ExtOp::Migrate(s) => vec![migrate_request(g, s)?],
+        ExtOp::CloudInit(a) => {
+            if g.kind != Kind::Qemu || a.is_noop() {
+                return None;
+            }
+            let base = base(g)?;
+            let mut v = Vec::new();
+            if !a.form.is_empty() || a.password.is_some() {
+                v.push((Method::Post, format!("{base}/config"), a.config_form()));
+            }
+            if a.regenerate {
+                v.push((Method::Put, format!("{base}/cloudinit"), vec![]));
+            }
+            v
+        }
         ExtOp::Hardware(ch) => {
             let v = hw_requests(g, ch)?;
             if v.is_empty() {
@@ -1426,6 +1447,7 @@ mod tests {
             target: "pve2".into(),
             running: true,
             storage: None,
+            local_disks: false,
         };
         let (_, p, fm) = migrate_request(&vm(), &s).unwrap();
         assert_eq!(p, "/nodes/pve1/qemu/100/migrate");
@@ -1456,6 +1478,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(form(&fm), vec![("target", "pve2")]);
+        let (_, _, fm) = migrate_request(
+            &vm(),
+            &MigrateSpec {
+                local_disks: true,
+                ..s.clone()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            form(&fm),
+            vec![
+                ("target", "pve2"),
+                ("online", "1"),
+                ("with-local-disks", "1")
+            ]
+        );
         for bad in ["pve1", "pve2;reboot", ""] {
             assert!(
                 migrate_request(

@@ -17,7 +17,6 @@ use crate::backend::proxmox::{
 };
 use crate::model::{Group, Host, Protocol, PveServer};
 use crate::theme;
-use crate::ui::fuzzy;
 use crate::ui::icons::{self, Icon};
 
 #[path = "proxmox_guest.rs"]
@@ -29,6 +28,10 @@ pub mod cluster;
 
 #[path = "proxmox_console.rs"]
 mod vmconsole;
+
+/// Customers, flat table, guest query, PBS browse/prune, multi-migrate, cloud-init.
+#[path = "pve2_ui.rs"]
+pub mod pve2;
 
 const ROW_H: f32 = 66.0;
 /// Refresh period while the page is visible.
@@ -101,6 +104,8 @@ pub struct PveState {
     pub cluster: cluster::ClusterState,
     /// Guest consoles: pending lookups and the VM login sheet.
     console: vmconsole::ConsoleState,
+    /// Customers, PBS browser / prune, migration and cloud-init sheets.
+    pub p2: pve2::State,
 }
 
 /// Asks for the address of a guest that reported none.
@@ -140,6 +145,7 @@ impl PveState {
             ext: GuestExt::default(),
             cluster: cluster::ClusterState::new(ctx),
             console: vmconsole::ConsoleState::default(),
+            p2: pve2::State::new(ctx),
         }
     }
 
@@ -162,6 +168,7 @@ impl PveState {
         self.ext = GuestExt::default();
         self.cluster.lock();
         self.console = vmconsole::ConsoleState::default();
+        self.p2.lock();
     }
 
     /// Current generation of a server's live state; jobs carry it and their results
@@ -178,6 +185,7 @@ impl PveState {
         self.ext.forget(server);
         self.cluster.reset_server(server);
         self.console.forget(server);
+        self.p2.reset_server(server);
         self.resolving.retain(|(s, _), _| *s != server);
         for t in self.tasks.iter().filter(|t| t.server == server) {
             t.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -263,6 +271,8 @@ pub enum PveAction {
     Ext(GuestAction),
     /// Cluster views, node shell / updates, backup servers.
     Cluster(cluster::ClusterAction),
+    /// Customers, PBS browse / prune / verify, multi-migrate, cloud-init (`pve2_*`).
+    P2(Box<pve2::Act>),
 }
 
 impl PveAction {
@@ -534,6 +544,7 @@ pub fn pump(app: &mut App) {
         refresh(app, id);
     }
     cluster::pump(app);
+    pve2::pump(app);
 }
 
 /// Refreshes `server` after each of `secs` seconds.
@@ -663,6 +674,7 @@ pub fn apply(app: &mut App, action: PveAction, ctx: &egui::Context) {
         }
         PveAction::Ext(a) => guest::apply_ext(app, a),
         PveAction::Cluster(a) => cluster::apply(app, a, ctx),
+        PveAction::P2(a) => pve2::apply(app, *a, ctx),
     }
 }
 
@@ -743,13 +755,21 @@ fn save_as_host(app: &mut App, g: &GuestRef, hostname: String) {
         return;
     };
     let group_name = format!("Proxmox {}", s.display_name());
-    let gid = match app.lib.groups.iter().find(|x| x.name == group_name) {
+    // Hosts of a customer's server land below the customer's group.
+    let parent = s.group.filter(|g| app.lib.group(*g).is_some());
+    let gid = match app
+        .lib
+        .groups
+        .iter()
+        .find(|x| x.name == group_name && x.parent_id == parent)
+    {
         Some(x) => x.id,
         None => {
             let grp = Group {
                 name: group_name.clone(),
                 icon: "🗄".into(),
                 color: [230, 112, 0],
+                parent_id: parent,
                 ..Default::default()
             };
             let id = grp.id;
@@ -900,7 +920,12 @@ pub fn palette_items(app: &App) -> Vec<(String, String, String, Action)> {
             out.push((
                 kind_tag(g.kind).to_string(),
                 r.label(),
-                format!("{} · {} · {}", t!("Konsole"), g.node, s.display_name()),
+                format!(
+                    "{} · {} · {}",
+                    t!("Konsole"),
+                    g.node,
+                    pve2::label(app, s.display_name(), s.group)
+                ),
                 Action::Pve(PveAction::Console(r)),
             ));
         }
@@ -920,22 +945,6 @@ fn passes(filter: usize, show_templates: bool, g: &Guest) -> bool {
         3 => g.running(),
         _ => true,
     }
-}
-
-fn matches_query(q: &str, g: &Guest, ip: Option<&str>) -> bool {
-    if q.is_empty() {
-        return true;
-    }
-    let hay = format!(
-        "{} {} {} {} {} {}",
-        g.name,
-        g.vmid,
-        kind_tag(g.kind),
-        g.node,
-        g.tags.join(" "),
-        ip.unwrap_or_default()
-    );
-    fuzzy(q, &hay).is_some_and(|s| s > 0)
 }
 
 fn gib(bytes: u64) -> String {
@@ -985,9 +994,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     }
     ui.ctx().request_repaint_after(Duration::from_secs(1));
 
-    let total: usize = app
-        .lib
-        .pve_servers
+    let total: usize = pve2::visible_pve(app)
         .iter()
         .filter_map(|s| app.pve.live.get(&s.id).and_then(|l| l.snap.as_ref()))
         .map(|s| {
@@ -1029,7 +1036,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 theme::search_field(
                     ui,
                     &mut search,
-                    t!("Name, VMID, Tag oder IP"),
+                    t!("Suche: kunde/server/name, is:running, #tag"),
                     width,
                     egui::Id::new("pve-search"),
                 );
@@ -1039,6 +1046,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     app.pve.search = search;
     actions.append(&mut switch_actions);
     ui.add_space(18.0);
+    pve2::selector(app, ui);
 
     if cluster::show_page(app, ui, actions) {
         return;
@@ -1050,6 +1058,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
 
     let mut filter = app.pve.filter;
     let mut templates = app.pve.show_templates;
+    let mut table = app.pve.p2.table;
     theme::toolbar(
         ui,
         "pve-filter",
@@ -1063,6 +1072,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
             }
         },
         |ui, _| {
+            if let Some(i) = theme::segmented(ui, &[t!("Liste"), t!("Tabelle")], table as usize) {
+                table = i == 1;
+            }
             let kind = if templates {
                 theme::Btn::SmallPrimary
             } else {
@@ -1078,22 +1090,50 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     );
     app.pve.filter = filter;
     app.pve.show_templates = templates;
+    app.pve.p2.table = table;
     ui.add_space(14.0);
     guest::selection_bar(app, ui, actions);
 
-    let servers = app.lib.pve_servers.clone();
-    let query = app.pve.search.trim().to_string();
+    let servers = pve2::visible_pve(app);
+    let query = pve2::Query::parse(app.pve.search.trim());
+    if servers.is_empty() {
+        ui.label(
+            RichText::new(t!("Keine Proxmox-Server für diese Auswahl")).color(theme::text_dim()),
+        );
+        return;
+    }
+    if table {
+        pve2::table(app, ui, &servers, &query, actions);
+        return;
+    }
+    // Customer → server → node → guest.
+    let rows: Vec<Option<Uuid>> = servers.iter().map(|s| s.group).collect();
+    let grouped = pve2::grouped(app, &rows);
+    let headers = app.pve.p2.sel == pve2::Sel::All
+        && (grouped.len() > 1 || grouped.first().is_some_and(|(c, _)| c.id.is_some()));
     egui::ScrollArea::vertical()
         .id_salt("pve-page")
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.set_max_width(ui.available_width() - 14.0);
             ui.spacing_mut().item_spacing.y = 0.0;
-            for (i, s) in servers.iter().enumerate() {
-                if i > 0 {
-                    ui.add_space(26.0);
+            for (ci, (customer, idx)) in grouped.iter().enumerate() {
+                if headers {
+                    if ci > 0 {
+                        ui.add_space(30.0);
+                    }
+                    let (running, guests) =
+                        pve2::guest_counts(app, idx.iter().map(|i| servers[*i].id));
+                    let info = pve2::cust_of(app, customer.id);
+                    pve2::customer_header(ui, customer, &info, running, guests);
+                    ui.add_space(10.0);
                 }
-                server_section(app, ui, s, &query, actions);
+                for (j, i) in idx.iter().enumerate() {
+                    if j > 0 {
+                        ui.add_space(26.0);
+                    }
+                    server_section(app, ui, &servers[*i], &query, actions);
+                }
             }
             ui.add_space(40.0);
         });
@@ -1133,7 +1173,7 @@ fn server_section(
     app: &mut App,
     ui: &mut egui::Ui,
     s: &PveServer,
-    query: &str,
+    query: &pve2::Query,
     actions: &mut Vec<Action>,
 ) {
     let live = app.pve.live.get(&s.id);
@@ -1291,7 +1331,9 @@ fn server_section(
             .iter()
             .filter(|g| g.node == n.name)
             .filter(|g| passes(app.pve.filter, app.pve.show_templates, g))
-            .filter(|g| matches_query(query, g, first_ip(app, s.id, g.vmid).as_deref()))
+            .filter(|g| {
+                pve2::guest_matches(app, query, s, g, first_ip(app, s.id, g.vmid).as_deref())
+            })
             .collect();
         if guests.is_empty() && filtering {
             continue;
@@ -1945,6 +1987,7 @@ pub fn windows(app: &mut App, ctx: &egui::Context) {
     editor(app, ctx);
     guest::panel(app, ctx);
     cluster::windows(app, ctx);
+    pve2::windows(app, ctx);
     ip_prompt(app, ctx);
     vmconsole::sheet(app, ctx);
     trust(app, ctx);
@@ -2036,6 +2079,7 @@ fn editor(app: &mut App, ctx: &egui::Context) {
         .filter(|h| h.protocol == Protocol::Ssh)
         .map(|h| (h.id, h.display_name().to_string()))
         .collect();
+    let customers = pve2::group_choices(app);
     let Some(ed) = app.pve.editor.as_mut() else {
         return;
     };
@@ -2067,6 +2111,9 @@ fn editor(app: &mut App, ctx: &egui::Context) {
                     );
                     ui.label(RichText::new(":").color(theme::text_dim()));
                     ui.add(egui::DragValue::new(&mut s.port).range(1..=65535));
+                });
+                f.field(ui, t!("Kunde"), |ui| {
+                    pve2::group_picker(ui, &customers, &mut s.group);
                 });
             });
             theme::form_caption(ui, t!("Anmeldung"));
@@ -2383,9 +2430,6 @@ mod tests {
         assert!(passes(2, false, &ct) && !passes(2, false, &vm));
         assert!(passes(3, false, &vm) && !passes(3, false, &ct));
         assert!(!passes(0, false, &tpl) && passes(0, true, &tpl));
-        assert!(matches_query("prod", &vm, None));
-        assert!(matches_query("10.0.0", &vm, Some("10.0.0.5")));
-        assert!(!matches_query("zzz", &vm, None));
         assert_eq!(gib(1024 * 1024 * 512), "512 MiB");
         assert_eq!(gib(4 * 1024 * 1024 * 1024), "4.0 GiB");
     }

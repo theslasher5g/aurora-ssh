@@ -677,6 +677,7 @@ pub fn migrate_sheet(app: &mut App, ctx: &egui::Context) {
             target: m.target,
             running: m.running,
             storage: Some(m.storage).filter(|s| !s.is_empty()),
+            local_disks: false,
         };
         start_task_with(app, &m.g, Op::Ext(Box::new(ExtOp::Migrate(spec))), false);
     } else if cancel || dismissed {

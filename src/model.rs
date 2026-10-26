@@ -737,6 +737,8 @@ pub struct PveServer {
     pub ssh_host: Option<Uuid>,
     /// Alerts (guest down, node offline, failed task, full storage) while Aurora runs.
     pub notify: bool,
+    /// Customer: the group this server belongs to (its top-level group is the customer).
+    pub group: Option<Uuid>,
 }
 
 impl Default for PveServer {
@@ -751,6 +753,7 @@ impl Default for PveServer {
             tls_pin: String::new(),
             ssh_host: None,
             notify: true,
+            group: None,
         }
     }
 }
@@ -769,6 +772,8 @@ pub struct PbsServer {
     pub user: String,
     /// SHA-256 fingerprint of the trusted certificate, empty = not yet.
     pub tls_pin: String,
+    /// Customer: the group this server belongs to.
+    pub group: Option<Uuid>,
 }
 
 impl Default for PbsServer {
@@ -781,6 +786,7 @@ impl Default for PbsServer {
             token: true,
             user: String::new(),
             tls_pin: String::new(),
+            group: None,
         }
     }
 }
@@ -1444,6 +1450,14 @@ mod tests {
         assert!(kc.pve_secrets.is_empty());
         let s: PveServer = serde_json::from_str(r#"{"host":"pve"}"#).unwrap();
         assert_eq!((s.port, s.token, s.display_name()), (8006, true, "pve"));
+        // Servers saved before customers existed load without one.
+        assert_eq!(s.group, None);
+        let b: PbsServer = serde_json::from_str(r#"{"host":"pbs"}"#).unwrap();
+        assert_eq!(b.group, None);
+        let g = Uuid::new_v4();
+        let s2: PveServer =
+            serde_json::from_str(&format!(r#"{{"host":"pve","group":"{g}"}}"#)).unwrap();
+        assert_eq!(s2.group, Some(g));
         assert!(
             s.notify,
             "alerts are on for servers saved before the switch existed"

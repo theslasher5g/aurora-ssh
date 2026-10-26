@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.0
+
+### Proxmox
+- **Customers for Proxmox servers:** every Proxmox VE and Backup Server can be assigned to a customer (a group; its top-level group is the customer). All Proxmox pages get a selector *All customers / Customer A / Customer B …* with the customer badge; the guest list is grouped customer → server → node → guest, a flat **table** view has a customer column, and tasks, alerts, overview and backup servers show *customer · server*. Batch actions only ever touch one customer (the selection refuses guests of another one, the confirmation names the customer and the count). "Save as host" puts the host below the customer's group. Old data loads unchanged.
+- **Guest search language:** `customer/server/name`, `type:vm`, `is:running`, `#tag`, `vmid:100`, `node:`, `ip:`, negation with `-`.
+- **Backup server file browser:** browse the `.pxar` archives of a snapshot lazily (PBS catalog API) and download a single file or a folder (zip or tar) to a chosen folder with progress, size limit and safe local file names; existing files are never overwritten.
+- **Prune, verify, garbage collection:** prune a group or a whole datastore with `keep-*` options, first as a server-side dry run, then confirmed with the counts; verify a snapshot, group or datastore; start garbage collection and see its state; running tasks with progress and log in a task list.
+- **Migrate a selection:** target node per server, live or powered-off only, optionally with local disks, one at a time or up to four in parallel; progress per guest, failures listed, "cancel rest".
+- **Cloud-init beyond `ipconfig0`:** all `ipconfigN`, DHCP/static helper with CIDR/gateway checks, nameserver, search domain, user, password (never shown, logged or stored; wiped after sending), SSH keys (also from the keychain), package upgrade, `cicustom`, regenerate the drive.
+- Not tested against a real Proxmox yet, only against mock servers.
+
 ## 0.9.2
 
 ### Look
