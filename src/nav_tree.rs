@@ -118,6 +118,8 @@ pub struct Node {
     /// Group names, outermost first, ending with this group's own name.
     pub path: Vec<String>,
     pub favorite: bool,
+    /// Manual position among the siblings (see `nav2_order`).
+    pub rank: Option<u32>,
 }
 
 pub struct Index {
@@ -153,6 +155,7 @@ impl Index {
                 name: g.name.clone(),
                 path: Vec::new(),
                 favorite: lib.nav.is_favorite(g.id),
+                rank: lib.nav.rank(g.id),
             })
             .collect();
         let by_id: HashMap<Uuid, usize> =
@@ -185,11 +188,17 @@ impl Index {
             nodes[i].path = chain;
         }
         let mut order: Vec<usize> = (0..nodes.len()).collect();
+        // Pinned first, then the manual order, then by name.
         order.sort_by(|&a, &b| {
-            nodes[b]
-                .favorite
-                .cmp(&nodes[a].favorite)
-                .then_with(|| natural_cmp(&nodes[a].name, &nodes[b].name))
+            fn sib(n: &Node) -> crate::nav2_order::Sib<'_> {
+                crate::nav2_order::Sib {
+                    id: n.id,
+                    pinned: n.favorite,
+                    rank: n.rank,
+                    name: &n.name,
+                }
+            }
+            crate::nav2_order::cmp(&sib(&nodes[a]), &sib(&nodes[b]))
         });
         let mut roots = Vec::new();
         for i in order {
@@ -388,11 +397,37 @@ pub struct Shown {
     pub order: Vec<u32>,
 }
 
+fn sort_entries(idx: &Index, order: &mut [u32], sort: Sort) {
+    match sort {
+        Sort::Name => {}
+        Sort::LastUsed => order.sort_by_key(|&e| Reverse(idx.entries[e as usize].last)),
+        Sort::OnlineFirst => order.sort_by_key(|&e| {
+            let en = &idx.entries[e as usize];
+            !(en.live || en.status == Status::Up)
+        }),
+    }
+}
+
+#[cfg(test)]
 pub fn compute(
     idx: &Index,
     keep: &dyn Fn(usize) -> bool,
     scope: Option<usize>,
     sort: Sort,
+) -> Shown {
+    compute_smart(idx, keep, scope, sort, &[], &|_, _| false)
+}
+
+/// Like [`compute`], plus smart folders: `smart_nodes` are group nodes whose members are
+/// the hosts for which `smart_match(node, entry)` holds, wherever those hosts live. The
+/// matches are listed in the folder (and counted in it and above) without moving them.
+pub fn compute_smart(
+    idx: &Index,
+    keep: &dyn Fn(usize) -> bool,
+    scope: Option<usize>,
+    sort: Sort,
+    smart_nodes: &[usize],
+    smart_match: &dyn Fn(usize, usize) -> bool,
 ) -> Shown {
     let n = idx.nodes.len();
     let mut order: Vec<u32> = idx
@@ -408,14 +443,7 @@ pub fn compute(
             in_scope && keep(e as usize)
         })
         .collect();
-    match sort {
-        Sort::Name => {}
-        Sort::LastUsed => order.sort_by_key(|&e| Reverse(idx.entries[e as usize].last)),
-        Sort::OnlineFirst => order.sort_by_key(|&e| {
-            let en = &idx.entries[e as usize];
-            !(en.live || en.status == Status::Up)
-        }),
-    }
+    sort_entries(idx, &mut order, sort);
     let mut s = Shown {
         scope,
         hosts: vec![Vec::new(); n],
@@ -442,6 +470,43 @@ pub fn compute(
                 }
             }
             None => s.loose.push(e),
+        }
+    }
+    for &sn in smart_nodes {
+        if scope.is_some_and(|sc| !idx.under(sn, sc)) {
+            continue;
+        }
+        let mut hits: Vec<u32> = idx
+            .by_name
+            .iter()
+            .copied()
+            .filter(|&e| {
+                idx.entries[e as usize].node != Some(sn)
+                    && keep(e as usize)
+                    && smart_match(sn, e as usize)
+            })
+            .collect();
+        sort_entries(idx, &mut hits, sort);
+        for &e in &hits {
+            let en = &idx.entries[e as usize];
+            s.hosts[sn].push(e);
+            let mut cur = Some(sn);
+            let mut steps = 0;
+            while let Some(c) = cur {
+                s.total[c] += 1;
+                s.roll[c].add(en);
+                steps += 1;
+                if steps > 64 {
+                    break;
+                }
+                cur = idx.nodes[c].parent;
+            }
+        }
+        // Focus on the smart folder itself: its matches are what the table shows.
+        if scope == Some(sn) {
+            let have: std::collections::HashSet<u32> = s.order.iter().copied().collect();
+            s.order
+                .extend(hits.into_iter().filter(|e| !have.contains(e)));
         }
     }
     s

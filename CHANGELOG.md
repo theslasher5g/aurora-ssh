@@ -54,6 +54,31 @@
   rules into the inventory; info snippets run as PowerShell; *Run on many hosts* works with PowerShell on
   WinRM hosts. Implemented in Aurora itself (NTLMv2, WS-Management); **tested against a mock server
   and the MS-NLMP test vectors, not against a real Windows machine yet**.
+### Large inventories 2
+- **Inventory page at 20 000+ hosts:** the rows are built once and only rebuilt when the library, the
+  collected facts, the focus or the clock (every minute) change; searching, filtering, sorting and
+  grouping only redo a cheap second step, and the table draws only the rows in view (virtual
+  scrolling). Debug build, 20 422 hosts: about 4.8 s per frame before, about 40 ms per frame now
+  (one rebuild of roughly 0.7 s when the page opens). Narrow windows show the cards in steps of 150.
+- **Customer focus on more pages:** the Proxmox pages (servers and guests follow the SSH host that
+  reaches them, a dynamic folder or their "Proxmox ..." group), the keychain (key groups can be
+  assigned to a customer; the focus shows those, optionally also the unassigned ones), the container
+  page and the certificate radar show the focus chip and only the customer's entries.
+- **Keyboard in the table view:** arrows, Page Up/Down, Home/End move a cursor (Shift extends the
+  selection), Enter opens, Space selects, Ctrl+A selects all.
+- **Manual order of groups:** drag a group header onto a sibling (line shows before/after) or use
+  *Order -> Move up/down* in the group menu. The tree sorts pinned groups first, then the manual
+  order, then by name; the order is remembered. The group menu scrolls in small windows.
+- **Dynamic folders** (group editor -> *Dynamic folder*): a group can take its hosts from
+  - a **Proxmox server** - every VM/CT becomes a host entry, kept in sync on refresh (new ones added,
+    renamed ones updated, vanished ones greyed out with an "entfernt" badge or deleted if you choose);
+  - a **search rule** such as `type:switch customer/*` - a smart folder that lists the matches without
+    copying them (`*` means "any" in path searches);
+  - a **CSV list** (file path or `https://` address, columns `name,host,port,protocol,user,group,tags,description`,
+    5 MB cap, timeouts, https-only redirects, no credentials in the address), synced at start and on demand.
+  Generated entries carry a small badge, keep name/address/protocol/group from the source (tags, notes,
+  user, identity and credentials stay yours), cannot be moved by hand and are never duplicated. A
+  status line shows the last sync, what was added/removed/changed and errors.
 
 ## 0.9.2
 

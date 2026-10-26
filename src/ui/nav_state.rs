@@ -52,6 +52,32 @@ pub enum NavAction {
     /// Add (true) or remove (false) a tag on these hosts.
     Tag(Vec<Uuid>, String, bool),
     Table(crate::ui::nav_table::TableOp),
+    /// Move a group up (-1) or down (1) among its siblings.
+    MoveGroup(Uuid, i32),
+    /// Drop group `.0` before (`false`) or after (`true`) its sibling `.1`.
+    DropGroup(Uuid, Uuid, bool),
+}
+
+/// The siblings of a group (same parent) as ordering input.
+fn siblings(lib: &crate::model::Library, group: Uuid) -> Vec<crate::nav2_order::Sib<'_>> {
+    let Some(parent) = lib.group(group).map(|g| g.parent_id) else {
+        return Vec::new();
+    };
+    lib.groups
+        .iter()
+        .filter(|g| g.parent_id == parent)
+        .map(|g| crate::nav2_order::Sib {
+            id: g.id,
+            pinned: lib.nav.is_favorite(g.id),
+            rank: lib.nav.rank(g.id),
+            name: &g.name,
+        })
+        .collect()
+}
+
+/// Can the group move by `delta` places? (for the menu)
+pub fn can_move_group(lib: &crate::model::Library, group: Uuid, delta: i32) -> bool {
+    crate::nav2_order::moved(&siblings(lib, group), group, delta).is_some()
 }
 
 /// Everything the list needs to draw a frame without touching all hosts.
@@ -120,6 +146,8 @@ pub struct NavState {
     pub recent_hosts: Vec<Uuid>,
     pub scroll_y: f32,
     pub view_h: f32,
+    /// Dynamic folders: loading, sync state, editor draft (`nav2_dyn`).
+    pub dynst: crate::ui::nav2_dyn::DynState,
 }
 
 /// Memo of the palette's host search.
@@ -330,7 +358,25 @@ fn ensure_inner(nav: &mut NavState, app: &App, ctx: &egui::Context, drag: bool) 
                 && (query.conds.is_empty() || query.matches(&idx.facets(lib, e)))
         };
         let sort = Sort::from_u8(lib.settings.sort);
-        c.shown = nav_tree::compute(idx, &keep, scope_node, sort);
+        // Smart folders (dynamic folders with a rule) list matches from anywhere.
+        let smart: Vec<(usize, Query)> = lib
+            .nav
+            .dynamic
+            .iter()
+            .filter_map(|(g, f)| {
+                Some((*idx.by_id.get(g)?, crate::nav2_dyn::rule_query(&f.source)?))
+            })
+            .collect();
+        let smart_nodes: Vec<usize> = smart.iter().map(|(n, _)| *n).collect();
+        let smart_match = |node: usize, e: usize| {
+            smart
+                .iter()
+                .find(|(n, _)| *n == node)
+                .is_some_and(|(_, q)| {
+                    q.matches(&idx.facets(lib, e)) && q.score(&idx.entries[e].hay).is_some()
+                })
+        };
+        c.shown = nav_tree::compute_smart(idx, &keep, scope_node, sort, &smart_nodes, &smart_match);
         c.flat = (!query.words.is_empty()).then(|| nav_tree::rank(idx, &query, &keep, scope_node));
         c.filtering = !query.is_empty() || filter != 0;
         c.auto_open = c.filtering && c.shown.order.len() <= AUTO_OPEN_MAX;
@@ -480,6 +526,14 @@ fn open_chain(app: &mut App, group: Uuid) {
 }
 
 pub fn set_scope(app: &mut App, scope: Option<Uuid>) {
+    // A rule folder lists hosts from everywhere: it is a view, not a customer.
+    let scope = scope.filter(|g| {
+        !app.lib
+            .nav
+            .dynamic
+            .get(g)
+            .is_some_and(|f| matches!(f.source, crate::nav2_dyn::DynSource::Rule { .. }))
+    });
     app.lib.nav.scope = scope;
     if let Some(g) = scope {
         app.lib.nav.touch_group(g);
@@ -713,6 +767,19 @@ pub fn apply(app: &mut App, action: NavAction, ctx: &egui::Context) {
         NavAction::MoveView(id, d) => {
             nav_model::move_view(&mut app.lib.settings.saved_views, id, d);
             app.save_library();
+        }
+        NavAction::MoveGroup(g, d) => {
+            if let Some(order) = crate::nav2_order::moved(&siblings(&app.lib, g), g, d) {
+                app.lib.nav.set_ranks(&crate::nav2_order::ranks(&order));
+                app.save_library();
+            }
+        }
+        NavAction::DropGroup(g, onto, after) => {
+            if let Some(order) = crate::nav2_order::dropped(&siblings(&app.lib, g), g, onto, after)
+            {
+                app.lib.nav.set_ranks(&crate::nav2_order::ranks(&order));
+                app.save_library();
+            }
         }
         NavAction::Table(op) => {
             use crate::ui::nav_table::TableOp;

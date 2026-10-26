@@ -302,12 +302,27 @@ pub fn collectable(h: &Host) -> bool {
 /// All saved hosts as rows.
 pub fn rows(lib: &Library, now: DateTime<Utc>) -> Vec<Row> {
     let s = &lib.settings.inventory;
+    // Group path and inherited environment are the same for every host of a group:
+    // look them up once per group (20 000 hosts × linear group search was the slow part).
+    let mut memo: std::collections::HashMap<Option<Uuid>, (String, Vec<Uuid>, Env)> =
+        std::collections::HashMap::new();
     lib.hosts
         .iter()
         .filter(|h| !h.protocol.is_container())
         .map(|h| {
             let f = lib.facts.get(&h.id);
-            let (group, group_chain) = group_path(lib, h);
+            let (group, group_chain, group_env) = memo
+                .entry(h.group_id)
+                .or_insert_with(|| {
+                    let (p, c) = group_path(lib, h);
+                    let env = lib.env_of(&Host {
+                        group_id: h.group_id,
+                        env: Env::None,
+                        ..Default::default()
+                    });
+                    (p, c, env)
+                })
+                .clone();
             let address = if h.protocol == Protocol::Serial {
                 h.serial.port_name.clone()
             } else if h.port == h.protocol.default_port() {
@@ -334,7 +349,7 @@ pub fn rows(lib: &Library, now: DateTime<Utc>) -> Vec<Row> {
                 load1: f.and_then(|f| f.load1),
                 last_connected: h.last_connected,
                 facts_at: f.and_then(|f| f.collected),
-                env: lib.env_of(h),
+                env: if h.env != Env::None { h.env } else { group_env },
                 tags: h.tags.clone(),
                 warnings: warnings(f, s, now, collectable(h)),
                 has_facts: f.is_some(),
@@ -705,7 +720,15 @@ pub fn matches(r: &Row, f: &Filter) -> bool {
     {
         return false;
     }
-    let hay = format!(
+    if f.text.trim().is_empty() {
+        return true;
+    }
+    matches_hay(&hay(r), f)
+}
+
+/// Lowercase text the free-text words of a filter are looked up in.
+pub fn hay(r: &Row) -> String {
+    format!(
         "{} {} {} {} {} {} {}",
         r.name,
         r.group,
@@ -715,11 +738,29 @@ pub fn matches(r: &Row, f: &Filter) -> bool {
         r.tags.join(" "),
         r.env.label()
     )
-    .to_lowercase();
+    .to_lowercase()
+}
+
+/// The free-text part of [`matches`] against a ready-made [`hay`].
+pub fn matches_hay(hay: &str, f: &Filter) -> bool {
     f.text
         .to_lowercase()
         .split_whitespace()
         .all(|w| hay.contains(w))
+}
+
+/// The non-text conditions of [`matches`] (problems, PROD, group).
+pub fn matches_flags(r: &Row, f: &Filter) -> bool {
+    if f.only_problems && r.warnings.is_empty() {
+        return false;
+    }
+    if f.only_prod && r.env != Env::Prod {
+        return false;
+    }
+    match f.group {
+        Some(g) => r.group_chain.contains(&g),
+        None => true,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

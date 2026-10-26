@@ -183,7 +183,14 @@ fn parse_cond(tok: &str) -> Option<Option<Cond>> {
         return Some(Some(c));
     }
     if lower.contains('/') {
-        let parts: Vec<String> = lower.split('/').map(|p| p.trim().to_string()).collect();
+        // `*` alone means "any" (`kunde/*`).
+        let parts: Vec<String> = lower
+            .split('/')
+            .map(|p| match p.trim() {
+                "*" => String::new(),
+                p => p.to_string(),
+            })
+            .collect();
         if parts.len() >= 2 && parts.iter().any(|p| !p.is_empty()) {
             return Some(Some(Cond::Path(parts)));
         }

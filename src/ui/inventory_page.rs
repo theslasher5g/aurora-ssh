@@ -14,7 +14,7 @@ use crate::backend::inventory_doc as doc;
 use crate::backend::inventory_export::{self as export, Format};
 use crate::backend::inventory_info::InfoSnippet;
 use crate::backend::inventory_refresh::{self as refresh, Done};
-use crate::backend::inventory_rules::{self as rules, Col, Filter, InventorySettings, Row};
+use crate::backend::inventory_rules::{self as rules, Col, InventorySettings, Row};
 use crate::backend::ssh::SshParams;
 use crate::model::Protocol;
 use crate::theme;
@@ -57,6 +57,10 @@ pub struct InvState {
     pub detail: crate::ui::inventory_detail::DetailState,
     /// Export dialog is open.
     pub export_open: bool,
+    /// Rows of the page, rebuilt only when something changed (`nav2_inv`).
+    pub cache: crate::ui::nav2_inv::InvCache,
+    /// Bumped whenever collected facts arrive (cache key).
+    pub facts_epoch: u64,
 }
 
 impl InvState {
@@ -96,6 +100,7 @@ pub fn pump(app: &mut App, ctx: &egui::Context) {
     for d in events {
         let result = match d.result {
             Ok(c) => {
+                app.inv.facts_epoch += 1;
                 app.lib.facts.insert(d.host, c.facts);
                 app.lib.detail.insert(d.host, c.detail);
                 Ok(())
@@ -298,23 +303,11 @@ fn scope_text(app: &App, hosts: usize) -> String {
 }
 
 /// Filtered and sorted rows and the visible columns (what the table shows).
-pub fn visible(app: &App, now: chrono::DateTime<Utc>) -> (Vec<Row>, Vec<Col>) {
-    let s = &app.lib.settings.inventory;
-    let filter = Filter {
-        text: app.inv.text.clone(),
-        only_problems: app.inv.only_problems,
-        only_prod: app.inv.only_prod,
-        group: app.inv.group,
-    };
-    let scope = app.lib.nav.scope;
-    let mut rows: Vec<Row> = rules::rows(&app.lib, now)
-        .into_iter()
-        .filter(|r| scope.is_none_or(|s| r.group_chain.contains(&s)))
-        .filter(|r| rules::matches(r, &filter))
-        .collect();
-    let sort = Col::from_key(&s.sort_col).unwrap_or(Col::Name);
-    rules::sort_rows(&mut rows, sort, s.sort_desc, now);
-    (rows, columns(s))
+pub fn visible(app: &App, _now: chrono::DateTime<Utc>) -> (Vec<Row>, Vec<Col>) {
+    (
+        crate::ui::nav2_inv::export_rows(app),
+        columns(&app.lib.settings.inventory),
+    )
 }
 
 pub fn columns(s: &InventorySettings) -> Vec<Col> {
@@ -330,18 +323,15 @@ pub fn columns(s: &InventorySettings) -> Vec<Col> {
 
 pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
     let now = Utc::now();
-    let scope = app.lib.nav.scope;
-    let mut all = rules::rows(&app.lib, now);
-    all.retain(|r| scope.is_none_or(|s| r.group_chain.contains(&s)));
-    let summary = rules::summarize(&all);
-    let (rows, cols) = visible(app, now);
+    crate::ui::nav2_inv::ensure(app);
+    let summary = app.inv.cache.summary;
+    let cols = columns(&app.lib.settings.inventory);
+    let n_rows = app.inv.cache.order.len();
+    let n_all = app.inv.cache.all.len();
     if app.inv.run.as_ref().is_some_and(Run::active) {
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(500));
     }
-    // Selection only holds hosts that still exist.
-    let ids: HashSet<Uuid> = all.iter().map(|r| r.id).collect();
-    app.inv.selected.retain(|i| ids.contains(i));
 
     let mut st = std::mem::take(&mut app.inv);
     let mut settings = app.lib.settings.inventory.clone();
@@ -371,7 +361,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         ui,
         "inv",
         |ui| {
-            theme::page_title(ui, t!("Inventar"), Some(rows.len()));
+            theme::page_title(ui, t!("Inventar"), Some(n_rows));
             crate::ui::nav_list::scope_chip(app_ref, ui, &mut chip_actions);
         },
         |_| {},
@@ -419,11 +409,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.set_max_width(ui.available_width() - 14.0);
-            if rows.is_empty() {
+            if n_rows == 0 {
                 ui.add_space(30.0);
                 ui.vertical_centered(|ui| {
                     ui.label(
-                        RichText::new(if all.is_empty() {
+                        RichText::new(if n_all == 0 {
                             t!("Noch keine Hosts gespeichert")
                         } else {
                             t!("Keine Hosts passen zum Filter")
@@ -432,15 +422,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                     );
                 });
             } else {
+                let cache = std::mem::take(&mut st.cache);
                 crate::ui::inventory_table::show(
                     ui,
-                    &rows,
+                    &cache,
                     &cols,
                     &mut settings,
                     &mut st.selected,
                     now,
                     actions,
                 );
+                st.cache = cache;
             }
             ui.add_space(40.0);
         });
@@ -473,7 +465,7 @@ fn export_dialog(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) 
     }
     let mut prefs = app.lib.settings.inventory.export.clone();
     let before = prefs.clone();
-    let hosts = visible(app, Utc::now()).0.len();
+    let hosts = app.inv.cache.order.len();
     let scope = scope_text(app, hosts);
     let formats = [
         ("csv", "CSV"),

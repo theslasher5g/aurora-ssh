@@ -13,7 +13,7 @@ use crate::nav_model::{Col, TableCfg, ViewMode};
 use crate::nav_query::Status;
 use crate::nav_tree::{self, natural_cmp};
 use crate::theme;
-use crate::ui::nav_state::{Cache, NavAction};
+use crate::ui::nav_state::{Cache, Cursor, NavAction};
 use crate::ui::relative_time;
 
 const ROW_H: f32 = 30.0;
@@ -141,7 +141,97 @@ fn status_text(app: &App, st: Status, live: bool, ms: Option<u32>) -> (String, C
     }
 }
 
-pub fn show(app: &App, c: &Cache, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+/// Keyboard in the table: arrows, Page Up/Down, Home/End move the cursor (Shift extends the
+/// selection), Enter opens, Space selects, Ctrl+A selects everything. Returns the new cursor
+/// position (index into `ids`) if it moved.
+fn keys(
+    app: &App,
+    ui: &egui::Ui,
+    ids: &[Uuid],
+    cursor: Option<Cursor>,
+    page: usize,
+    actions: &mut Vec<Action>,
+) -> Option<usize> {
+    use egui::{Key, Modifiers};
+    if ids.is_empty() || crate::ui::nav_list::modal_or_popup(ui.ctx()) {
+        return None;
+    }
+    let cur = match cursor {
+        Some(Cursor::Host(id)) => ids.iter().position(|x| *x == id),
+        _ => None,
+    };
+    let (shift, all, up, down, pgup, pgdn, home, end, enter, space) = ui.input_mut(|i| {
+        let none = Modifiers::NONE;
+        let sh = Modifiers::SHIFT;
+        let mv = |i: &mut egui::InputState, k: Key| {
+            let a = i.consume_key(none, k);
+            let b = i.consume_key(sh, k);
+            (a || b, b)
+        };
+        let (up, s1) = mv(i, Key::ArrowUp);
+        let (down, s2) = mv(i, Key::ArrowDown);
+        let (pgup, s3) = mv(i, Key::PageUp);
+        let (pgdn, s4) = mv(i, Key::PageDown);
+        let (home, s5) = mv(i, Key::Home);
+        let (end, s6) = mv(i, Key::End);
+        (
+            s1 || s2 || s3 || s4 || s5 || s6,
+            i.consume_key(Modifiers::COMMAND, Key::A),
+            up,
+            down,
+            pgup,
+            pgdn,
+            home,
+            end,
+            i.consume_key(none, Key::Enter),
+            i.consume_key(none, Key::Space),
+        )
+    });
+    if all {
+        actions.push(Action::SelectAll(ids.to_vec()));
+    }
+    let last = ids.len() - 1;
+    let target = if up {
+        Some(cur.map_or(last, |c| c.saturating_sub(1)))
+    } else if down {
+        Some(cur.map_or(0, |c| (c + 1).min(last)))
+    } else if pgup {
+        Some(cur.map_or(0, |c| c.saturating_sub(page)))
+    } else if pgdn {
+        Some(cur.map_or(0, |c| (c + page).min(last)))
+    } else if home {
+        Some(0)
+    } else if end {
+        Some(last)
+    } else {
+        None
+    };
+    if let Some(c) = cur {
+        if enter {
+            actions.push(Action::Connect(ids[c]));
+        } else if space {
+            actions.push(Action::SelectHost(ids[c], 1));
+        }
+    }
+    if let Some(t) = target {
+        if shift {
+            // Shift extends the selection from the anchor to the new row.
+            actions.push(Action::SelectHost(ids[t], 2));
+        }
+        let _ = app;
+        return Some(t);
+    }
+    None
+}
+
+pub fn show(
+    app: &App,
+    c: &Cache,
+    ui: &mut egui::Ui,
+    cursor: &mut Option<Cursor>,
+    scroll_to: &mut Option<Cursor>,
+    actions: &mut Vec<Action>,
+) {
     let ctx = ui.ctx().clone();
     let lib = &app.lib;
     let cfg = &lib.nav.table;
@@ -257,153 +347,180 @@ pub fn show(app: &App, c: &Cache, ui: &mut egui::Ui, actions: &mut Vec<Action>) 
 
     // --- body
     let n = sorted.rows.len();
-    egui::ScrollArea::vertical()
+    let view_id = egui::Id::new("nav-table-view");
+    let (off_y, view_h): (f32, f32) = ctx.data(|d| d.get_temp(view_id)).unwrap_or((0.0, 400.0));
+    let page = ((view_h / ROW_H) as usize).saturating_sub(1).max(1);
+    if let Some(t) = keys(app, ui, &sorted.ids, *cursor, page, actions) {
+        *cursor = Some(Cursor::Host(sorted.ids[t]));
+        *scroll_to = *cursor;
+    }
+    let mut area = egui::ScrollArea::vertical()
         .id_salt("nav-table")
-        .auto_shrink([false, false])
-        .show_viewport(ui, |ui, viewport| {
-            let (full, _) =
-                ui.allocate_exact_size(Vec2::new(avail, n as f32 * ROW_H + 30.0), Sense::hover());
-            let first = (viewport.top() / ROW_H).floor().max(0.0) as usize;
-            let last = ((viewport.bottom() / ROW_H).ceil() as usize + 1).min(n);
-            let reach = lib.settings.reachability;
-            let _ = reach;
-            for i in first..last {
-                let e = sorted.rows[i];
-                let en = &c.idx.entries[e as usize];
-                let h = &lib.hosts[en.host];
-                let rect = Rect::from_min_size(
-                    Pos2::new(full.left(), full.top() + i as f32 * ROW_H),
-                    Vec2::new(avail, ROW_H),
+        .auto_shrink([false, false]);
+    if let Some(Cursor::Host(id)) = scroll_to.take()
+        && let Some(i) = sorted.ids.iter().position(|x| *x == id)
+    {
+        let (top, bottom) = (i as f32 * ROW_H, (i + 1) as f32 * ROW_H);
+        if top < off_y {
+            area = area.vertical_scroll_offset(top);
+        } else if bottom > off_y + view_h {
+            area = area.vertical_scroll_offset((bottom - view_h).max(0.0));
+        }
+    }
+    let out = area.show_viewport(ui, |ui, viewport| {
+        let (full, _) =
+            ui.allocate_exact_size(Vec2::new(avail, n as f32 * ROW_H + 30.0), Sense::hover());
+        let first = (viewport.top() / ROW_H).floor().max(0.0) as usize;
+        let last = ((viewport.bottom() / ROW_H).ceil() as usize + 1).min(n);
+        let reach = lib.settings.reachability;
+        let _ = reach;
+        for i in first..last {
+            let e = sorted.rows[i];
+            let en = &c.idx.entries[e as usize];
+            let h = &lib.hosts[en.host];
+            let rect = Rect::from_min_size(
+                Pos2::new(full.left(), full.top() + i as f32 * ROW_H),
+                Vec2::new(avail, ROW_H),
+            );
+            let resp = ui.interact(rect, ui.id().with(("tr", i)), Sense::click_and_drag());
+            let selected = app.selected_hosts.contains(&h.id);
+            let at_cursor = *cursor == Some(Cursor::Host(h.id));
+            let p = ui.painter();
+            if at_cursor {
+                p.rect_stroke(
+                    rect,
+                    CornerRadius::same(6),
+                    Stroke::new(1.5, theme::accent()),
+                    egui::StrokeKind::Inside,
                 );
-                let resp = ui.interact(rect, ui.id().with(("tr", i)), Sense::click_and_drag());
-                let selected = app.selected_hosts.contains(&h.id);
-                let p = ui.painter();
-                if selected {
-                    p.rect_filled(rect, CornerRadius::same(6), theme::accent_soft());
-                } else if resp.hovered() {
-                    p.rect_filled(rect, CornerRadius::same(6), theme::hover());
-                } else if i % 2 == 1 {
-                    p.rect_filled(rect, CornerRadius::same(6), Color32::from_white_alpha(3));
-                }
-                resp.dnd_set_drag_payload(h.id);
-                let mut cx = rect.left() + PAD;
-                for cc in &cols {
-                    let w = width_of(*cc);
-                    let max = (w - 10.0).max(10.0);
-                    let cy = rect.center().y;
-                    let (text, color, font): (String, Color32, FontId) = match cc {
-                        Col::Name => {
-                            let dot = match (en.live, en.status) {
-                                (true, _) | (_, Status::Up) => theme::green(),
-                                (_, Status::Failed) => theme::red(),
-                                (_, Status::Maint) => theme::amber(),
-                                _ => theme::off_color(),
-                            };
-                            theme::led(p, Pos2::new(cx + 5.0, cy), dot, dot != theme::off_color());
-                            let g = theme::truncated(
-                                p,
-                                h.display_name(),
-                                theme::semibold(13.5),
-                                theme::text(),
-                                max - 18.0,
-                            );
-                            p.galley(
-                                Pos2::new(cx + 18.0, cy - g.size().y / 2.0),
-                                g,
-                                theme::text(),
-                            );
-                            cx += w;
-                            continue;
-                        }
-                        Col::Address => {
-                            let port = if h.port == h.protocol.default_port()
-                                || !h.protocol.is_network()
-                            {
+            }
+            if selected {
+                p.rect_filled(rect, CornerRadius::same(6), theme::accent_soft());
+            } else if resp.hovered() {
+                p.rect_filled(rect, CornerRadius::same(6), theme::hover());
+            } else if i % 2 == 1 {
+                p.rect_filled(rect, CornerRadius::same(6), Color32::from_white_alpha(3));
+            }
+            resp.dnd_set_drag_payload(h.id);
+            let mut cx = rect.left() + PAD;
+            for cc in &cols {
+                let w = width_of(*cc);
+                let max = (w - 10.0).max(10.0);
+                let cy = rect.center().y;
+                let (text, color, font): (String, Color32, FontId) = match cc {
+                    Col::Name => {
+                        let dot = match (en.live, en.status) {
+                            (true, _) | (_, Status::Up) => theme::green(),
+                            (_, Status::Failed) => theme::red(),
+                            (_, Status::Maint) => theme::amber(),
+                            _ => theme::off_color(),
+                        };
+                        theme::led(p, Pos2::new(cx + 5.0, cy), dot, dot != theme::off_color());
+                        let g = theme::truncated(
+                            p,
+                            h.display_name(),
+                            theme::semibold(13.5),
+                            theme::text(),
+                            max - 18.0,
+                        );
+                        p.galley(
+                            Pos2::new(cx + 18.0, cy - g.size().y / 2.0),
+                            g,
+                            theme::text(),
+                        );
+                        cx += w;
+                        continue;
+                    }
+                    Col::Address => {
+                        let port =
+                            if h.port == h.protocol.default_port() || !h.protocol.is_network() {
                                 String::new()
                             } else {
                                 format!(":{}", h.port)
                             };
+                        (
+                            format!("{}{}", addr(h), port),
+                            theme::text_dim(),
+                            FontId::monospace(12.0),
+                        )
+                    }
+                    Col::Kind => (
+                        crate::ui::hosts::protocol_tag(h.protocol).to_string(),
+                        crate::ui::hosts::protocol_color(h.protocol),
+                        theme::medium(12.0),
+                    ),
+                    Col::Tags => (h.tags.join(", "), theme::text_dim(), theme::medium(12.0)),
+                    Col::Status => {
+                        let ms = if reach {
+                            match app.reach.get(h.id) {
+                                Some(crate::backend::reach::Reach::Up(ms)) => Some(ms),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        };
+                        let (t, col) = status_text(app, en.status, en.live, ms);
+                        (t, col, theme::medium(12.5))
+                    }
+                    Col::Seen => (
+                        match (en.status, h.last_connected) {
+                            (Status::Up, _) => t!("jetzt").to_string(),
+                            (_, Some(t)) => relative_time(t),
+                            _ => "—".to_string(),
+                        },
+                        theme::text_dim(),
+                        theme::medium(12.5),
+                    ),
+                    Col::Env => {
+                        let e = lib.env_of(h);
+                        if e == crate::model::Env::None {
+                            ("—".to_string(), theme::text_dim(), theme::medium(12.0))
+                        } else {
                             (
-                                format!("{}{}", addr(h), port),
-                                theme::text_dim(),
-                                FontId::monospace(12.0),
+                                e.label().to_string(),
+                                theme::env_color(e),
+                                theme::bold(11.5),
                             )
                         }
-                        Col::Kind => (
-                            crate::ui::hosts::protocol_tag(h.protocol).to_string(),
-                            crate::ui::hosts::protocol_color(h.protocol),
-                            theme::medium(12.0),
-                        ),
-                        Col::Tags => (h.tags.join(", "), theme::text_dim(), theme::medium(12.0)),
-                        Col::Status => {
-                            let ms = if reach {
-                                match app.reach.get(h.id) {
-                                    Some(crate::backend::reach::Reach::Up(ms)) => Some(ms),
-                                    _ => None,
-                                }
-                            } else {
-                                None
-                            };
-                            let (t, col) = status_text(app, en.status, en.live, ms);
-                            (t, col, theme::medium(12.5))
-                        }
-                        Col::Seen => (
-                            match (en.status, h.last_connected) {
-                                (Status::Up, _) => t!("jetzt").to_string(),
-                                (_, Some(t)) => relative_time(t),
-                                _ => "—".to_string(),
-                            },
-                            theme::text_dim(),
-                            theme::medium(12.5),
-                        ),
-                        Col::Env => {
-                            let e = lib.env_of(h);
-                            if e == crate::model::Env::None {
-                                ("—".to_string(), theme::text_dim(), theme::medium(12.0))
-                            } else {
-                                (
-                                    e.label().to_string(),
-                                    theme::env_color(e),
-                                    theme::bold(11.5),
-                                )
-                            }
-                        }
-                        Col::Group => (
-                            en.node
-                                .map(|nd| c.idx.nodes[nd].path.join(" / "))
-                                .unwrap_or_default(),
-                            theme::text_dim(),
-                            theme::medium(12.5),
-                        ),
-                    };
-                    if !text.is_empty() {
-                        let g = theme::truncated(p, text, font, color, max);
-                        p.galley(Pos2::new(cx, cy - g.size().y / 2.0), g, color);
                     }
-                    cx += w;
+                    Col::Group => (
+                        en.node
+                            .map(|nd| c.idx.nodes[nd].path.join(" / "))
+                            .unwrap_or_default(),
+                        theme::text_dim(),
+                        theme::medium(12.5),
+                    ),
+                };
+                if !text.is_empty() {
+                    let g = theme::truncated(p, text, font, color, max);
+                    p.galley(Pos2::new(cx, cy - g.size().y / 2.0), g, color);
                 }
-                if resp.clicked() {
-                    let m = ui.input(|i| i.modifiers);
-                    let mode = if m.shift {
-                        2
-                    } else if m.command {
-                        1
-                    } else {
-                        0
-                    };
-                    if mode != 0 || !app.selected_hosts.is_empty() {
-                        actions.push(Action::SelectHost(h.id, mode));
-                    }
-                }
-                if resp.double_clicked() {
-                    actions.push(Action::Connect(h.id));
-                }
-                resp.context_menu(|ui| {
-                    let maint = crate::ui::maintenance::active_for(lib, h.id, chrono::Utc::now());
-                    crate::ui::hosts::host_menu(ui, app, h, maint, actions);
-                });
+                cx += w;
             }
-        });
+            if resp.clicked() {
+                *cursor = Some(Cursor::Host(h.id));
+                let m = ui.input(|i| i.modifiers);
+                let mode = if m.shift {
+                    2
+                } else if m.command {
+                    1
+                } else {
+                    0
+                };
+                if mode != 0 || !app.selected_hosts.is_empty() {
+                    actions.push(Action::SelectHost(h.id, mode));
+                }
+            }
+            if resp.double_clicked() {
+                actions.push(Action::Connect(h.id));
+            }
+            resp.context_menu(|ui| {
+                let maint = crate::ui::maintenance::active_for(lib, h.id, chrono::Utc::now());
+                crate::ui::hosts::host_menu(ui, app, h, maint, actions);
+            });
+        }
+    });
+    ctx.data_mut(|d| d.insert_temp(view_id, (out.state.offset.y, out.inner_rect.height())));
     let _ = (RichText::new(""), nav_tree::visible_range);
 }
 

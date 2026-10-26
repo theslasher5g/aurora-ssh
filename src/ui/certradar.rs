@@ -361,6 +361,32 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     } else {
         lib.net.certs.clone()
     };
+    // Customer focus: only certificates of that customer's hosts and Proxmox servers.
+    let scope_name = crate::ui::nav_state::scope_name(lib).map(str::to_string);
+    let list: Vec<CertInfo> = match crate::ui::nav2_scope::group_set(lib, lib.nav.scope) {
+        None => list,
+        Some(set) => {
+            let set = Some(set);
+            let ok_hosts: std::collections::HashSet<uuid::Uuid> = lib
+                .hosts
+                .iter()
+                .filter(|h| crate::ui::nav2_scope::host_ok(&set, h))
+                .map(|h| h.id)
+                .collect();
+            let pve: std::collections::HashSet<String> = lib
+                .pve_servers
+                .iter()
+                .filter(|s| crate::ui::nav2_scope::pve_ok(lib, &set, s))
+                .map(|s| s.host.trim().to_string())
+                .collect();
+            list.into_iter()
+                .filter(|c| match c.host_id {
+                    Some(h) => ok_hosts.contains(&h),
+                    None => pve.contains(&c.address),
+                })
+                .collect()
+        }
+    };
     let mut refresh = false;
     let mut daily = !lib.net.radar_paused;
     let ((), dismissed) = theme::sheet(
@@ -383,7 +409,12 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     t!("Stand: {}", crate::ui::relative_time(t))
                 ));
             }
-            ui.label(RichText::new(status).size(13.0).color(theme::text_dim()));
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(status).size(13.0).color(theme::text_dim()));
+                if let Some(n) = &scope_name {
+                    theme::tag(ui, &t!("Fokus: {}", n), Some(theme::accent()));
+                }
+            });
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 if let Some(i) = theme::segmented(ui, &[t!("Alle"), t!("Läuft bald ab")], r.view) {

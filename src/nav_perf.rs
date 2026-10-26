@@ -9,7 +9,7 @@ struct Stats {
     since: Instant,
 }
 
-fn enabled() -> bool {
+pub fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("AURORA_PERF").is_some())
 }

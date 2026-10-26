@@ -50,7 +50,13 @@ pub fn overview(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         no_servers(ui);
         return;
     }
-    let servers = app.lib.pve_servers.clone();
+    let servers = crate::ui::nav2_scope::pve_servers(app);
+    if servers.is_empty() {
+        let mut acts = Vec::new();
+        crate::ui::nav2_scope::empty_hint(ui, app, t!("keinen Proxmox-Server"), &mut acts);
+        actions.append(&mut acts);
+        return;
+    }
     egui::ScrollArea::vertical()
         .id_salt("pve-overview")
         .auto_shrink([false, false])
@@ -437,7 +443,13 @@ pub fn tasks(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         }
     });
     ui.add_space(14.0);
-    let servers = app.lib.pve_servers.clone();
+    let servers = crate::ui::nav2_scope::pve_servers(app);
+    if servers.is_empty() {
+        let mut acts = Vec::new();
+        crate::ui::nav2_scope::empty_hint(ui, app, t!("keinen Proxmox-Server"), &mut acts);
+        actions.append(&mut acts);
+        return;
+    }
     let filter = app.pve.cluster.task_filter;
     let now = chrono::Utc::now().timestamp();
     egui::ScrollArea::vertical()

@@ -13,60 +13,28 @@ use crate::model::{Env, Protocol};
 use crate::theme;
 use crate::ui::inventory_page::InvAction;
 
-const ROW_H: f32 = 48.0;
+use crate::ui::nav2_inv::{HEAD_H as GROUP_H, InvCache, Item, ROW_H};
+
 const HEAD_H: f32 = 34.0;
 /// Below this width the page shows cards.
 const MIN_TABLE: f32 = 620.0;
+/// Cards have varying heights and are not virtualised: this many at a time.
+const CARD_STEP: usize = 150;
 
 pub fn show(
     ui: &mut egui::Ui,
-    rows: &[Row],
+    cache: &InvCache,
     cols: &[Col],
     s: &mut InventorySettings,
     selected: &mut HashSet<Uuid>,
     now: DateTime<Utc>,
     actions: &mut Vec<Action>,
 ) {
-    let groups = grouped(rows, s.group_by_group);
     if ui.available_width() < MIN_TABLE {
-        cards(ui, &groups, s.group_by_group, cols, selected, now, actions);
+        cards(ui, cache, s.group_by_group, cols, selected, now, actions);
     } else {
-        table(
-            ui,
-            &groups,
-            s.group_by_group,
-            cols,
-            s,
-            selected,
-            now,
-            actions,
-        );
+        table(ui, cache, cols, s, selected, now, actions);
     }
-}
-
-/// `(group name, rows)`; one unnamed group when grouping is off.
-fn grouped(rows: &[Row], by_group: bool) -> Vec<(String, Vec<&Row>)> {
-    if !by_group {
-        return vec![(String::new(), rows.iter().collect())];
-    }
-    let mut out: Vec<(String, Vec<&Row>)> = Vec::new();
-    for r in rows {
-        match out.iter_mut().find(|(g, _)| *g == r.group) {
-            Some((_, v)) => v.push(r),
-            None => out.push((r.group.clone(), vec![r])),
-        }
-    }
-    out.sort_by(|a, b| match (a.0.is_empty(), b.0.is_empty()) {
-        (true, false) => std::cmp::Ordering::Greater,
-        (false, true) => std::cmp::Ordering::Less,
-        _ => a.0.to_lowercase().cmp(&b.0.to_lowercase()),
-    });
-    for (g, _) in out.iter_mut() {
-        if g.is_empty() {
-            *g = t!("Ohne Gruppe").to_string();
-        }
-    }
-    out
 }
 
 fn level_color(l: Option<Level>) -> Color32 {
@@ -143,11 +111,9 @@ fn can_files(r: &Row) -> bool {
 
 // --- table ---------------------------------------------------------------------
 
-#[allow(clippy::too_many_arguments)]
 fn table(
     ui: &mut egui::Ui,
-    groups: &[(String, Vec<&Row>)],
-    by_group: bool,
+    cache: &InvCache,
     cols: &[Col],
     s: &mut InventorySettings,
     selected: &mut HashSet<Uuid>,
@@ -155,6 +121,7 @@ fn table(
     actions: &mut Vec<Action>,
 ) {
     const CHECK_W: f32 = 34.0;
+    let by_group = s.group_by_group;
     let avail = ui.available_width();
     // Columns that fit; the rest is dropped from the right.
     let mut shown: Vec<Col> = Vec::new();
@@ -180,9 +147,11 @@ fn table(
     // Header
     let (hrect, _) = ui.allocate_exact_size(Vec2::new(avail, HEAD_H), Sense::hover());
     let mut x = hrect.left() + CHECK_W;
-    let all_rows: Vec<&Row> = groups.iter().flat_map(|(_, v)| v.iter().copied()).collect();
     {
-        let mut all = !all_rows.is_empty() && all_rows.iter().all(|r| selected.contains(&r.id));
+        // "All selected" only needs a full scan when as many rows are selected as shown.
+        let n = cache.order.len();
+        let mut all =
+            n > 0 && selected.len() >= n && cache.rows().all(|r| selected.contains(&r.id));
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(Rect::from_min_size(
@@ -197,7 +166,7 @@ fn table(
             .changed()
         {
             if all {
-                selected.extend(all_rows.iter().map(|r| r.id));
+                selected.extend(cache.rows().map(|r| r.id));
             } else {
                 selected.clear();
             }
@@ -243,36 +212,58 @@ fn table(
         }
         x += *w;
     }
+    // Only the lines in view are drawn (virtual scrolling): the lines above and below
+    // are stand-ins of the right height.
     theme::list_card().show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
-        for (gi, (name, items)) in groups.iter().enumerate() {
-            if by_group {
-                let (r, _) =
-                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::hover());
-                ui.painter()
-                    .rect_filled(r, CornerRadius::ZERO, theme::fill());
-                ui.painter().text(
-                    Pos2::new(r.left() + 14.0, r.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    format!("{name}  ·  {}", items.len()),
-                    theme::semibold(12.5),
-                    theme::text(),
-                );
-            }
-            for (i, r) in items.iter().enumerate() {
-                table_row(
-                    ui,
-                    r,
-                    &shown,
-                    &widths,
-                    s,
-                    selected,
-                    now,
-                    i > 0 || gi > 0 || by_group,
-                    actions,
-                );
+        let items = &cache.items;
+        let n = items.items.len();
+        let clip = ui.clip_rect();
+        let top = ui.cursor().top();
+        let range = crate::nav_tree::visible_range(
+            &items.y,
+            clip.top() - top - 2.0 * ROW_H,
+            clip.bottom() - top + 2.0 * ROW_H,
+        );
+        let (first, last) = (range.start, range.end.min(n));
+        ui.add_space(items.y.get(first).copied().unwrap_or(0.0));
+        for i in first..last {
+            match items.items[i] {
+                Item::Head(h) => {
+                    let (name, count) = &items.heads[h as usize];
+                    let (r, _) = ui.allocate_exact_size(
+                        Vec2::new(ui.available_width(), GROUP_H),
+                        Sense::hover(),
+                    );
+                    ui.painter()
+                        .rect_filled(r, CornerRadius::ZERO, theme::fill());
+                    ui.painter().text(
+                        Pos2::new(r.left() + 14.0, r.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        format!("{name}  ·  {count}"),
+                        theme::semibold(12.5),
+                        theme::text(),
+                    );
+                }
+                Item::Row(ri) => {
+                    let divider = i > 0;
+                    table_row(
+                        ui,
+                        &cache.all[ri as usize],
+                        &shown,
+                        &widths,
+                        s,
+                        selected,
+                        now,
+                        divider || by_group,
+                        actions,
+                    );
+                }
             }
         }
+        let total = items.y.last().copied().unwrap_or(0.0);
+        let below = total - items.y.get(last).copied().unwrap_or(total);
+        ui.add_space(below.max(0.0));
     });
 }
 
@@ -567,19 +558,37 @@ fn paint_cell(
 
 fn cards(
     ui: &mut egui::Ui,
-    groups: &[(String, Vec<&Row>)],
+    cache: &InvCache,
     by_group: bool,
     cols: &[Col],
     selected: &mut HashSet<Uuid>,
     now: DateTime<Utc>,
     actions: &mut Vec<Action>,
 ) {
-    for (name, items) in groups {
-        if by_group {
-            theme::section_title(ui, &format!("{name} · {}", items.len()));
-            ui.add_space(6.0);
+    let limit_id = ui.id().with("inv-card-limit");
+    let limit: usize = ui
+        .ctx()
+        .data(|d| d.get_temp(limit_id))
+        .unwrap_or(CARD_STEP)
+        .max(CARD_STEP);
+    let mut shown_n = 0usize;
+    for it in &cache.items.items {
+        if shown_n >= limit {
+            break;
         }
-        for r in items {
+        let r: &Row = match *it {
+            Item::Head(h) => {
+                let (name, count) = &cache.items.heads[h as usize];
+                if by_group {
+                    theme::section_title(ui, &format!("{name} · {count}"));
+                    ui.add_space(6.0);
+                }
+                continue;
+            }
+            Item::Row(i) => &cache.all[i as usize],
+        };
+        shown_n += 1;
+        {
             theme::card_frame().show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.spacing_mut().item_spacing.y = 4.0;
@@ -666,5 +675,19 @@ fn cards(
             });
             ui.add_space(8.0);
         }
+    }
+    let total = cache.order.len();
+    if shown_n < total {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(t!("{} von {} Hosts angezeigt", shown_n, total))
+                    .size(12.5)
+                    .color(theme::text_dim()),
+            );
+            if theme::btn(ui, theme::Btn::Normal, None, t!("Weitere anzeigen")).clicked() {
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(limit_id, limit + CARD_STEP));
+            }
+        });
     }
 }

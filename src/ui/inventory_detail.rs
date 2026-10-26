@@ -37,7 +37,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, actions: &mut Vec<Action>) {
         return;
     };
     let now = Utc::now();
-    let Some(row) = rules::rows(&app.lib, now).into_iter().find(|r| r.id == id) else {
+    let Some(row) = crate::ui::nav2_inv::detail_row(app, id, now) else {
         app.inv.detail.host = None;
         return;
     };

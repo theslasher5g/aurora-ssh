@@ -759,6 +759,10 @@ pub enum Action {
     Nav(crate::ui::nav_state::NavAction),
     /// Run on many hosts, live host statistics, WinRM.
     Srv(crate::ui::multirun_ui::SrvAction),
+    /// Sync a dynamic folder with its source now.
+    DynRefresh(Uuid),
+    /// Select exactly these hosts (Ctrl+A in the table).
+    SelectAll(Vec<Uuid>),
 }
 
 impl App {
@@ -2626,6 +2630,7 @@ impl App {
         crate::ui::proxmox::pump(self);
         crate::ui::containers_page::pump(self, ctx);
         crate::ui::inventory_page::pump(self, ctx);
+        crate::ui::nav2_dyn::pump(self, ctx);
         while let Ok(p) = self.prompts_rx.try_recv() {
             self.hostkey_queue.push_back(p);
         }
@@ -3215,6 +3220,8 @@ impl App {
                     copy.id = Uuid::new_v4();
                     copy.label = t!("{} (Kopie)", h.display_name());
                     copy.last_connected = None;
+                    // A copy is a normal host: the source would otherwise claim it.
+                    copy.dynamic = None;
                     self.lib.hosts.push(copy);
                     self.save_library();
                 }
@@ -3232,10 +3239,20 @@ impl App {
                 self.save_library();
             }
             Action::MoveHost(id, group) => {
-                if let Some(h) = self.lib.hosts.iter_mut().find(|h| h.id == id) {
+                if group.is_some_and(|g| !crate::ui::nav2_dyn::accepts_hosts(&self.lib, g)) {
+                    self.toast(
+                        t!("In dynamische Ordner lassen sich keine Hosts von Hand legen"),
+                        theme::amber(),
+                    );
+                } else if let Some(h) = self
+                    .lib
+                    .hosts
+                    .iter_mut()
+                    .find(|h| h.id == id && crate::ui::nav2_dyn::movable(h))
+                {
                     h.group_id = group;
+                    self.save_library();
                 }
-                self.save_library();
             }
             Action::NewGroup(parent) => {
                 let g = Group {
@@ -3251,6 +3268,7 @@ impl App {
                 }
             }
             Action::DeleteGroup(id) => {
+                crate::ui::nav2_dyn::before_delete_group(&mut self.lib, id);
                 let parent = self.lib.group(id).and_then(|g| g.parent_id);
                 for h in &mut self.lib.hosts {
                     if h.group_id == Some(id) {
@@ -3270,6 +3288,10 @@ impl App {
             }
             Action::ToggleGroup(id) => crate::ui::nav_state::toggle_group(self, id),
             Action::Nav(a) => crate::ui::nav_state::apply(self, a, ctx),
+            Action::SelectAll(ids) => {
+                self.selected_hosts = ids.into_iter().collect();
+            }
+            Action::DynRefresh(g) => crate::ui::nav2_dyn::refresh(self, ctx, g),
             Action::NewIdentity => {
                 self.identity_editor = Some((Identity::new(), true, String::new()))
             }
@@ -3438,7 +3460,12 @@ impl App {
                 );
             }
             Action::RenameHost(id, name) => {
-                if let Some(h) = self.lib.hosts.iter_mut().find(|h| h.id == id) {
+                if let Some(h) = self
+                    .lib
+                    .hosts
+                    .iter_mut()
+                    .find(|h| h.id == id && crate::ui::nav2_dyn::movable(h))
+                {
                     h.label = name.trim().to_string();
                 }
                 self.save_library();
@@ -3525,10 +3552,22 @@ impl App {
                 self.select_anchor = None;
             }
             Action::MoveHosts(ids, group) => {
-                for h in self.lib.hosts.iter_mut().filter(|h| ids.contains(&h.id)) {
-                    h.group_id = group;
+                if group.is_some_and(|g| !crate::ui::nav2_dyn::accepts_hosts(&self.lib, g)) {
+                    self.toast(
+                        t!("In dynamische Ordner lassen sich keine Hosts von Hand legen"),
+                        theme::amber(),
+                    );
+                } else {
+                    for h in self
+                        .lib
+                        .hosts
+                        .iter_mut()
+                        .filter(|h| ids.contains(&h.id) && crate::ui::nav2_dyn::movable(h))
+                    {
+                        h.group_id = group;
+                    }
+                    self.save_library();
                 }
-                self.save_library();
             }
             Action::ConnectMany(ids) => {
                 let hosts: Vec<Host> = ids
